@@ -1830,6 +1830,103 @@ node tmp/fix-eol.mjs    # 按 HEAD 的原始 blob（git show 不做 smudge）逐
 
 ---
 
+## #37 【未修·判据教训】"没有反应"在缺对照组时**证明不了任何东西** —— 我差点据此下了一个错结论
+
+**症状**：排查用户报的"Edge 上打开账号卡死/闪退"。我在 **Edge 155** 上装扩展，
+用 Playwright 起持久化上下文，然后**从 Service Worker 自己给自己发消息**
+（`chrome.runtime.sendMessage`）探测"监听器注册了没有"，得到：
+
+```
+EDGE      par.list 尝试 8 次，全部：Could not establish connection. Receiving end does not exist
+第一次成功于：★★ 从未成功
+```
+
+看起来是**重大不兼容**（Edge 上扩展收不到消息 ⇒ 打开账号必然卡死）。
+
+**根因**：那是**测试台假象**，不是 Edge 的问题。
+`chrome.runtime.sendMessage` **从 SW 内部发出时不会回环到自己**（`onMessage`
+不接收同上下文的发送）⇒ 任何浏览器都收不到。我补了对照组才发现：
+
+```
+CHROME（对照）  par.list 尝试 8 次，全部：Could not establish connection...
+第一次成功于：★★ 从未成功      ← 与 Edge 一模一样
+```
+
+⇒ **同一现象在对照浏览器上同样出现 ⇒ 我的探测方式有问题，结论作废。**
+改成**从扩展页面**发（`chrome-extension://<id>/ui/parallel/parallel.html` 里发，
+也就是 popup 的真实行为）之后两侧都立刻成功：
+
+```
+消息成功    Edge=253ms   Chrome=325ms      ← Edge 还更快
+站点加载    Edge=5214ms  Chrome=6254ms
+渲染进程崩溃  无            无
+```
+
+**判据**：任何"某某上不工作"的结论，**必须同时给出对照组的同一测量**：
+
+```powershell
+# 必须两侧都跑同一套探测，并把两组数字并列打印
+node tmp/edge_probe3.mjs      # EDGE 与 CHROME 对照（脚本本身要打印两组结果）
+```
+
+★ 判定规则：**对照组也失败 ⇒ 先怀疑探测方式**；只有"对照组成功、目标失败"
+才是"目标有缺陷"。这一条与 akso-cloud 的 #31（一对判据对同一对象说不同的话）
+同源，但方向相反 —— 那条讲"判据要一致"，这条讲"**判据要能证伪自己**"。
+
+★★ 本次的额外教训：我在得出错结论之后**已经准备把它写进文档**。若当时写了，
+下一个人会照着"Edge 收不到消息"去查一条**不存在的缺陷**。
+⇒ **结论进文档之前，先问"我怎么知道不是我的测量方法错了"**。
+
+---
+
+## #38 【未修】`patch()` 跳过时**完全静默** —— "隔离开着但那一层没生效"与"一切正常"在诊断上无法区分
+
+**症状**：`content/shield-main.ts` 在 MAIN world 里改**页面自己的**原型
+（`localStorage` / `sessionStorage` / `document.cookie` / `fetch` / `XHR` /
+`IDBFactory` / `CacheStorage`）来落实隔离平面。改写走一个公共小工具：
+
+```ts
+const patch = (proto, key, value) => {
+  const d = Object.getOwnPropertyDescriptor(proto, key);
+  if (!d || d.configurable) {
+    Object.defineProperty(proto, key, { configurable: true, writable: true, value });
+  }
+  // ← 不可配置时**什么都不做**，也没有任何记录
+};
+```
+
+**根因**：不可配置 ⇒ 补丁装不上 ⇒ **该平面没有隔离**。但因为：
+
+- 页面**照样能跑**（站点代码只看得到原生的 `localStorage`）；
+- `activate()` 里 `__QL_SHIELD_INSTALLED__` 已经置位，代码以为装好了；
+- 日志、诊断包、角标**全是空的**；
+
+⇒ 表现是"**大多数时候正常，偶尔串号**"。这正是本项目最贵的那类失效
+（对外表现为"平台抽风"，而不是"扩展报错"）。
+
+**为什么怀疑它是 Edge 卡死报告的一条线索**：Edge 与 Chrome 的内建属性描述符
+**可能存在差异**（未验证）。若 Edge 上某个属性是 `configurable: false`，
+补丁会静默跳过 —— 而这**不能解释卡死**，只能解释"隔离没生效"。
+⇒ 结论：**它是一条真实缺陷，但不是卡死的已证根因**（别把它当成答案）。
+
+**判据**（2026-10-12 已加，未修的是"跳过本身"，已修的是"跳过不可见"）：
+`patchLedger` 记下每个 `+key` / `-key`，激活完成后经
+`postMessage({op:'patchReport'})` 上报，后台写进 `ql:forensics`
+（`forensics('shieldPatch', { failedCount, failed, all, ua })`）。
+⇒ 下次出问题时，**导出诊断包就能看到哪一层没装上**。
+
+```powershell
+# 判据落点：dist/background.js 里必须能找到 patchReport 的上报与接收
+node -e "const s=require('fs').readFileSync('dist/background.js','utf8'); console.log('patchReport 出现次数:', (s.match(/patchReport/g)||[]).length)"
+# 期望 ≥1；为 0 说明账本没接上（而那时"跳过"又变回静默）
+```
+
+★ 尚未修的部分（诚实标注）：**`patch()` 仍然不重试、不降级、不告警** ——
+它现在只是"可被看见"，不是"被解决了"。要真解决得先知道 Edge 上哪个描述符不同，
+而那需要真账号 + 真目标站点的运行态证据。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

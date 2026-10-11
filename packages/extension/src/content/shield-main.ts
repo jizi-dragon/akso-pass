@@ -37,6 +37,17 @@
   let mode: Mode = 'passthrough';
   let ns = '';
   let settled = false;
+  /**
+   * 每个平面补丁的**安装结果**账本：`+key` = 装上了，`-key` = 跳过（属性不可配置）。
+   *
+   * ★ 为什么要它（2026-10-12）：排查 Edge 上"打开账号卡死/闪退"时发现
+   *   `patch()` 跳过时是**完全静默**的 —— 而"隔离开着但没生效"与"隔离生效"
+   *   在用户眼里毫无区别（都是页面正常）。有了这本账，装了什么、漏了什么
+   *   能进诊断包，一眼可辨。
+   * ★ 只记账、不改变行为：**不放宽任何判定**，也不因为失败就中断激活
+   *   （中断会让页面在"半激活"状态下更危险）。
+   */
+  const patchLedger: string[] = [];
 
   /** 缓存分区平面（页面层实现；Chrome DNR 无 urlTransform，见 tab-rules.ts 注释） */
   const CACHE_PARTITION_ENABLED = true;
@@ -572,6 +583,9 @@
           const d = Object.getOwnPropertyDescriptor(proto, key);
           if (!d || d.configurable) {
             Object.defineProperty(proto, key, { configurable: true, writable: true, value });
+            patchLedger.push(`+cs.${key}`);       // ★ 记账（见 patchLedger 的说明）
+          } else {
+            patchLedger.push(`-cs.${key}`);       // ★ 跳过也要留痕，否则失败是静的
           }
         };
         patch(CacheStorageProto, 'open', function (this: CacheStorage, name: string) {
@@ -658,6 +672,19 @@
         const d = Object.getOwnPropertyDescriptor(proto, key);
         if (!d || d.configurable) {
           Object.defineProperty(proto, key, { configurable: true, writable: true, value });
+          patchLedger.push(`+idb.${key}`);
+        } else {
+          // ★★ 不可配置 ⇒ **什么都做不了**，而且失败是静的。
+          //
+          //   这一层补的是页面**自己的**原型（localStorage / cookie / fetch / IDB /
+          //   CacheStorage）。跳过它 = 该平面**没隔离**，但页面照样能跑、
+          //   日志里什么都没有 ⇒ 表现是"大多数时候正常、偶尔串号"。
+          //
+          //   ★ 为什么现在记账：2026-10-12 排查 Edge 上"打开账号卡死/闪退"时发现，
+          //     `patch` 静默跳过这条路径**没有任何痕迹**，无法区分
+          //     「Edge 的内建属性描述符与 Chrome 不同」与「一切正常」。
+          //     ⇒ 记下 `-idb.key`，随 `patchReport` 上报（诊断包里可见）。
+          patchLedger.push(`-idb.${key}`);
         }
       };
       patch(idbProto, 'open', function (this: IDBFactory, name: string, version?: number) {
@@ -714,6 +741,39 @@
       resetBagTo(bagView);
     }
     applySeed(seed);
+    // ★ 激活完成后把"每个平面装上了没有"报给后台（诊断包可见）。
+    //   放在最后：这时账本才是完整的。上报本身**不影响**激活结果。
+    reportPatchLedger();
+  }
+
+  /**
+   * 把 `patchLedger` 经桥上报给后台（`forensics('shieldPatch', …)`）。
+   *
+   * ★ 为什么必须上报而不是只放内存里：MAIN world 的变量在页面里，
+   *   用户在 Edge 上遇到问题时我们**拿不到**那个页面。
+   *   只有进了诊断包（`ql:forensics`）才能事后看见"哪一层没装上"。
+   * ★ 失败不抛：上报失败绝不能影响已经装好的隔离。
+   */
+  function reportPatchLedger(): void {
+    try {
+      const failed = patchLedger.filter((x) => x.startsWith('-'));
+      window.postMessage(
+        {
+          src: SRC_PAGE_TO_BRIDGE,
+          payload: {
+            op: 'patchReport',
+            // 全量账本（含成功项）+ 单独给出失败项，便于一眼扫
+            all: patchLedger.join(' '),
+            failed: failed.join(' ') || '(none)',
+            failedCount: failed.length,
+            ua: navigator.userAgent,
+          },
+        },
+        '*',
+      );
+    } catch {
+      /* 上报失败不影响隔离 */
+    }
   }
 
   /** 种子直灌：不经补丁层静默写入命名空间（并同步 token 进 Cookie 袋）。

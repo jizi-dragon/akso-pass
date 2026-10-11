@@ -50,6 +50,20 @@ export interface ParallelAccountStatus {
 export type BridgeUpPayload =
   | { op: 'hello'; url: string }
   | { op: 'storageWrite'; key: string; value: string | null }
+  /** ★ 平面补丁的安装结果（2026-10-12 加）。
+   *
+   *  `patch()` 遇到不可配置的内建属性时**什么都做不了**，而它原本完全静默 ——
+   *  于是「隔离开着但那一层没装上」与「一切正常」在诊断上无法区分。
+   *  排查 Edge 上"打开账号卡死/闪退"时正是卡在这里（无法判断描述符是否不同）。
+   *  ⇒ MAIN 壳激活后上报账本，后台写进 `ql:forensics`（诊断包可见）。
+   *  ★ 纯留痕：不改行为、不上行回包。 */
+  | {
+      op: 'patchReport';
+      all: string;
+      failed: string;
+      failedCount: number;
+      ua: string;
+    }
   | { op: 'authHeader'; value: string }
   | { op: 'journalRollbackDone' }
   /** 页内 document.cookie 写入的 Cookie 袋全量视图（v3.10.6 袋→快照回流）：
