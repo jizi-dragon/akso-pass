@@ -1612,6 +1612,224 @@ marker 仍在源码里 ⇒ 判据不红 ⇒ 反证 SKIP（**规则 25 已踩过�
 
 ---
 
+## #32 【已修】同一个事实被算了**两次**，而两个值不一致时**没有任何东西会说话**
+
+**症状**：`par.open` 的返回值里 `reused` **恒为 `false`**，而同一函数写进
+`ql:forensics` 的 `reused` 是**正确的**（`tabId !== null`）。
+也就是说"这次是复用了既有页签还是新开了一个"这**同一个事实**，在系统里同时存在两个值。
+当时 UI 不消费该字段 ⇒ **没有任何可观测后果**，两个值并存了很久。
+
+**根因**：正确值在函数开头就算出来了（为了 forensics），而 `return` 那一行
+**又原地写了一遍字面量**。两者相距 80 行，中间还有多处 `await` 与早退分支。
+★ 关键：这不是"写错了"，而是**同一个事实有两个来源** ——
+只要存在两个来源，它们迟早不一致；而**不一致时不会有任何报错**
+（类型都对、构建都过、UI 也不看它）。它是"潜伏缺陷"的标准形态：
+一旦有人开始消费这个字段，就会以大约一半的概率读错，并且错得毫无痕迹。
+
+**判据**：`node tools/verify/verify-defectfix.mjs` 的 A 组三条 ——
+① 全仓不得出现 `reused: false` / `reused: true` 这类**字面量**（剥注释后查）；
+② 必须有且只有一次 `const reused = tabId !== null`；
+③ `reused` 在文件里至少出现 3 次（声明 + forensics + return ⇒ 两处**共用**同一个值）。
+★ 反证：把 `return { tabId, reused }` 改回字面量 ⇒ A1 **变红**（已实测，见
+`tools/verify/verify-falsify-defectfix.mjs` 的 A 用例）。
+
+**处置**：**已修**。在复用判定处**只算一次**（`const reused = tabId !== null;`），
+forensics 与 `return` 都引用它 ⇒ 结构上不可能再分叉。
+
+**推广**：★ **"同一事实只算一次"必须落到代码结构上，不能靠注释约定。**
+判据的形状是"**某个值是否只有一个来源**"，而不是"这个值现在对不对"——
+后者只能证明今天对，前者才防得住明天分叉。
+同类形态：`boundTabsOf()` 与 `bindings` 各算一次"这个账号有哪些页签"、
+`hostOf` 在 UI 与 SW 各解析一次 —— 凡是**两处算同一件事**的地方都该问一遍。
+
+---
+
+## #33 【已修】补丁后的 API 有**两副面孔**，而消费方拿了错的那一副 ⇒ 整块逻辑恒为空转
+
+**症状**：身份叛逃处置里的"清扫本账号命名空间的 IDB 库与 CacheStorage 缓存"
+（`nsWipeShared()`）**一个字节都没清过**。而它**不报错、不抛异常、日志也没有**，
+从外面看与"清扫成功、只是这次没有东西要清"**完全一样**。
+
+**根因**：该函数读的是 `indexedDB.databases()` 与 `caches.keys()` ——
+而这两个 API **已被本扩展自己的壳打了补丁**：补丁会把 `__ql_ns_<accountId>__`
+前缀**剥掉**再返回给页面（为了让页面的视图不变）。于是清扫里那句
+`name.startsWith(ns)` **恒为 false**。
+★★ 更绕的是**写侧也反了**：补丁版 `deleteDatabase()` 会**自动再加一次**前缀 ——
+所以就算前一步命中了，删的也是一个**不存在的库名**。
+⇒ 一处缺陷里叠了两个方向的错，而两者都**静默**。
+
+**判据**：`node tools/verify/verify-defectfix.mjs` 的 C 组三条 ——
+① `nsWipeShared` 函数体内**不得出现**补丁版 `indexedDB.databases|deleteDatabase` 或
+`caches.keys|delete`；② 必须使用**原生**引用（`rawIdbDatabases` / `rawCachesKeys`）；
+③ 原生引用必须在**补丁安装之前**捕获（顺序错了拿到的一样是补丁版）。
+★ 反证：把 `rawIdbDatabases.call(...)` 改回 `indexedDB.databases()` ⇒ C1 **变红**（已实测）。
+★ 另有一条"清扫结果必须回报"（`nsWipeSharedDone` 回执进 forensics）——
+没有它，"清掉了 0 个"与"清扫根本没生效"**不可分**，而这正是本坑能藏这么久的原因。
+
+**处置**：**已修**。在文件顶部（任何补丁之前）捕获原生
+`IDBFactory.prototype.databases` / `deleteDatabase` 与 `caches.keys` / `delete`，
+清扫专用；并把清掉的库数/缓存数回报给 background 的 forensics。
+
+**推广**：★ **打补丁的人必须同时维护"给谁看真名、给谁看假名"。**
+一旦某个 API 被包装，它就分裂成两种语义：**页面视图**（剥前缀）与
+**管理视图**（真名）。凡是"扩展自己要按真实名字管理资源"的路径，
+都必须显式持有**原生引用**，并且**在补丁之前**捕获。
+本仓同类风险面：`Storage.prototype` 的 `getItem/setItem/removeItem`
+（`loadBag()` 用的是 `origGetItem`，做对了）、`BroadcastChannel`、
+`navigator.serviceWorker.register` —— 逐个都该问："我这里要看真名还是假名？"
+
+---
+
+## #34 【已修】废功能时只删了**使用方** —— 定义方与处理方留下，于是"死协议"越长越多
+
+**症状**：下面这一批东西都在代码里、都能编译、都有人维护注释，而**没有任何人会走到**：
+
+| 项 | 状态 |
+|---|---|
+| `site.grants.list` | handler 恒返回 `[]`；**零发送方** |
+| `site.grant.add` | handler 恒返回失败（`'v2.4 起改为在弹窗/并行页直接授权'`）；**零发送方** |
+| `wheel.toggle` | handler 完整、类型完整；**零发送方** |
+| `CloudMergeReport` | 类型完整（`local → 云端合并回报`）；产生它的 `cloud.migrate` 已删 ⇒ **类型孤儿** |
+| `okOf()` | 有实现、有导出；**零调用点** |
+| `registerAuthHandlers()` | 有完整实现（注册右键菜单「将当前站点添加为会话站点」）；**全仓无调用点** ⇒ 该菜单项从未注册 |
+| `journalRollbackDone` | 页面**真的在发**；后台**无处理分支** ⇒ 叛逃回滚的"完成"在取证里不可见 |
+
+**根因**：删功能时删的是**使用方**（UI 按钮、调用点），而
+**定义方（`messages.ts` 的 kind/类型）与处理方（`dispatch` 的 case）不是同一个文件、
+也不在同一个 grep 结果里**。于是"删干净了"与"删了一半"在 `typecheck` 眼里完全一样
+—— 死协议**不会报错**，它只是永远不被走到。
+★★ 更麻烦的是**它会造成反向误判**：`registerAuthHandlers` 无调用点，意味着
+`siteAuth.grant()` 这条写 `sb:siteGrants` 的路从未生效；而**读**那一侧（备份导出）
+一直好好的 ⇒ 看代码会得出"**导出不写站点授权**"的结论，而实际上
+另一条路（`parallel.ts` 的导入流程）在写它。**"写方不存在"与"写方在别处"必须分开验证。**
+
+**判据**：对每个消息 kind / 桥 op，**双向查**：
+
+```powershell
+# ① 有处理方但没有发送方 ⇒ 死协议
+Select-String -Path packages/extension/src -Include *.ts -Recurse -Pattern "kind: 'par\.open'"
+#    命中只出现在 messages.ts（定义）与 service-worker.ts（handler）⇒ 零发送方
+# ② 有发送方但没有处理方 ⇒ 静默落空（更坏：它看起来在工作）
+Select-String -Path packages/extension/src -Include *.ts -Recurse -Pattern "journalRollbackDone"
+```
+
+★ 这两条**必须成对跑**：只跑 ① 会漏掉 ②，而 ② 更危险（页面以为有人接，
+后台当没看见 —— 本仓 `dispatch` 的 `default` 分支会记 `log.error`，所以 ② 至少留了痕）。
+★ 数量会漂，**不要写成"N 个死协议"**（规则 28）；写成"每个 kind 都要能报出它的发送方"。
+
+**处置**：**已修**（2026-10-12 清理）。上表七项**全部删除**，外加清理时新查出的
+`cloud.auth`（连同它的 `exchangeDeviceCode()`）与 `send.ts` 的 `okOf()`：
+
+| 删除项 | 连带删除 |
+|---|---|
+| `site.grants.list` / `site.grant.add` / `wheel.toggle` | `messages.ts` 的 3 组 kind/响应类型 + `dispatch` 的 3 个 case |
+| `CloudMergeReport` | 仅类型（其 `cloud.migrate` 早已删除） |
+| `registerAuthHandlers()` | `site-auth.ts` 的 `MENU_ID` / `hostPattern` / `writeGrants` / `grant()` / `grantCurrentTab()` / `extractHost()` —— **整块闭包**，同时删掉了那个从未注册的右键菜单与 `add_current_site` 快捷键监听 |
+| `cloud.auth` | `exchangeDeviceCode()`（`cloud-store.ts`）+ SW 的导入与 case |
+| `okOf()` | `send.ts` 里对 `Result` 的 import（`noUnusedLocals` 会抓到） |
+| `journalRollbackDone` | **不是删除**，是补上处理分支（它有发送方、缺接收方） |
+
+★ 判据：新增 `tools/verify/verify-deadprotocol.mjs`（**双向查**：每个 kind 能否报出
+发送方 / 每个上行 op 能否报出处理分支）。它当场就抓出了 `cloud.auth` 与
+`site.grants.list` 这一类。**清理后 26 → 25 个 kind，全绿。**
+
+★★ 而写这条判据时踩了两个**输入侧**的坑，都已单独立档：
+**#35**（注释剥离器吃掉 3082 字符活代码 ⇒ 判据假红）与
+**#36**（`git stash` 把 18 个文件行尾 LF→CRLF ⇒ 另一条判据假红）。
+两条的教训相同：**判据红了先怀疑输入，再怀疑结论。**
+
+★ 与规则 30 是**对偶**：那条说"机制摆着 ≠ 被接上"（缺**调用**），
+本条说"协议留着 ≠ 有人发"（缺**发送方**）—— 两者的判据都要盯**那一端**，
+而不是"文件里有没有这个名字"。
+
+---
+
+## #35 【已修·判据教训】注释剥离器**吃掉了活代码**，于是判据自己变成了错的来源
+
+**症状**：新写的死协议判据把 `data.import` 报成"零发送方（只有处理方，永不被走到）"——
+而它**明明有发送方**（`ui/parallel/parallel.ts:759`）。同一轮里，
+`verify-defectfix.mjs` 的 E 组也报"`blockedHosts` 的写盘没有被条件守卫包住"，
+而守卫**就在那里**。
+
+**根因**：两个脚本都用「一条非贪婪块注释正则」剥注释：
+
+```js
+t.replace(/\/\*[\s\S]*?\*\//g, ' ')
+```
+
+它**会跨字符串字面量匹配**。`ui/parallel/parallel.ts` 里有一行
+
+```ts
+const still = await chrome.permissions.contains({ origins: [`*://${b}/*`] })
+```
+
+模板串里那三个字符（斜杠 + 星号）让正则以为**注释从这里开始**，
+而它一路吃到 **3082 字符之后**某个真注释的收尾符才停下 ——
+中间那 3 KB **全是活代码**（`blockedHosts` 自愈、`renderSites` 整个函数体）。
+
+★★ **后果不是报错，而是判据静默失效**：被吃掉的区域里再也搜不到任何东西 ⇒
+"该出现的没出现" = **假红**；反之若被吃掉的正好是缺陷本身 = **假绿**。
+而假红会让人去"修"一个没坏的东西（这一轮我差点这么做）。
+
+**判据**：① 剥离必须由 `tools/verify/_lib/strip-comments.mjs` 完成
+（**字符串感知**：只有不在字符串/模板串里时，注释起止符才算数；
+注释替换为等量空格 ⇒ **行号不变**）。
+② 本仓**禁止**在验证脚本里再写注释剥离正则
+（`verify-deadprotocol.mjs` / `verify-defectfix.mjs` 均已改用它）。
+③ 自证样本：`tmp/diag-deadproto4.mjs` —— 旧法丢 3082 字符且 `data.import` 找不到，
+新法与原文**等长**且关键 token 仍在。
+
+**处置**：**已修**。抽出共享剥离器并接线。
+
+**推广**：★★ **判据的输入被污染时，它给出的结论比没有判据更坏** ——
+没有判据时你知道自己不知道；判据错时你会去改一个没坏的东西。
+⇒ 凡是"先预处理源码、再断言"的判据，**预处理本身要有一条自证**：
+拿一段**已知含坑**的样本喂它，断言输出与原文**等长**且**关键 token 仍在**。
+★ 同族陷阱：剥离顺序（先剥字符串再剥行注释，规则 23）、
+`String.replace` 只改第一处（锚点必须唯一，规则 19）。
+
+---
+
+## #36 【已修·判据教训】`git stash` 把 18 个文件的行尾从 LF 改成 CRLF —— 判定当场假红
+
+**症状**：为判断"某个浏览器回归的失败是不是我造成的"，我 `git stash` 一次、
+跑完基线再 `git stash pop`。之后**全量门禁突然红了 2 个**：
+`verify-log-redaction` 报「取到了 `RuntimeRequest` 联合」不成立、
+`verify-falsify-logredaction` 报 19/23。
+
+**根因**：本仓 `core.autocrlf=true` 且**没有 `.gitattributes`**，
+而仓库里**同时存在两种行尾**（`service-worker.ts` / `shield-main.ts` 提交进去就是 CRLF，
+其余是 LF）。`stash pop` 会把 checkout 出来的文件按 autocrlf 转成 CRLF ⇒
+**18 个 LF 文件一次性变成 CRLF**，于是：
+
+- `git diff` 从 ~600 行膨胀成"每个文件每行都改了"（**掩盖真实改动**）；
+- 判据 `/export type RuntimeRequest =([\s\S]*?);\n/` 要找 `;` + **LF**，
+  而文件里现在是 `;` + **CRLF** ⇒ 匹配失败 ⇒ kind 集合变空 ⇒ **三条判据同时假红**。
+
+★★ 关键：**这不是代码问题，是我操作引入的**，但症状看起来完全像"改动改坏了"。
+`typecheck`、`build`、其余 13 个判据**全绿** —— 只有那个依赖行尾的判据在喊。
+
+**判据**：逐文件比对**行尾风格**与 HEAD 是否一致（不是比"有没有 CRLF"）：
+
+```powershell
+node tmp/fix-eol.mjs    # 按 HEAD 的原始 blob（git show 不做 smudge）逐文件对齐
+```
+
+★ 同一条上我摔了两次：① 用 `Out-File` 导出 HEAD 版本当对照基线，它**写入 CRLF**，
+于是"逐行对照"把 LF 文件里的行全报成"被删了"（**假红**）；
+② 第一次排查还把 `data.import` 的缺失归因到剥离器（#35，那个确实也坏了 ⇒ 两个坑叠在一起）。
+
+**处置**：**已修**。18 个文件全部对齐 HEAD 的行尾风格；门禁恢复 **15/15**。
+
+**推广**：★★ **工具链的副作用必须与代码改动分开归因。**
+`git stash` / `git checkout` / 编辑器格式化 / `Set-Content` 都会**静默改写行尾**，
+而"每个文件每行都变了"的 diff 会**掩盖你真正改了什么**。
+⇒ 动过版本控制操作之后，**先看 diffstat 的量级对不对**（本次从 615 行跳到数千行就是信号），
+再看判据结论。★ 判据红了先问"**是我改坏的，还是环境变了**"——
+本条与 #35 是同一个教训的两面：**先怀疑输入，再怀疑结论**。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

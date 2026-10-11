@@ -1171,6 +1171,9 @@ async function loadSites(): Promise<void> {
   ).sort();
 
   // 名单自愈：浏览器层已无授权的停用条目直接移除
+  //   ★ 比对用**排序后的内容**而不是 `Set.size`：一减一增时 size 不变，
+  //     而名单其实已经变了（size 比较会漏掉这种情形，且漏得毫无痕迹）。
+  const storedList = Array.from(blocked).sort();
   for (const b of Array.from(blocked)) {
     const still = await chrome.permissions.contains({ origins: [`*://${b}/*`] }).catch(() => false);
     if (!still) {
@@ -1178,7 +1181,17 @@ async function loadSites(): Promise<void> {
     }
   }
   blockedHosts = Array.from(blocked).sort();
-  await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });
+  // ★★ 2026-10-12 修：**只在自愈真的改变了名单时才写盘**。
+  //
+  //   本函数由 `refreshAll()` 调用，而 `refreshAll` 挂在 `setInterval(…, 3000)` 上
+  //   ⇒ 原来这里**每 3 秒无条件写一次 `chrome.storage.local`**，稳态下就是
+  //     "一直写同一个值"的磁盘写放大（用户不开任何界面时也在写）。
+  //   ★ 判据：稳态（浏览器权限无变化）下 `ql:blockedHosts` 的写入次数应为 **0**。
+  //   ★ 为什么可以安全跳过：`blockedHosts` 这个内存副本**总是**被赋成最新值（上一行），
+  //     渲染与后续逻辑读的都是它；storage 只是给冷启/别的页面用的持久副本。
+  if (JSON.stringify(storedList) !== JSON.stringify(blockedHosts)) {
+    await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });
+  }
 
   const sitesKey = JSON.stringify([
     grantedHosts,
@@ -1857,7 +1870,11 @@ async function loginCloud(): Promise<boolean> {
 /** 「重试」= **重新 device-start**（绝不复用旧 deviceCode）；成功后顺带刷新整页 */
 async function retryDeviceLogin(): Promise<void> {
   if (!(await ensureCloudOriginPermission())) {
-    showDeviceError('未获得云端服务的访问授权：请关掉本面板，在数据源处重新点击「云端」。');
+    // ★ 2026-10-12 修：原文是「请关掉本面板，**在数据源处**重新点击「云端」」——
+    //   而"数据源切换控件"已在 v3.18 随本地数据源整体废除（`#source-switch` 是空容器，
+    //   渲染函数也删了）⇒ 这句话指向一个**界面上不存在的入口**，用户按它找不到任何东西。
+    //   指向真实存在的控件：管理页 `#auth-bar` 里的「重新登录」按钮（`#auth-relogin`）。
+    showDeviceError('未获得云端服务的访问授权：请关掉本面板，在管理页顶部点「重新登录」以重新发起授权。');
     return;
   }
   if (!(await loginCloud())) {

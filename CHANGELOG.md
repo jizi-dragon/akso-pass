@@ -5,6 +5,378 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.1.2（2026-10-12）
+
+**另外两个轮盘也改为定尺网格；并修掉"切到空盒子后滚轮失效"的死角。**
+
+用户在真机上测出两个问题，本次一并处理：
+
+| # | 问题 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | 生命周期状态（Alt+W）与常用地址（Alt+1）**仍是旧环形** | v4.1 只改了账号轮盘，那两个走的是 `ring-wheel.ts`（另一套渲染器）；`favorites-core` 里**同样有 `n > 10` 的截断** | 两者都改为定尺网格；删除 `ring-wheel.ts` |
+| 2 | **切到空盒子后滚轮失效** | 滚轮守卫写成了"**这一页有没有内容**"——而空页"没内容可滚"**不等于**"不许切页"，于是用户**被困在空页里出不来** | 抽出 `wheelIntent()` 纯函数：空页 / 不足一屏 / 已滚到边界 ⇒ **一律切页** |
+
+### 一、统一到一份内核
+
+| 文件 | 角色 |
+|---|---|
+| `ui/wheel/item-grid.ts` | **唯一的定尺网格内核**（5 列 × 4 行 = 20 格、占位格、滚轮语义、空态、页脚） |
+| `ui/wheel/grid-core.ts` | 账号适配层（运行态文字、盒子分页口径） |
+| `ui/wheel/status-core.ts` | 状态适配层（当前状态高亮） |
+| `ui/wheel/favorites-core.ts` | 书签适配层（标出将打开的域名） |
+
+★ 三个适配层都**只放各自特有**的东西，排版/交互/滚轮**共用一份** ⇒ 改一处三处生效。
+
+### 二、★★ 样式源统一（顺手消灭一处长期重复）
+
+网格要给**四个表面**用，而注入方式天然不同：小窗用 `<link>`（要 `.css` 文件），
+三个页内浮层在 **Shadow DOM** 里**只能内联**。此前是各写一份 ⇒ **漏一条就少一块样式且不报错**。
+
+现在：`ui/wheel/grid-style.ts` 是**唯一源**，`scripts/build.mjs` 构建时把它写成
+`acct-grid.css` 供 `<link>` 引用，浮层直接 `import` 同一个字符串
+⇒ **同一份字节，不可能漂移**。判据逐字节比对两者。
+
+★ 顺带删掉：`wheel-overlay.ts` 里**整段抄了一遍**的外壳样式（120 行）、
+`ring-wheel-style.ts` 的环形样式、以及 `wheel-core.ts` 里**已无使用者**的径向原语
+（`polar` / `sectorPath` / `radialText` / `el` / `SIZE` / `C` / `R_OUT` / `R_IN`）。
+留着它们的代价不是几行，而是**让人以为还有地方在画环**。
+
+### 三、新增/升级判据（`verify-acct-grid.mjs`）
+
+```
+① 源码：无 slice(0,N) 截断；buildSectorWheel / buildRingWheel / 径向原语 全部零命中
+② 样式：acct-grid.css == grid-style.ts 常量（逐字节）；dist 与源一致；
+        三个浮层都引用**共用常量**且无第二份内联样式
+③ wheelIntent 纯函数 7 个边界用例：★ 空页双向都必须判 'page'
+④ 运行期：18 项 → 18 格；26 项 → 全部进 DOM 且可滚动；行数恒 4；槽位恒 20；
+        8 与 18 项首格几何逐项相同；★ **真机滚轮：通桥 → 空盒子 → 内网**（不再被困）
+```
+
+★★ **写这条判据时我又错了两次**（都记在注释里）：
+① 位置比较最初用 `getBoundingClientRect().top`，而判据在同一个 body 里连续渲染 4 次、
+它们**纵向堆叠** ⇒ 视口坐标当然不同 ⇒ 假红；
+② 注入滚动意图判定最初**无条件 `preventDefault()` 才判意图** ⇒ 意图为 `'scroll'` 时
+原生滚动已被禁掉 ⇒ "让列表自己滚"永远不成立（静默失效）。
+⇒ 同一条教训第三次：**判据红了先怀疑量法与顺序，再怀疑结论**。
+
+### 四、用户手册同步
+
+`docs/USER-MANUAL.md` 的第八章整节重写（原文还在讲"一圈最多 10 个 / 中心 Hub /
+右侧 120° 弧轨道"，**与现状相反**）；快捷键表补上 Alt+W / Alt+1；
+"已知边界"里那条"单盒最多展示 10 个"改成"超过 20 个需滚动"。
+
+### 五、门禁
+
+```
+npm run typecheck / build / check-deps   → 全绿（构建会生成 acct-grid.css）
+verify-acct-grid                         → OK（四组，含真机滚轮场景）
+verify-user-docs                         → 7/7
+verify-load                              → 17/17
+全量 17/17 判据通过
+```
+
+> ⚠️ 仍**未做真机点击验收**（账号/状态/书签数据都依赖云端或真实平台）——
+> "点一下真的切过去了"须人工走一遍。这次请顺带验**空盒子滚动**那个场景。
+
+## 4.1.1（2026-10-12）
+
+**单盒按 20 个定尺：5 列 × 4 行，槽位恒定。**
+
+### 一、为什么能定尺
+
+小窗固定 **720×760**（`service-worker.ts` 的 `WHEEL_W/H`，内容区约 704 宽）⇒
+**5 列 × 4 行 = 20 格**一屏放得下、**不需要滚动**。而单盒上限按 20 设计 ⇒
+网格几何可以写死，不再"按账号数自适应"。
+
+### 二、改了什么
+
+| 项 | 改前（4.1.0） | 改后 |
+|---|---|---|
+| 槽位数 | 随账号数变化（18 个 = 18 格） | **恒为 20**，不足补**占位格**（虚线、不可点、无角标、不进 tab 序） |
+| 行高 | `min-height: 62px`（内容撑） | **`grid-auto-rows: 74px`** 固定 ⇒ 账号名长短不影响格高 |
+| 列宽 | `minmax(0,1fr)` | 不变（随容器均分，5 列） |
+| 间距 | 7px | 8px（配合固定行高） |
+| 标题栏 | `18 个账号 · 第 1/2 盒` | **`18/20 个 · 在线 10 · 盒 1/2`**（容量口径 + 在线数） |
+| 滚动 | `max-height: 62vh` | `66vh` —— ★ **保留为安全网**：万一某盒超过 20 个，溢出是**滚动**而不是被裁掉 |
+
+★ **分母取 `max(20, 实际数)`**：某盒真有 26 个时写 `26/26` 而不是 `26/20`
+—— 后者会读成"超编了"，而实际是"这盒确实有 26 个，网格滚动显示"。
+
+### 三、这一版真正的收益
+
+**几何稳定。** 8 个账号与 18 个账号的**首格尺寸、位置、行数逐项相同**
+（实测 `[139, 73, 2]` 两者一致、行数都是 4）⇒ 切换盒子时**不会整页重排**，
+视线不需要重新找位置。这是"定尺"相对"自适应"的全部意义。
+
+### 四、判据（不变量，已进 `verify-acct-grid.mjs`）
+
+```
+① 槽位总数恒为 20（cells + slots == 20）
+② 行数恒为 4
+③ 正好 20 个时不出现占位格
+④ ★ 8 个与 18 个的**首格几何逐项相同**
+⑤ 26 个时全部进 DOM 且可滚动（绝不截断）
+⑥ 标题栏容量口径形如 `N/20 个 · 在线 M`
+```
+
+★★ **写 ④ 时判据自己错了一次**：我原本用 `getBoundingClientRect().top` 比位置，
+而判据在同一个 body 里连续渲染 4 次（8/18/20/26），它们**纵向堆叠**
+⇒ 视口坐标当然不同 ⇒ **假红**（报"几何随账号数变了"）。
+改用**相对容器**的 `offsetTop` 后才是真判据。教训同 `PITFALLS #35/#36`：
+**判据红了先怀疑输入与量法，再怀疑结论。**
+
+### 五、门禁
+
+```
+npm run typecheck / build / check-deps        → 全绿
+node tools/verify/verify-acct-grid.mjs        → RESULT: OK（四组）
+node tools/verify/verify-load.mjs             → 17/17
+全量 17/17 判据通过
+```
+
+> ⚠️ 仍**未做真机点击验收**（账号数据走云端，验证档案里为空）——
+> "点一个账号真的切过去了"须人工走一遍。
+
+## 4.1.0（2026-10-12）
+
+**账号选择器由「环形轮盘」改为「网格平铺」——直接消掉两条结构性痛点。**
+
+### 一、为什么要换（两条痛点同源）
+
+| 痛点 | 机理 | 性质 |
+|---|---|---|
+| **只显示 10 个** | `WHEEL_MAX = 10` 是**硬上限**，超出直接 `slice(0, 10)` **丢弃**，只在 Hub 写一行"仅显示前 10 个" | 实现选择（可修） |
+| **文字随位置倾斜** | 径向标签必须沿切线 `rotate(mid)`，左半侧再翻 180° ⇒ 用户要先"找到角度"再"辨认文字" | **极坐标的固有属性**（不可修） |
+
+★ 第二条有研究背书：径向菜单的固有劣势就是"能放在圆周上的选项数量有限"
+（Založa 等 2024）；其舒适区约在 **8 个以内**。而网格是**水平扫读** ⇒
+既不需要旋转视角，也不需要截断。
+
+### 二、改了什么
+
+| 文件 | 变更 |
+|---|---|
+| `ui/wheel/grid-core.ts` | **新增**：网格渲染器（`buildAccountGrid`）。**全部账号都渲染**，超出改为**滚动**；账号色竖条 + 运行态文字；标题栏（‹ 盒名 · 计数 ›）+ 页码点 + 数字键角标 |
+| `ui/wheel/acct-grid.css` | **新增**：网格样式（小窗 `<link>` 引入） |
+| `ui/wheel/wheel-core.ts` | **删除** `SectorWheelOpts` / `buildSectorWheel` / `WHEEL_MAX`（约 204 行）。**保留**几何原语（`SIZE`/`C`/`R_OUT`/`R_IN`/`polar`/`sectorPath`/`radialText`/`el`/`truncate`）——**实例状态轮盘仍在用** |
+| `ui/wheel/wheel.css` | 删除整套环形样式（`.sector-*` / `.box-track` / `.box-node*` / `.hub-*`，约 175 行）+ 新增网格样式引用 |
+| `content/wheel-overlay.ts` | 环形内联样式 → 网格内联样式（Shadow DOM 拿不到 `<link>`，**必须两处都有**）；提示文案同步 |
+| `ui/wheel/wheel.ts` | 只改一行：`buildSectorWheel` → `buildAccountGrid` |
+
+★★ **两个调用点（小窗 / 页内浮层）的调用方式没变** —— 盒子即一页、数字键 1-9/0、
+滚轮/点击切盒、`emptyAction`、`.in` 入场类名**全部保留**。
+**实例状态轮盘（Alt+W）这次没有改**，仍是环形 —— 两个轮盘现在用不同布局。
+
+### 三、行为差异（用户可见）
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 一个盒子有 14 个账号 | 只看到 **10** 个，其余**静默丢失** | **14 个全部可见** |
+| 一个盒子有 30 个账号 | 只看到 10 个 | 30 个全在 DOM，**装不下则滚动**（账号都够得到） |
+| 账号名文字 | 沿环倾斜，左右相反、上下近竖排 | **全部水平** |
+| 第 11 个及以后 | 无法选中（根本没渲染） | **可点击选中**；数字键只覆盖前 10 个，页脚**明说**这件事 |
+| 状态 | 小圆点（在线/离线） | **文字**：在线 ×N / 待登录 / 离线 / 未授权·已暂停 |
+
+★ **为什么数字键只覆盖前 10 个**：键位只有 `1-9` + `0`。这是**刻意的取舍** ——
+宁可少一个快捷方式，也**不静默丢账号**；并且把边界写在界面上，不让用户自己猜。
+
+### 四、新增判据
+
+`tools/verify/verify-acct-grid.mjs`（**真起 Chromium**）：
+① 源码不得再对账号列表 `slice(0, N)`、`WHEEL_MAX`/`buildSectorWheel` 必须已清除；
+② **两份样式类名集合必须一致**（小窗 CSS vs 浮层内联 —— 漏一条就少一块样式）；
+③ 运行期：**18 个账号必须渲染 18 格**、第 18 个必须在 DOM 里、数字键角标恰好 10 个、
+页脚明说边界、账号名**零旋转**；**30 个时全部进 DOM 且装不下可滚动**。
+
+★★ 这条判据只能靠**计数**：截图里少 8 个账号，人眼不一定数得出来（它们本来被排成环形）。
+
+### 五、门禁实测（本机 Node 24.19.0）
+
+```
+npm run typecheck                              → 0 错误
+npm run build                                  → BUILD_OK
+npm run check-deps                             → 0 幽灵依赖
+node tools/verify/verify-acct-grid.mjs         → RESULT: OK（含 18/18 与 30/30 计数）
+node tools/verify/verify-load.mjs              → 17/17（真起 Chromium --load-extension）
+全量静态判据 + 浏览器判据 17/17 全绿
+```
+
+★ 另外做了两次**真机视觉核验**（非自动化）：真起 Chromium 打开
+`chrome-extension://<id>/ui/wheel/wheel.html`，确认
+① 页面初始化出 `.acct-grid`，标题栏/空态都在，**无未捕获错误**，
+② **旧环形的类（`.sector` / `.hub-bg` / `.box-track`）零残留**。
+
+> ⚠️ **未做真机点击验收**：账号数据走云端（v3.18 起 `par.list` 需云端授权），
+> 验证档案里必然为空 ⇒ **"点一个账号真的切过去了"这件事仍须人工走一遍**。
+> 上面的 18/18 用的是合成数据渲染真实模块，验的是**渲染**，不是数据链。
+
+
+
+**清理死协议（8 处），并把"死协议"这件事变成一条**能红的判据**。**
+
+起因是 4.0.1 的审计列出一批"有定义、有处理分支、**没有任何人会走到**"的协议。
+它们**不报错、`typecheck` 与 `build` 全绿**，只是永远不被走到 ——
+而读代码的人会以为存在一条真实通路。
+
+### 一、删了什么（每项都给了判据）
+
+| 项 | 连带删除 |
+|---|---|
+| `site.grants.list` / `site.grant.add` / `wheel.toggle` | `messages.ts` 的 3 组 kind/响应类型 + `dispatch` 的 3 个 case |
+| `cloud.auth`（标了 `@deprecated` 却零发送方） | `exchangeDeviceCode()`（`cloud-store.ts`）+ SW 的 import 与 case |
+| `CloudMergeReport` | 仅类型（产生它的 `cloud.migrate` 早随 v3.18 删除） |
+| `registerAuthHandlers()` | **整块闭包**：`MENU_ID` / `hostPattern` / `writeGrants` / `grant()` / `grantCurrentTab()` / `extractHost()` —— 连带那个**从未注册**的右键菜单与 `add_current_site` 快捷键监听 |
+| `okOf()` | `send.ts` 里对 `Result` 的 import（`noUnusedLocals` 会抓到） |
+
+★ 删完后 `verify-deadprotocol` 实测：**26 → 25 个 kind，零死协议**。
+★ **活的东西一件没动**：`siteAuth.list()`（备份导出在用）、`toggleAccountWheel`（Alt+Q 在用）、
+`siteKey` / `readGrants` / `probeScheme` / `parseSiteInput` 全部保留 —— 按**规则 18** 与 HEAD 逐行对照确认。
+
+### 二、新增判据
+
+| 脚本 | 内容 |
+|---|---|
+| `tools/verify/verify-deadprotocol.mjs` | **双向查**：每个 kind 能否报出**发送方**、每个上行 op 能否报出**处理分支**。只出现在定义文件 ⇒ 类型孤儿；只出现在定义 + 处理文件 ⇒ 零发送方 |
+| `tools/verify/_lib/strip-comments.mjs` | ★ **字符串感知**的注释剥离器（公共件，不是判据） |
+
+### 三、★★ 两个"判据自己错了"的坑（都已立档）
+
+清理过程中门禁红了两次，**两次都不是代码错了**：
+
+1. **`PITFALLS #35` —— 注释剥离器吃掉了活代码。**
+   非贪婪块注释正则**会跨字符串字面量**匹配：`parallel.ts` 里的模板串含注释起始符，
+   让它以为注释从此开始，一路吃掉 **3082 字符**活代码 ⇒ 死协议判据把**有发送方**的
+   `data.import` 报成"零发送方"（**假红**）。⇒ 抽出字符串感知的剥离器，两个脚本改接。
+   **判据的输入被污染时，它比没有判据更坏** —— 没有判据时你知道自己不知道；
+   判据错时你会去改一个没坏的东西。
+
+2. **`PITFALLS #36` —— `git stash` 把 18 个文件的 LF 改成 CRLF。**
+   为验证"某个浏览器回归的失败是不是我造成的"，我 `git stash` 一次跑基线再 `pop`。
+   本仓 `core.autocrlf=true` 且**没有 `.gitattributes`**，而仓库里两种行尾并存
+   ⇒ `pop` 把 18 个 LF 文件全变成 CRLF：`git diff` 从 ~600 行膨胀到"每行都改了"，
+   而 `verify-log-redaction` 的抽取正则因为要找 `;` + **LF** 而匹配失败 ⇒ **三条判据假红**。
+   ⇒ `tmp/fix-eol.mjs` 按 HEAD 的原始 blob 逐文件对齐；18 个文件全部恢复。
+
+★ 两条的教训相同：**判据红了先怀疑输入，再怀疑结论。**
+
+### 四、那个"不是我造成的"失败（本次顺带证明）
+
+`verify-defect.mjs` 崩在 `par.create` 返回 `undefined`。我用 `git stash` 把代码退回
+**未改动的 HEAD** 跑同一条脚本 —— **同样崩在同一行** ⇒ 它是**既有的环境依赖问题**
+（v3.18 起 `par.create` 要求云端授权，而验证档案里没有云端账号），
+**不是本次改动引入的**。该脚本需要单独修（给它一条不依赖云端的路径），**本次未动**。
+
+### 五、门禁实测（本机 Node 24.19.0）
+
+```
+npm run typecheck                              → 0 错误
+npm run build                                  → BUILD_OK
+npm run check-deps                             → 0 幽灵依赖
+node tools/verify/verify-load.mjs              → 17/17（真起 Chromium --load-extension）
+静态判据 15/15 全绿（含反证脚本 23/23、3/3、4/4、5/5、6/6）
+node tools/verify/verify-deadprotocol.mjs      → RESULT: OK（25 kinds + 11 ops 零死协议）
+```
+
+> ⚠️ `verify-defect.mjs` / `verify-jarhygiene.mjs` 等**浏览器回归需要云端授权或真实环境**，
+> 本机跑不通 —— 上面那条"17/17"是**装载冒烟**，它**不覆盖**登录/列表/盒子/设备流。
+> 删协议这类改动**改变了消息面**，所以仍建议人工走一遍：打开账号 → 自动填表 →
+> **备份导出**（它用到 `siteAuth.list()`，是本次唯一受影响的活跃路径）。
+
+## 4.0.1（2026-10-12）
+
+**修六个"修好之后 `typecheck` 与 `build` 照样全绿"的缺陷，并给每条配上**能红的判据**。**
+
+起因是按「功能完整性 / 可维护性」两个维度对全仓做了一次审计：
+本次修的全部不是类型错误，而是**两个事实不一致**、**走了补丁版 API**、
+**文案指向不存在的控件**、**静默失败**这四类 —— 它们共同的危险是**没有信号**。
+
+### 一、修了什么
+
+| # | 缺陷 | 根因（一句话） | 位置 |
+|---|---|---|---|
+| 1 | `par.open` 恒返回 `reused: false` | 正确值在函数开头**已算过一次**（给 forensics），`return` 处又写了一遍字面量 ⇒ **同一事实两个来源** | `core/parallel-session.ts` |
+| 2 | 叛逃清扫 `nsWipeShared()` **一个库都没删过** | 它读的 `indexedDB.databases()` / `caches.keys()` **已被本扩展打了补丁**（剥掉 ns 前缀）⇒ `startsWith(ns)` 恒 false；而补丁版 `deleteDatabase()` 还会**再加一次**前缀 | `content/shield-main.ts` |
+| 3 | 明文账密对绑定页签内**任意 iframe** 可见 60 秒 | `sb:autoLoginRequest` 只校验 `sender.tab.id`、**不校验 frame**，而 `auto-login.js` 是 `all_frames: true` | `background/service-worker.ts` |
+| 4 | 四处报错文案指向**已废除的"数据源"控件** | v3.18 删了数据源切换，文案未同步 ⇒ 用户按提示**找不到任何入口** | `cloud-store.ts` ×3、`parallel.ts` ×1 |
+| 5 | 管理页**每 3 秒无条件写一次磁盘** | `loadSites()` 由 `setInterval(…, 3000)` 驱动，而它每次都 `storage.local.set({ql:blockedHosts})` | `ui/parallel/parallel.ts` |
+| 6 | `send()` 把 `undefined` 交给调用点 ⇒ `refreshAll()` 中途抛错、页面停在半旧状态 | 既不读 `chrome.runtime.lastError`、也不设超时；无接收端时回调收到 `undefined` | `ui/send.ts` |
+
+★ 修 #3 时**刻意没有一刀切 `frameId === 0`**：目标站的**密码框就在同源 `srcdoc` iframe 里**
+（`auto-login.ts` 文件头），而 `<all_urls>` 不注入 `about:srcdoc` ⇒ 一刀切会打断自动填表主链路。
+⇒ 判据改为**来源域匹配**（frame 的 origin host 必须等于该页签绑定的站点 host），
+两侧都过 `hostNoPortOf`（内网站点带端口），取不到 origin 时 **fail-closed**。
+
+### 二、顺带接上两条**断了的上行**
+
+- `journalRollbackDone`：壳**一直在发**，后台**从来没有处理分支** ⇒ 叛逃回滚的"完成"在取证里完全不可见。已补 `forensics` 分支。
+- 新增 `nsWipeSharedDone` 回执：清扫此前**完全静默**，而"清掉了 0 个"与"清扫根本没生效"
+  在取证里**长得一模一样** —— 这正是缺陷 #2 能藏这么久的原因。
+
+### 三、新增验证资产（这是本次的重点）
+
+| 脚本 | 内容 |
+|---|---|
+| `tools/verify/verify-defectfix.mjs` | 上述六个缺陷的**回归判据**（静态、秒级）。六组断言，逐条写明"拆掉什么它会红" |
+| `tools/verify/verify-falsify-defectfix.mjs` | ↑ 的**反证 6/6**：把仓库复制到 `tmp/`，逐个注入"修复前"的写法，要求**变红且红在对的那一节**；真实工作区**从未被改动** |
+
+★★ **写这两条判据的过程本身就是一次教训**，四处错误**全部表现为"判据绿"或"报出不存在的缺陷"**：
+
+1. **读到自己的注释**：断言扫全文件，而被修复说明里**逐字引用了旧写法**（`reused: false`、
+   `indexedDB.databases()`）⇒ 断言被自己的说明文字喂饱。**六组里有两组**栽在这上面。
+2. **范围截断**：用 `/\n\}/` 取函数体收尾，而 `loadSites` 里**有缩进为 0 的内部块**
+   ⇒ 取到的"函数体"截断在第一个内部块，**守卫在截断点之后** ⇒ 判据报"没有守卫"（假红）。
+   后改为**花括号配平**，且**必须在未剥注释的原文上配平**（`stripComments` 会跨字符串字面量误吃真实代码）。
+3. **锚点不唯一**：`String.replace` 只改第一处，而我的锚点短语在文件里出现两次
+   ⇒ 注入落在不相干的字符串上，判据"没变红"被误读成"判据恒真"。现 `poke()` 会**数出现次数**，不是 1 就明确失败。
+4. **范围没划到函数体**：`send()` 的断言扫全文件，而注入的做法是把旧实现**另起一个函数名**放回文件里
+   ⇒ 字符串仍在，断言照样绿。现改为**限定在 `send` 的函数体内**。
+
+⇒ 这四条与规则 23 同源：**判据的范围没划对，结论必然是错的 —— 而且错得像是发现了缺陷。**
+
+### 四、文档同步（规则 12 / 27 / 34）
+
+- `docs/PITFALLS.md`：新增 **#32**（同一事实被算两次）、**#33**（补丁后 API 的两副面孔）、
+  **#34**（废功能时只删了使用方 ⇒ 死协议）⇒ **31 → 34 条**。
+- `docs/RULES.md` 规则 30 追加**对偶方向**（"协议在、没人发"）与实测清单。
+- `tools/verify/README.md`：**补收两个在盘上却从未进表**的脚本
+  （`verify-agents-budget` / `verify-boxsync`）；修正 `verify-icons` 的 `39/39 → 42/42`；
+  脚本数 `24 → 26`；并写明"数量以 `run-all.mjs --list` 为准"。
+- `AGENTS.md` / `run-all.mjs`：删掉写死的"跑全部 **12** 个"（实际 26），改为指向 `verify:list`；
+  订正"每个脚本都真起 Chromium"这句（**只有浏览器回归真起**，其余是纯静态秒级）。
+
+### 五、门禁实测（本机 Node 24.19.0）
+
+```
+npm run typecheck                              → 0 错误
+npm run build                                  → BUILD_OK（11 入口）
+npm run check-deps                             → 0 幽灵依赖
+node tools/verify/verify-defectfix.mjs         → RESULT: OK（六组）
+node tools/verify/verify-falsify-defectfix.mjs → 6/6 反证通过（真实源码未被改动）
+node tools/verify/verify-boxsync.mjs           → RESULT: OK
+node tools/verify/verify-log-redaction.mjs     → 121/121
+node tools/verify/verify-falsify-logredaction.mjs → 23/23
+node tools/verify/verify-forensics-redaction.mjs  → 25/25
+node tools/verify/verify-falsify-forensics.mjs    → 3/3
+node tools/verify/verify-icons.mjs             → 42/42
+node tools/verify/verify-falsify-icons.mjs     → 4/4
+node tools/verify/verify-user-docs.mjs         → 7/7
+node tools/verify/verify-falsify-userdocs.mjs  → 5/5
+node tools/verify/verify-css-vars.mjs          → 22/22
+node tools/verify/verify-brand.mjs             → 10/10
+node tools/verify/verify-agents-budget.mjs     → 11/11
+```
+
+> ⚠️ **未做真机验收**：本次全部判据都是**静态**的，它们只能证明"写法还在"，
+> **不能证明**"凭据真的只交给了本站点的 frame""清扫真的删掉了库"。
+> 那两件事需要真起 Chromium + 真实云端/内网环境 ⇒ **仍须人工走一遍**
+> （登录 / 自动填表 / 一个账号登出后重开的叛逃处置）。
+
+> **尚未处理（已知的死协议）**：`site.grants.list` / `site.grant.add` / `wheel.toggle`
+> 有 handler 却**零发送方**；`CloudMergeReport` 是类型孤儿；`okOf()` 零调用点；
+> `registerAuthHandlers()` 全仓无调用点（⇒ 右键菜单「将当前站点添加为会话站点」从未注册）。
+> 清单与判据写在 `docs/PITFALLS.md` **#34**。删除时按**规则 18** 与 HEAD 逐行对照。
+
+
 ## 4.0.0（2026-10-11）
 
 **更名：`quick-login` → `akso-pass`；品牌名 `QuickLogin` → Akso Pass。** 主版本号（3.17.1 → 4.0.0）的依据不是改名本身，而是 3.18 已完成、本次才随版本号固化下来的**本地数据源整体废除**（见 §6）：一个被移除的能力 + 一个更名后的对外标识，按语义化版本都属于"不兼容变更"。

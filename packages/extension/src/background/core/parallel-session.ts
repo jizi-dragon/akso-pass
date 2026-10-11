@@ -884,13 +884,15 @@ export const parallelSession = {
         tabId = existing;
       }
     }
+    // ★★ 「复用」这个事实**只在这里算一次**（见函数末尾的注释：曾经它被算成两个值）。
+    const reused = tabId !== null;
     void forensics('open', {
       accountId,
       forceNewTab,
-      reused: tabId !== null,
+      reused,
       // 云端账号的凭证在服务端（hasPassword），本地才是 credentials —— 取证字段要如实反映
       // ★ v3.18：`credentials` 字段已删（本地数据源废除）⇒ `hasPassword` 是唯一依据。
-    hasCredentials: account.hasPassword === true,
+      hasCredentials: account.hasPassword === true,
       box: account.box ?? null,
     });
 
@@ -961,7 +963,13 @@ export const parallelSession = {
     await applyTitle(tabId, account.tabName);
     await syncAccountRules(account.id, account.siteHost);
     void diag(`open(${accountId}) 完成 tabId=${tabId}`);
-    return { tabId, reused: false };
+    // ★★ 曾经这里**硬编码 `reused: false`**，而正确值在函数开头就算出来了
+    //    （见上面的 `forensics('open', { reused: tabId !== null })`）。
+    //    当时 UI 不消费该字段 ⇒ 无人发现；但协议（`messages.ts` 的 `par.open`）
+    //    声明了它、forensics 里记的又是对的 ⇒ **同一个事实有两个值**，
+    //    任何一个未来的消费方都会以 50% 的概率读错，且读错了也不会报错。
+    //    判据：`par.open` 的返回值必须与 `forensics('open')` 的 `reused` 一致。
+    return { tabId, reused: reused };
   },
 
   /** 解绑单个标签页（不动账号数据）；最后一个绑定页签关闭 = 该账号登录态终结（v3.12.0） */
@@ -1116,6 +1124,29 @@ export const parallelSession = {
       }
       return undefined;
     }
+    if (payload.op === 'journalRollbackDone') {
+      // ★ 2026-10-12 补：壳一直在发这条（`shield-main.ts` 的 journalRollback 之后），
+      //   而这里**从来没有处理分支** ⇒ 叛逃处置的"回滚完成"在取证里完全不可见。
+      //   它不是噪声：回滚是否真的跑完，决定了后面 nsWipeShared 的清扫有没有意义。
+      void forensics('journalRollbackDone', { accountId: binding.accountId, tabId });
+      return undefined;
+    }
+    if (payload.op === 'nsWipeSharedDone') {
+      // ★ 2026-10-12 补：清扫结果回执。此前清扫是静默的，而"清掉了 0 个"
+      //   与"清扫逻辑根本没生效"在取证里长得一样（后者曾是真实缺陷）。
+      //   记 `dbsDropped` / `cachesDropped` 让这两者当场可分。
+      void forensics('nsWipeSharedDone', {
+        accountId: binding.accountId,
+        tabId,
+        dbsDropped: payload.dbsDropped,
+        cachesDropped: payload.cachesDropped,
+        ...(payload.error ? { error: payload.error } : {}),
+      });
+      if (payload.error) {
+        void diag(`nsWipeShared(tab=${tabId}) 清扫出错：${payload.error}`);
+      }
+      return undefined;
+    }
     return undefined;
   },
 
@@ -1138,6 +1169,19 @@ export const parallelSession = {
   async refreshTitle(accountId: string): Promise<void> {
     const account = await parallelStore.get(accountId);
     await Promise.all(boundTabsOf(accountId).map((t) => applyTitle(t, account.tabName)));
+  },
+
+  /**
+   * 该标签页绑定的**站点 host**（未绑定返回 `undefined`）。
+   *
+   * ★ 2026-10-12 新增，用途单一且安全相关：`sb:autoLoginRequest` 必须判断
+   *   "**这个 frame 是不是本账号站点的**"才能把明文账密交给它。
+   *   此前那个处理分支只认 `sender.tab?.id`、不认 frame —— 而 `auto-login.js`
+   *   是 `all_frames: true` ⇒ 绑定页签里**任意** iframe（含第三方广告/统计 iframe）
+   *   在一次登录的 60 秒 TTL 内都能索取到该账号的明文口令。
+   */
+  boundHostOf(tabId: number): string | undefined {
+    return bindings.get(tabId)?.host;
   },
 
   /** 诊断用内部状态快照（经 ql.diag 消息暴露给台架） */

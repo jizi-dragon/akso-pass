@@ -1,12 +1,24 @@
 import type { LogRecord } from './log';
-import type { ParallelAccount, ParallelAccountStatus, SiteGrant } from './types';
+import type { ParallelAccount, ParallelAccountStatus } from './types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
-/** UI / content ⇄ background 的请求协议 */
+/**
+ * UI / content ⇄ background 的请求协议。
+ *
+ * ★★ 2026-10-12 删：`site.grants.list` / `site.grant.add` / `wheel.toggle` 三个 kind
+ *   在 `dispatch` 里有处理分支、在这里有定义，而**全仓零发送方** ⇒ 它们是死协议
+ *   （`docs/PITFALLS.md` #34）。删除的判据是**双向查**：① 每个 kind 能报出它的
+ *   **发送方**；② 每个上行 op 能报出它的**处理分支**。
+ *   ★ 删掉后若有旧代码仍在发，会落到 `dispatch` 的 `default` 分支 ——
+ *     那里 `log.error` + 明确的错误响应（**可见的失败**，而不是看起来成功的空数组）。
+ *
+ * ★ 说明**必须写在联合体外面**：本仓的判据用「从头吃到第一个 `;` + 换行」来抽取这个
+ *   联合（`verify-log-redaction.mjs` 第 9 节）。写在里面的注释只要含一个**中文分号
+ *   ＋换行**，抽取就会**提前收尾**，于是 kind 集合变空 ⇒ 三条判据同时假红
+ *   （实测：那一轮 `118/121`，报"没有契约之外的孤例 case"却列了全部 25 个）。
+ */
 export type RuntimeRequest =
-  | { kind: 'site.grants.list' }
-  | { kind: 'site.grant.add'; host: string }
   | { kind: 'par.list' }
   /* ---- 离线只读副本的可见性（v3.19，2026-10-09）----
    * 决策：本地数据源废除后，离线**只能看副本**（可看、可开页签；
@@ -43,16 +55,10 @@ export type RuntimeRequest =
    * `records` 里的 `msg` **必须是已打码的**（`getForwardingLogger` 保证）。
    */
   | { kind: 'ql.log'; records: LogRecord[] }
-  | { kind: 'wheel.toggle' }
   | { kind: 'data.export' }
   | { kind: 'data.import'; data: DataBackup }
   /* ---- 数据源（本地 ↔ 云端，v3.14）---- */
   | { kind: 'cloud.state' }
-  /**
-   * @deprecated 手抄授权码那条老路（网页出码 → 人抄进扩展 → device-token）。
-   * 端点还在，但**新流程一律走 `cloud.device.*`**（RFC 8628 设备流，见 v3.14.1）。
-   */
-  | { kind: 'cloud.auth'; code: string }
   /* ---- 云端设备授权（RFC 8628 设备流，v3.14.1）---- */
   /** 起一次设备授权（无凭据）：服务端返回批准页 URL；`deviceCode` 留在 SW 内存里，不回传 */
   | { kind: 'cloud.device.start'; clientName?: string }
@@ -113,8 +119,6 @@ export interface DataBackup {
 }
 
 export type RuntimeResponse =
-  | { kind: 'site.grants.list'; result: Result<SiteGrant[]> }
-  | { kind: 'site.grant.add'; result: Result<SiteGrant> }
   | { kind: 'par.list'; result: Result<Array<ParallelAccount & ParallelAccountStatus & { password: boolean }>> }
   /* `offline=true` ⇒ 用户此刻看到的列表**就是**只读副本（不是"可能旧"）。
    * `savedAt` / `ageMs` 让界面能说准"这是多久前的副本"，
@@ -133,12 +137,10 @@ export type RuntimeResponse =
   | { kind: 'ql.diag'; result: Result<Record<string, unknown>> }
   /** ★ 前端日志转发（v3.19）。SW **不回传内容**（避免日志变成往返流量）。 */
   | { kind: 'ql.log'; result: Result<{ accepted: number }> }
-  | { kind: 'wheel.toggle'; result: Result<{ opened: boolean }> }
   | { kind: 'data.export'; result: Result<DataBackup> }
   | { kind: 'data.import'; result: Result<{ created: number; skipped: number; hosts: string[] }> }
   /* ---- 数据源（本地 ↔ 云端，v3.14）---- */
   | { kind: 'cloud.state'; result: Result<CloudState> }
-  | { kind: 'cloud.auth'; result: Result<{ email: string }> }
   /* ---- 云端设备授权（RFC 8628 设备流，v3.14.1）---- */
   | { kind: 'cloud.device.start'; result: Result<CloudDeviceStart> }
   | { kind: 'cloud.device.poll'; result: Result<CloudDevicePoll> }
@@ -226,26 +228,12 @@ export type CloudDevicePoll =
   | { status: 'unknown' }
   | { status: 'stopped' };
 
-/**
- * 本地 → 云端合并回报（由 background 的 migrateLocalToCloud 产生）。
- * 服务端字段为**如实回报**（created/updated/skipped/conflicts…），扩展自加 missingPassword。
- */
-export interface CloudMergeReport {
-  /** 本地账号总数（= clientAccountCount，也是两个核对点的比照基准） */
-  localCount: number;
-  /** 明文口令取不到的账号数（无凭证/解密失败）——它们按空口令上传，必须显式告知用户 */
-  missingPassword: number;
-  /** 上传的站点数 */
-  sites: number;
-  /** 服务端如实回报：收到的账号条数（核对点一） */
-  received: number;
-  /** 云端账号总数（核对点二：snapshot 的 counts.accounts） */
-  totalAccounts: number;
-  created: number;
-  updated: number;
-  skipped: number;
-  conflicts: number;
-}
+/* ★★ 2026-10-12 删：`CloudMergeReport`（原在此处）。
+ *   它是"本地 → 云端合并回报"的类型，而**产生它的 `cloud.migrate` 在 v3.18 已随
+ *   本地数据源整体废除** ⇒ 它成了**类型孤儿**：有完整定义、有注释、**零引用**。
+ *   ★ 判据不是"有没有人 import 它"（type-only 的 import 会被 `noUnusedLocals` 抓到，
+ *     但**零 import** 时什么都不会报）——而是**它描述的那个过程还在不在**。
+ *     过程没了 ⇒ 类型必须一起走，否则读代码的人会以为存在一条迁移通路。 */
 
 /** 常用页面书签条目（v3.16）；`path` 支持相对路径（`/admin/...`）或完整网址 */
 export interface FavoriteItem {

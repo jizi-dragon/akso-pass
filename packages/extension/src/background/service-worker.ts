@@ -131,7 +131,6 @@ import {
 import { getOfflineStatus, parallelStore } from './core/parallel-store';
 import {
   CLOUD_DEFAULT_BASE_URL,
-  exchangeDeviceCode,
   fetchCloudBoxNames,
   getCloudAuth,
 } from './core/cloud-store';
@@ -143,7 +142,7 @@ import {
   loadInstanceStatuses,
   parseInstanceContext,
 } from './core/instance-status';
-import { tabRules } from './core/tab-rules';
+import { hostNoPortOf, tabRules } from './core/tab-rules';
 
 function ok<T>(data: T): Result<T> {
   return { ok: true, data };
@@ -185,11 +184,11 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
   //   排障时：`Site.setLogLevel('debug')` 或看诊断包的 `appLogs`。
   log.debug('dispatch kind=%s', String((req as { kind?: unknown }).kind));
   switch (req.kind) {
-    case 'site.grants.list':
-      // v2.4：旧站点清单入口已移除；保留空实现避免旧调用报 unhandled
-      return { kind: 'site.grants.list', result: { ok: true, data: [] } };
-    case 'site.grant.add':
-      return { kind: 'site.grant.add', result: fail('v2.4 起改为在弹窗/并行页直接授权') };
+    // ★★ 2026-10-12 删：`site.grants.list` / `site.grant.add` 两个 kind 在这里
+    //   各有一个**占位实现**（一个恒返回 `[]`、一个恒返回失败），而**全仓零发送方** ⇒
+    //   它们不是"兼容旧调用"，只是让人以为存在一条真实通路（`docs/PITFALLS.md` #34）。
+    //   删掉后它们会落到 `default` 分支，那里有 `log.error` + 明确的错误响应
+    //   ⇒ 万一真有旧代码在发，行为是**可见的失败**而不是**看起来成功的空数组**。
     case 'par.grantChanged': {
       // 授权增撤后由 UI 通知：刷新授权健康缓存（下轮 par.list 生效）
       invalidateEnforcementCache();
@@ -381,13 +380,6 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       const r = await tryRun(() => parallelSession.open(req.id, req.forceNewTab === true));
       return { kind: 'par.open', result: r };
     }
-    case 'wheel.toggle': {
-      const r = await tryRun(async () => {
-        await toggleAccountWheel();
-        return { opened: wheelWinId !== null };
-      });
-      return { kind: 'wheel.toggle', result: r };
-    }
     case 'data.export': {
       const r = await tryRun(async () => {
         const [accounts, grants, stored] = await Promise.all([
@@ -520,12 +512,6 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       });
       return { kind: 'cloud.state', result: r };
     }
-    case 'cloud.auth': {
-      // @deprecated 手抄授权码那条老路（网页出码 → 人抄进扩展 → device-token）。
-      // 保留是为了不删别人的路，但界面已经不再调用它：新流程一律走下面的 cloud.device.*
-      const r = await tryRun(() => exchangeDeviceCode(req.code));
-      return { kind: 'cloud.auth', result: r };
-    }
     case 'cloud.device.start': {
       // 设备流第一拍（无凭据）。deviceCode 只留在 cloud-device 的模块内存里，**不回传页面**
       const r = await tryRun(() => startDeviceFlow(req.clientName));
@@ -575,6 +561,30 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
   }
 }
 
+/**
+ * 从 `sender.origin` / `sender.url` 取出 **host（含端口语义的裸 host，不含端口）**。
+ *
+ * ★ 2026-10-12 新增：`sb:autoLoginRequest` 的来源域判定专用（见下面的处理分支）。
+ *   比对的是 **host 而不是完整 origin**，因为 `bindings` 里存的 `host` 来自
+ *   账号的 `siteHost`（可能带 `:port`，内网站点形态），而 DNR 侧另有
+ *   `hostNoPortOf` 做同样的剥离 —— 这里保持与它一致，免得"带端口的站点永远匹配不上"
+ *   而表现为**自动填表静默失效**。
+ *
+ * 取不到（`about:blank` / 无 origin 的 frame / 解析失败）返回 `undefined`，
+ * 调用方必须按 **fail-closed** 处理。
+ */
+function originHostOf(raw: string | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const host = new URL(raw).hostname;
+    return host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   // 0. shield 桥上行：绑定查询 / token 捕获上报（先于通用分流）
   if (
@@ -597,6 +607,39 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   ) {
     const tabId = sender.tab?.id;
     if (tabId === undefined) {
+      sendResponse(null);
+      return true;
+    }
+    // ★★ 2026-10-12 修：**只把明文账密交给本账号站点自己的 frame**。
+    //
+    //   此前这里只校验 `sender.tab.id`、**不校验 frame** —— 而 `auto-login.js`
+    //   是 `all_frames: true`（manifest），于是绑定页签里**任意** iframe
+    //   （第三方广告/统计/嵌入页）在一次登录的 60 秒 TTL 内都能索取到
+    //   该账号的明文用户名与口令。
+    //
+    //   ★ 为什么不是"只许顶层 frame"（`frameId === 0`）：目标站的**密码框就在
+    //     同源 `srcdoc` iframe 里**（见 `auto-login.ts` 文件头），而 `<all_urls>`
+    //     不注入 `about:srcdoc` —— 一刀切会打断自动填表这条主链路。
+    //   ⇒ 判据改为**来源域匹配**：frame 的 origin host 必须等于该页签绑定的站点 host。
+    //     · 顶层 frame：origin 就是站点 ⇒ 通过
+    //     · 同源 iframe：同 origin ⇒ 通过（保留既有能力）
+    //     · 跨域 iframe：origin 不同 ⇒ **拒绝**（这正是要堵的口子）
+    //   ★ 取不到 origin 时**拒绝**（fail-closed）：这是凭据，宁可少填一次。
+    //   ★ 两侧都过 `hostNoPortOf`：`bindings` 里的 host 来自账号 `siteHost`，
+    //     内网站点形态**带端口**（`10.100.0.105:8080`），而 `sender.origin` 的
+    //     `hostname` 不带 ⇒ 不归一化的话带端口站点会**永远匹配不上**，
+    //     表现为"自动填表对这类站点静默失效"（正是本仓反复出现的失败形态）。
+    const boundHost = parallelSession.boundHostOf(tabId);
+    const boundHostBare = boundHost ? hostNoPortOf(boundHost) : undefined;
+    const senderHost = originHostOf(sender.origin ?? sender.url);
+    if (!boundHostBare || senderHost !== boundHostBare) {
+      void forensics('autoLoginRejected', {
+        tabId,
+        frameId: sender.frameId,
+        reason: !boundHostBare ? 'unbound' : 'origin-mismatch',
+        boundHost: boundHostBare ?? null,
+        senderHost: senderHost ?? null,
+      });
       sendResponse(null);
       return true;
     }

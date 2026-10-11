@@ -15,7 +15,7 @@
  * 平台请求在**该页签的页面主世界**发出，从而拿到 DNR 的按账号改头与 `_qlck` 缓存分区。
  */
 import type { StatusContext, StatusList } from '../shared/messages';
-import { RING_WHEEL_CSS } from '../ui/wheel/ring-wheel-style';
+import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 import { buildStatusWheel, type StatusWheelItem } from '../ui/wheel/status-core';
 
 const WIN = window as typeof window & {
@@ -81,7 +81,8 @@ async function mount(): Promise<void> {
   const shadow = host.attachShadow({ mode: 'open' });
 
   const style = document.createElement('style');
-  style.textContent = RING_WHEEL_CSS;
+  // 两份一起注入：网格本体（与小窗 <link> 的那份是**同源同字节**）+ 浮层外壳
+  style.textContent = ACCT_GRID_CSS + OVERLAY_CHROME_CSS;
   shadow.append(style);
 
   const wheelRoot = document.createElement('div');

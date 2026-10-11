@@ -1,13 +1,16 @@
-import { buildRingWheel, type RingItem } from './ring-wheel';
+import { buildItemGrid } from './item-grid';
+import type { GridItem } from './item-grid';
 
 /**
- * 状态轮盘（v3.15，Alt+W）—— 「通用单环轮盘」在实例状态上的适配层。
+ * **生命周期状态**网格（Alt+W；v4.1.2 由环形改为定尺网格）。
  *
- * 语义（相对通用内核的增量）：
- *  - 扇区 = 生命周期状态；**当前状态**用品牌色高亮 + 圆点；
- *  - 悬停预演：Hub 主行换成目标状态名、底行换成「将把「当前」改为「X」」（v3.15 的交互约定：
- *    点即执行，但先把后果说清楚）；
- *  - 状态名普遍 2–4 字，超 8 字截断由内核统一处理。
+ * 语义（沿用 v3.15 的交互约定，只换布局）：
+ * - 一格 = 一个状态；**当前状态**加高亮环（`.ag-cell-current`）；
+ * - 点即执行 —— 但格子里直接把"当前"标出来，不必再靠 Hub 预演；
+ * - 状态数常有十几个（实测 13 个），而**网格一页 20 格** ⇒ 一屏全见。
+ *
+ * ★ 为什么状态轮盘比账号轮盘更该用网格：状态是**固定枚举**，用户不需要空间记忆，
+ *   而"一眼看全 + 当前项高亮"正好是网格的强项。
  */
 export interface StatusWheelItem {
   id: string;
@@ -18,7 +21,7 @@ export interface StatusWheelItem {
 
 export interface StatusWheelOpts {
   statuses: StatusWheelItem[];
-  /** Hub 顶行：生命周期名（更稳定），缺省退到实例名 */
+  /** 标题栏主行：生命周期名（更稳定），缺省退到实例名 */
   lifecycleName: string;
   /** 实例 / 对象展示名（空态用） */
   instanceLabel: string;
@@ -28,45 +31,37 @@ export interface StatusWheelOpts {
 }
 
 export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void {
+  root.innerHTML = '';
+  root.classList.add('acct-grid');
+
   const current = opts.statuses.find((s) => s.isCurrent);
   const currentName = current?.name ?? '';
-  const defaultSub = opts.disabledReason
-    ? opts.disabledReason
-    : currentName
-      ? '点选切换状态 · 数字键 1-9 快选'
-      : '点选切换状态（当前状态未知）· 数字键快选';
+  const n = opts.statuses.length;
 
-  const items: RingItem[] = opts.statuses.map((s) => ({
+  const items: GridItem[] = opts.statuses.map((s) => ({
     key: s.code,
     label: s.name,
+    // 副行只给当前项写"当前"，其余留空 —— 避免 13 行都在喊同一句话
+    sub: s.isCurrent ? '当前' : undefined,
+    subKind: s.isCurrent ? 'on' : undefined,
+    accent: s.isCurrent ? undefined : '#94A3B8',
     current: s.isCurrent,
   }));
 
-  buildRingWheel(root, {
-    items,
-    hubTop: opts.lifecycleName || opts.instanceLabel || '当前实例',
-    hubMain: currentName || '未知',
-    hubSub: defaultSub,
-    empty: {
-      cap: opts.instanceLabel || '当前页面',
-      line1: opts.disabledReason || '没有读到可切换的状态',
-      line2: opts.disabledReason ? '请切到对象实例页再试' : '可能是当前账号无权查看该生命周期',
-    },
-    onHover: opts.disabledReason
-      ? undefined
-      : (key) => {
-          if (key === null) {
-            return { main: currentName || '未知', sub: defaultSub };
-          }
-          const it = opts.statuses.find((s) => s.code === key);
-          if (!it) {
-            return undefined;
-          }
-          return {
-            main: it.name,
-            sub: `将把「${currentName || '当前'}」改为「${it.name}」`,
-          };
-        },
+  const meta = opts.disabledReason
+    ? '不可切换'
+    : n
+      ? `${n}/${n} 个${currentName ? ` · 当前 ${currentName}` : ' · 当前状态未知'}`
+      : '无状态';
+
+  const wrap = buildItemGrid({
+    items: opts.disabledReason ? [] : items,
+    // 状态是固定枚举、一页装得下 ⇒ 不做分页（pageCount=1 时内核自动隐藏翻页控件）
+    pageCount: 1,
+    pagePos: 0,
+    title: opts.lifecycleName || opts.instanceLabel || '当前实例',
+    meta,
+    onPage: () => undefined,
     onPick: (code) => {
       if (opts.disabledReason) {
         return;
@@ -76,5 +71,11 @@ export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void
         opts.onPick(it);
       }
     },
+    empty: {
+      line1: opts.disabledReason || '没有读到可切换的状态',
+      line2: opts.disabledReason ? '请切到对象实例页再试' : '可能是当前账号无权查看该生命周期',
+    },
+    tip: opts.disabledReason ? '当前不可切换' : `点击或按数字键切换 · 共 ${n} 个状态`,
   });
+  root.append(wrap);
 }

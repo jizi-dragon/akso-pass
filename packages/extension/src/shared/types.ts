@@ -55,7 +55,16 @@ export type BridgeUpPayload =
   /** 页内 document.cookie 写入的 Cookie 袋全量视图（v3.10.6 袋→快照回流）：
    *  绑定页签的 Cookie 写入被 MAIN 壳虚拟化进袋子，永不落真实 jar——服务端登录后
    *  由页内 JS 写入的票据/凭据若不回流快照，网络平面回放永远缺失 */
-  | { op: 'bagChanged'; bag: Record<string, string> };
+  | { op: 'bagChanged'; bag: Record<string, string> }
+  /** ★ `nsWipeShared` 的**结果回执**（2026-10-12 补）。刻意用**独立的 op 名**，
+   *  而不是给下行的 `nsWipeShared` 加可选字段：同名字面量在判别联合里会**合并**
+   *  （谁先匹配上算谁），于是"下行是命令、上行是回执"两种方向相反的东西会共用一个
+   *  类型 —— 读的人分不清、`switch` 也分不开。命名沿用既有的 `journalRollbackDone` 惯例。
+   *
+   *  为什么需要它：清扫此前**完全静默**，而"清扫成功且无事可做"与"清扫逻辑根本没生效"
+   *  在取证里长得一模一样 —— 后者曾是真实缺陷（走了补丁版 `databases()`，
+   *  前缀已被剥掉 ⇒ `startsWith(ns)` 恒 false ⇒ 一个库都删不掉）。 */
+  | { op: 'nsWipeSharedDone'; dbsDropped: number; cachesDropped: number; error?: string };
 
 /** background → ISOLATED 桥的下行载荷 */
 export type BridgeDownPayload =

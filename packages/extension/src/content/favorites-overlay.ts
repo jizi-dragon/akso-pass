@@ -12,7 +12,7 @@
  */
 import type { FavoriteItem } from '../shared/messages';
 import { buildFavoritesWheel } from '../ui/wheel/favorites-core';
-import { RING_WHEEL_CSS } from '../ui/wheel/ring-wheel-style';
+import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 
 const WIN = window as typeof window & {
   __QL_FAV_ACTIVE__?: boolean;
@@ -68,7 +68,8 @@ async function mount(): Promise<void> {
   const shadow = host.attachShadow({ mode: 'open' });
 
   const style = document.createElement('style');
-  style.textContent = RING_WHEEL_CSS;
+  // 两份一起注入：网格本体（与小窗 <link> 的那份是**同源同字节**）+ 浮层外壳
+  style.textContent = ACCT_GRID_CSS + OVERLAY_CHROME_CSS;
   shadow.append(style);
 
   const wheelRoot = document.createElement('div');

@@ -9,9 +9,14 @@
 //   ⇒ 必须显式给 --browser。
 //
 // 用法：
-//   node tools/verify/run-all.mjs --browser              跑全部 12 个
-//   node tools/verify/run-all.mjs --browser --only v310  只跑名字含 v310 的
+//   node tools/verify/run-all.mjs --browser              跑全部（数量见 --list，别在注释里写死）
+//   node tools/verify/run-all.mjs --browser --only v310  只跑匹配的
 //   node tools/verify/run-all.mjs --list                 只列清单
+//
+// ★★ 这里**刻意不写"跑全部 N 个"**：这个注释曾长期写着 `12 个`，而脚本是
+//   `readdirSync` 自动发现的 —— 实测那时盘上已有 25 个。
+//   一个没人会去核对的数字会安静地过期，而它旁边就有一行能算出真值的命令。
+//   ⇒ 要数字就跑 `--list`（它打印的正是运行时真实数量）。
 
 import fs from 'node:fs';
 import path from 'node:path';

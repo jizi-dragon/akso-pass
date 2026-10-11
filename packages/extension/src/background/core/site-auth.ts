@@ -5,12 +5,6 @@ import type { SiteGrant } from '../../shared/types';
 /** ★ 2026-10-09 补：这个模块此前**没有任何日志**。 */
 const log = getLogger('site-auth');
 
-const MENU_ID = 'sessionbox-add-site';
-
-function hostPattern(host: string): string {
-  return `*://${host}/*`;
-}
-
 function siteKey(host: string): string {
   return host.toLowerCase();
 }
@@ -20,52 +14,30 @@ async function readGrants(): Promise<SiteGrant[]> {
   return (stored[LOCAL_KEYS.siteGrants] as SiteGrant[] | undefined) ?? [];
 }
 
-async function writeGrants(grants: SiteGrant[]): Promise<void> {
-  await chrome.storage.local.set({ [LOCAL_KEYS.siteGrants]: grants });
-}
-
+/**
+ * 授权痕迹的**读取**入口。
+ *
+ * ★★ 2026-10-12：这个对象**只剩 `list()` 一个成员** —— `grant()` / `grantCurrentTab()`
+ *   已随 `registerAuthHandlers()` 一并删除（它们构成一整块**没有任何调用点**的死代码，
+ *   见 `docs/PITFALLS.md` #34）。删除的理由与判据：
+ *
+ * | 成员 | 判定 |
+ * |---|---|
+ * | `list()` | **活的** —— `service-worker.ts` 的 `data.export` 用它填备份的 `sites` |
+ * | `grant()` | 只被 `grantCurrentTab()` 调用 ⇒ 死 |
+ * | `grantCurrentTab()` | 只被 `registerAuthHandlers()` 调用 ⇒ 死 |
+ * | `registerAuthHandlers()` | **全仓零调用点** ⇒ 死（连带右键菜单与 `add_current_site` 快捷键监听） |
+ *
+ * ★ 而**写入** `sb:siteGrants` 的活路径是 `ui/parallel/parallel.ts` 的导入流程
+ *   （`chrome.permissions.request` 之后写清单）—— 所以"写方"并不缺，
+ *   只是**不在这个模块里**。这正是当初容易误判的地方：
+ *   "`registerAuthHandlers` 没被调用"**不等于**"站点授权从来不被记录"。
+ */
 export const siteAuth = {
   async list(): Promise<SiteGrant[]> {
     return readGrants();
   },
-
-  async grant(host: string): Promise<SiteGrant> {
-    const normalized = host.toLocaleLowerCase();
-    const key = siteKey(normalized);
-    const ok = await chrome.permissions.request({ origins: [hostPattern(normalized)] });
-    if (!ok) {
-      throw new Error(`拒绝授权站点: ${normalized}`);
-    }
-    const grants = await readGrants();
-    if (!grants.some((g) => siteKey(g.host) === key)) {
-      grants.push({ host: normalized, grantedAt: Date.now() });
-      await writeGrants(grants);
-    }
-    return { host: normalized, grantedAt: Date.now() };
-  },
-
-  async grantCurrentTab(): Promise<string> {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const host = extractHost(tab?.url);
-    if (!host) {
-      throw new Error('当前标签页不是 http/https 站点');
-    }
-    await this.grant(host);
-    return host;
-  },
 };
-
-function extractHost(url: string | undefined): string | null {
-  if (!url) {
-    return null;
-  }
-  try {
-    const u = new URL(url);
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.host : null;
-  } catch {
-    return null;
-  }
-}
 
 /* ---------------- scheme（v3.10.9）：站点协议的探测 / hint / 解析 ---------------- */
 
@@ -146,27 +118,4 @@ export async function probeScheme(host: string): Promise<Scheme> {
   log.warn('probeScheme(%s) 两个探测都失败（https 与 http 的 favicon 都不通）⇒ '
     + '按安全偏好回落 https，靠「打开失败自学习」纠正', host);
   return 'https';
-}
-
-export function registerAuthHandlers(): void {
-  chrome.contextMenus.create(
-    {
-      id: MENU_ID,
-      title: '将当前站点添加为会话站点',
-      contexts: ['page', 'link'],
-    },
-    () => void chrome.runtime.lastError,
-  );
-
-  chrome.contextMenus.onClicked.addListener((info) => {
-    if (info.menuItemId === MENU_ID) {
-      void siteAuth.grantCurrentTab().catch(() => undefined);
-    }
-  });
-
-  chrome.commands.onCommand.addListener((command) => {
-    if (command === 'add_current_site') {
-      void siteAuth.grantCurrentTab().catch(() => undefined);
-    }
-  });
 }

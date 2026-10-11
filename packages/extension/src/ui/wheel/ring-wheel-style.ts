@@ -1,92 +1,19 @@
 /**
- * 单环轮盘浮层的共用样式（v3.16）—— 状态轮盘与书签轮盘的浮层 chrome 完全一致，
- * 抽成一处维护（评审里点出的「同一段 CSS 两份维护」问题不再复制）。
+ * 浮层外壳样式（v3.16 立档；v4.1.2 起**网格**样式改用统一源）。
  *
- * 依赖 `ring-wheel.ts` 约定的类名族：`.sector*` / `.hub*` / `.hint` / `.toast`。
+ * ★ 历史：本文件原先把整套**环形**样式（`.sector*` / `.hub*`）内联在这里，
+ *   与 `wheel.css` 各写一份 —— 那是"同一段 CSS 两份维护"。
+ *   v4.1.2 三个轮盘全部改为定尺网格后，样式收敛到 `grid-style.ts`：
+ *
+ * | 常量 | 内容 | 谁用 |
+ * |---|---|---|
+ * | `ACCT_GRID_CSS` | **网格本体**（唯一源，构建时生成 `.css`） | 小窗 `<link>` + 三个浮层内联 |
+ * | `OVERLAY_CHROME_CSS` | 浮层外壳（`:host` 遮罩 / `.hint` / `.toast`） | 三个浮层内联 |
+ *
+ * ⇒ 本文件只做转发，保留这个名字是为了不改两个 `*-overlay.ts` 的 import 路径。
+ *
+ * ★★ 刻意**不**保留 `RING_WHEEL_CSS` 这个旧名字（第一版我留成了 `''`）：
+ *   一个空字符串常量会让"样式没注入"变成**静默失效** —— 浮层照常打开、只是没样式，
+ *   而没有任何东西会报错。**删掉比留个空壳安全**（同 PITFALLS #19 的形态）。
  */
-export const RING_WHEEL_CSS = `
-    :host { all: initial; }
-    * { margin:0; padding:0; box-sizing:border-box;
-        font-family: system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
-    :host {
-      position:fixed; inset:0; z-index:2147483646;
-      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
-      background:rgba(241,245,252,.66);
-      backdrop-filter:blur(10px) saturate(1.15);
-      opacity:0; transition:opacity .18s ease;
-    }
-    :host(.show){opacity:1}
-
-    .wheel-root{
-      width:min(88vmin,560px);
-      transform:scale(.9) translateY(10px);
-      transition:transform .28s cubic-bezier(.22,1.3,.36,1), opacity .18s ease;
-    }
-    :host(.show) .wheel-root{transform:none}
-    .wheel-root:not(.in){opacity:.35;transform:scale(.985) rotate(3deg)}
-
-    .sector-wheel svg{
-      width:100%; height:auto; display:block;
-      filter: drop-shadow(0 26px 60px rgba(23,42,84,.16)) drop-shadow(0 2px 10px rgba(23,42,84,.08));
-    }
-
-    .sector{cursor:pointer;transform-box:view-box;transform-origin:50% 50%;
-      transform:scale(.96);opacity:0;
-      transition:transform .34s cubic-bezier(.22,1.2,.36,1),opacity .3s ease;
-      transition-delay:var(--d,0s);}
-    .sector-wheel.in .sector{opacity:1;transform:scale(1)}
-    .sector:hover{transform:scale(1.016);transition-delay:0s}
-
-    .sector-hit{fill:color-mix(in srgb,var(--acc) 6%,#ffffff);
-      stroke:color-mix(in srgb,var(--acc) 24%,#e4eaf6);stroke-width:1.6;
-      transition:fill .16s ease,stroke .16s ease}
-    .sector:hover .sector-hit{
-      fill:color-mix(in srgb,var(--acc) 20%,#ffffff);stroke:var(--acc)}
-    .sector.is-current .sector-hit{
-      fill:color-mix(in srgb,var(--acc) 15%,#ffffff);stroke:var(--acc);stroke-width:2.2}
-
-    .sector-label{font-size:15px;font-weight:650;fill:#1b2a4a;letter-spacing:.02em;
-      pointer-events:none;transition:fill .16s ease}
-    .sector.is-current .sector-label{fill:var(--acc)}
-    .sector:hover .sector-label{fill:var(--acc)}
-
-    .sector-num circle{fill:#ffffff;stroke:color-mix(in srgb,var(--acc) 30%,#e4eaf6);
-      stroke-width:1.2;transition:stroke .16s ease,fill .16s ease}
-    .sector:hover .sector-num circle{fill:var(--acc);stroke:var(--acc)}
-    .sector-num text{font-size:11px;font-weight:700;fill:#66759b;
-      font-variant-numeric:tabular-nums;pointer-events:none;transition:fill .16s ease}
-    .sector:hover .sector-num text{fill:#ffffff}
-
-    .sector-dot{fill:#cbd5e1;pointer-events:none}
-    .sector-dot.on{fill:var(--acc);filter:drop-shadow(0 0 5px color-mix(in srgb, var(--acc) .7, transparent))}
-
-    .hub-bg{fill:#ffffff;stroke:#e4eaf6;stroke-width:1.5}
-    .hub-box{font-size:15px;font-weight:700;fill:#1b2a4a;letter-spacing:.04em}
-    .hub-main{font-size:30px;font-weight:800;fill:#1b2a4a;letter-spacing:.02em}
-    .hub-cap{font-size:15px;font-weight:700;fill:#1b2a4a;letter-spacing:.04em}
-    .hub-sub{font-size:11px;fill:#66759b;letter-spacing:.05em}
-
-    .hint{
-      display:flex; align-items:center; gap:9px;
-      font-size:11.5px; color:#5b6b8f; letter-spacing:.05em;
-      background:rgba(255,255,255,.82); border:1px solid rgba(228,234,246,.9);
-      padding:6px 14px; border-radius:999px;
-      box-shadow:0 2px 10px rgba(23,42,84,.06);
-      opacity:0; transform:translateY(6px);
-      transition:opacity .3s ease .25s, transform .3s ease .25s;
-    }
-    :host(.show) .hint{opacity:1;transform:none}
-    .hint i{width:3px;height:3px;border-radius:50%;background:#c3cede}
-    .hint kbd{display:inline-block;min-width:15px;padding:1.5px 6px;border-radius:5px;
-      border:1px solid #d4ddf0;border-bottom-width:2px;background:#fff;color:#5b6b8f;
-      font-family:inherit;font-size:10px;text-align:center}
-
-    .toast{
-      max-width:70vw; padding:9px 18px; border-radius:10px; font-size:13px; font-weight:600;
-      box-shadow:0 6px 22px rgba(23,42,84,.12); display:none; text-align:center;
-    }
-    .toast.show{display:block}
-    .toast.info{background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe}
-    .toast.ok{background:#ecfdf5;color:#14532d;border:1px solid #a7f3d0}
-    .toast.err{background:#fef2f2;color:#7f1d1d;border:1px solid #fecaca}
-`;
+export { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from './grid-style';

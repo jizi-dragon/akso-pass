@@ -232,7 +232,7 @@ async function requestJson<T>(
         await setCloudAuth(null);
         invalidateCloudCache();
       }
-      throw new Error(`登录已过期（HTTP ${res.status}）：请在数据源处重新登录云端账号库`);
+      throw new Error(`登录已过期（HTTP ${res.status}）：请在管理页点「重新登录」重新登录云端账号库`);
     }
     const detail = errorDetail(data, text);
     // ★ 5xx / 4xx 都不是"离线"，所以**不会**回落只读副本 —— 记下来才能区分二者。
@@ -258,10 +258,10 @@ export async function cloudRequest<T>(
 ): Promise<T> {
   const auth = await getCloudAuth();
   if (!auth) {
-    throw new Error('云端未授权：请先在数据源处登录云端账号库');
+    throw new Error('云端未授权：请先在管理页点「重新登录」登录云端账号库');
   }
   if (!(await hasHostAccess(auth.baseUrl))) {
-    throw new Error(`云端不可用：扩展尚未获得 ${auth.baseUrl} 的访问授权（请在数据源处重新点击「云端」）`);
+    throw new Error(`云端不可用：扩展尚未获得 ${auth.baseUrl} 的访问授权（请在管理页点「重新登录」重新发起授权）`);
   }
   return requestJson<T>(auth.baseUrl, path, { ...init, token: auth.token });
 }
@@ -291,41 +291,6 @@ export async function fetchMeEmail(): Promise<string> {
   } catch {
     return '';
   }
-}
-
-/**
- * 授权码 → 会话令牌（`POST /api/auth/device-token`）。
- *
- * @deprecated **新流程不要走这里**（v3.14.1 起改用 RFC 8628 设备流：`cloud-device.ts`）。
- * 保留原因：端点在服务端还在，删掉这条路径等于替别人做决定 —— 但"网页出码、人抄进应用"
- * 已经被设备流取代，只有 `cloud.auth` 这条老消息还挂着它。
- */
-export async function exchangeDeviceCode(
-  code: string,
-  baseUrl: string = CLOUD_DEFAULT_BASE_URL,
-): Promise<{ email: string }> {
-  const base = normalizeBaseUrl(baseUrl);
-  const data = asRecord(
-    await anonymousRequest<unknown>('/api/auth/device-token', {
-      method: 'POST',
-      body: { code: code.trim() },
-    }, base),
-  );
-  const token = str(data.token) || str(asRecord(data.session).token);
-  if (!token) {
-    throw new Error('云端未返回会话令牌（授权码可能无效或已过期，请重新取码）');
-  }
-  const fernetKey = str(data.fernetKey) || str(asRecord(data.user).fernetKey);
-  let email = str(data.email) || str(asRecord(data.user).email);
-  await setCloudAuth({ baseUrl: base, token, fernetKey, email });
-  if (!email) {
-    // 授权码响应不一定带邮箱；补一次 /me 只是为了界面能显示"已登录谁"，失败不影响可用性
-    email = await fetchMeEmail();
-    if (email) {
-      await setCloudAuth({ baseUrl: base, token, fernetKey, email });
-    }
-  }
-  return { email };
 }
 
 /* ==================== 快照缓存（MV3：SW 随时会被回收，这里只是短命缓存） ==================== */

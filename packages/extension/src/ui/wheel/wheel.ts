@@ -1,12 +1,13 @@
 /**
- * 账号选择轮盘（扩展弹窗页版本，v3.9 Hub 切盒 + 扇形环）。
+ * 账号选择器（扩展弹窗页版本，v4.1 **网格平铺**；此前是 v3.9 的环形扇区）。
  * 由 background 在收到 quick-wheel 命令时以独立 popup 窗口打开——
  * 在浏览器任何位置（含 chrome:// 页、新标签页）都能唤起。
  * 页面内无窗口控制元素；Esc 关闭；数字键 1-9/0 快选；失焦自动关闭（带启动宽限）。
- * 中心翻页：滚轮 / 点击 Hub 循环切换盒子，单环显示当前盒子的账号。
+ * 切盒：滚轮 / 左右箭头 / 点击页码点；**一盒一页，账号不再被截断**（超出滚动）。
  */
 import { LOCAL_KEYS } from '../../shared/constants';
-import { DEFAULT_BOX, buildSectorWheel, groupPagesByBox, type WheelAccount } from './wheel-core';
+import { DEFAULT_BOX, groupPagesByBox, type WheelAccount } from './wheel-core';
+import { buildAccountGrid } from './grid-core';
 
 const wheelEl = document.getElementById('wheel') as HTMLDivElement;
 const PARALLEL_PAGE = chrome.runtime.getURL('ui/parallel/parallel.html');
@@ -77,7 +78,7 @@ async function pick(accountId: string): Promise<void> {
 let pages: { label: string; accounts: WheelAccount[] }[] = [];
 let pageIndex = 0;
 function render(): void {
-  buildSectorWheel(wheelEl, {
+  buildAccountGrid(wheelEl, {
     pages,
     pageIndex,
     onPage: (delta) => {

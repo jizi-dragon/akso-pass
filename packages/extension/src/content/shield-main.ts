@@ -53,6 +53,33 @@
   const cookieDesc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')
     ?? Object.getOwnPropertyDescriptor(document, 'cookie');
 
+  /* ---- IDB / CacheStorage 的原生方法（同样必须在补丁之前捕获） ----
+   *
+   * ★★ 为什么必须单独留一份：`nsWipeShared()`（身份叛逃处置的清扫）要按
+   *    **真实库名/缓存名**（带 `ns` 前缀）去删，而补丁后的 `databases()` / `keys()`
+   *    已经把前缀**剥掉**了、`deleteDatabase()` / `delete()` 又会**再加一次**前缀。
+   *    ⇒ 清扫逻辑若走补丁版，看到的名字永远不带前缀，`startsWith(ns)` 恒为 false，
+   *      表现为「叛逃页签写入的共享缓存从不被清理」，而**整条路径不报任何错**。
+   *    ★ 这段曾是死代码（`docs/CODEBASE_OVERVIEW.md` 风险 C14），此处为修复。 */
+  const rawIdbFactory = (typeof IDBFactory !== 'undefined'
+    ? IDBFactory.prototype
+    : undefined) as unknown as {
+    databases?: () => Promise<IDBDatabaseInfo[]>;
+    deleteDatabase?: (name: string) => IDBOpenDBRequest;
+  } | undefined;
+  const rawIdbDatabases = typeof rawIdbFactory?.databases === 'function'
+    ? rawIdbFactory.databases
+    : undefined;
+  /** ★ 原生 deleteDatabase：接收**真实库名**（不拼 `ns`）——清扫时专用，见 nsWipeShared */
+  const rawIdbDelete = (typeof rawIdbFactory?.deleteDatabase === 'function'
+    ? rawIdbFactory.deleteDatabase
+    : undefined) as ((name: string) => IDBOpenDBRequest) | undefined;
+  const rawCaches = (typeof caches !== 'undefined' ? caches : undefined) as
+    | { keys?: () => Promise<string[]>; delete?: (name: string) => Promise<boolean> }
+    | undefined;
+  const rawCachesKeys = typeof rawCaches?.keys === 'function' ? rawCaches.keys : undefined;
+  const rawCachesDelete = typeof rawCaches?.delete === 'function' ? rawCaches.delete : undefined;
+
   /* ================= Cookie 袋（document.cookie 的虚拟视图） ================= */
 
   let bag: Record<string, string> | null = null;
@@ -212,33 +239,59 @@
 
   /** 清扫本账号命名空间的 IDB 库与 CacheStorage 缓存（叛逃会话写入的他人数据） */
   async function nsWipeShared(): Promise<void> {
+    let dbsDropped = 0;
+    let cachesDropped = 0;
     try {
-      if (typeof indexedDB?.databases === 'function') {
-        const dbs = (await indexedDB.databases()) ?? [];
+      // ★★ 必须用**原生** `databases()` —— 补丁版会剥掉 `ns` 前缀（见文件上方注释）；
+      //    而这里恰恰是唯一需要"看到真实名字"的地方。删的时候直接用真实名，
+      //    **不要**走补丁版 `deleteDatabase()`（它会再拼一次 `ns` ⇒ 删到一个不存在的库）。
+      if (rawIdbDatabases && rawIdbDelete) {
+        const dbs = (await rawIdbDatabases.call(rawIdbFactory)) ?? [];
         for (const info of dbs) {
           if (typeof info.name === 'string' && info.name.startsWith(ns)) {
             try {
-              indexedDB.deleteDatabase(info.name);
+              await new Promise<void>((resolve) => {
+                const req = rawIdbDelete(info.name!);
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                // onblocked：有连接占着（如 passthrough 页签）——不挂起叛逃处置
+                req.onblocked = () => resolve();
+              });
+              dbsDropped++;
             } catch {
               // 单库失败不阻断
             }
           }
         }
       }
-      if (typeof caches !== 'undefined' && typeof caches.keys === 'function') {
-        const names = await caches.keys();
+      if (rawCachesKeys && rawCachesDelete) {
+        const names = (await rawCachesKeys.call(rawCaches)) ?? [];
         for (const name of names) {
-          if (name.startsWith(ns)) {
+          if (typeof name === 'string' && name.startsWith(ns)) {
             try {
-              await caches.delete(name);
+              await rawCachesDelete.call(rawCaches, name);
+              cachesDropped++;
             } catch {
               // 单缓存失败不阻断
             }
           }
         }
       }
+    } catch (e) {
+      // ★ 清扫失败不阻断叛逃处置，但**必须留痕**：静默的话它与"清扫成功且无事可做"
+      //   在用户与取证里长得一模一样（规则 29）。
+      reportNsWipe({ dbsDropped, cachesDropped, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    reportNsWipe({ dbsDropped, cachesDropped });
+  }
+
+  /** 清扫结果上报（进 background 的 forensics 环形缓冲，便于回答"到底清掉了什么"） */
+  function reportNsWipe(detail: { dbsDropped: number; cachesDropped: number; error?: string }): void {
+    try {
+      window.postMessage({ src: SRC_PAGE_TO_BRIDGE, payload: { op: 'nsWipeSharedDone', ...detail } }, '*');
     } catch {
-      // 清扫失败不阻断叛逃处置
+      // 上报失败不影响业务
     }
   }
 

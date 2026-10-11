@@ -15,7 +15,7 @@
 > |---|---|
 > | ★ **规则的正文（判据 + 出处叙事）** | [docs/RULES.md](docs/RULES.md) |
 > | **隔离平面总表（权威口径）** | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) §Architecture |
-> | **踩过的坑（31 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | **踩过的坑（36 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 功能清单与使用说明（给人看的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
 > | 现状快照与安全边界 | [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) |
 > | 现场排障与诊断埋点怎么读 | [docs/DIAG-GUIDE.md](docs/DIAG-GUIDE.md) |
@@ -155,6 +155,24 @@ node tools/verify/verify-css-vars.mjs                # **22 条**
 #   ★ 三处独立定义必须逐字等价；TS/JS 里品牌色硬编码**只减不增**（冻结基线 15）。
 node tools/verify/verify-brand.mjs                   # **10 条**
 
+# 规则入口的体积与一致性（静态、秒级）
+#   ★ AGENTS.md < 48 KB；规则索引与 RULES.md 正文的编号集合**双向相等**且连续。
+node tools/verify/verify-agents-budget.mjs           # **11 条**
+
+# ★★ 缺陷回归（静态、秒级）：六个"修好后 typecheck/build 照样全绿"的缺陷
+#   诚实提醒：这批缺陷**静态判据只能验"写法还在不在"**，
+#   真机行为（凭据到底交给了谁、清扫到底删没删）仍须浏览器实测。
+node tools/verify/verify-defectfix.mjs              # 六组断言
+node tools/verify/verify-falsify-defectfix.mjs      # ↑ 的反证（**6/6**，副本在 tmp/，真实源码不动）
+node tools/verify/verify-boxsync.mjs                # 盒子与云端对账（三条约束，含两条反方向）
+node tools/verify/verify-deadprotocol.mjs           # ★ 死协议：每个 kind / 桥 op 必须能报出**对端**
+node tools/verify/verify-acct-grid.mjs              # ★ 账号选择器（网格）：18 个账号必须渲染 18 格
+
+# ★★ 源码预处理的**公共件**（不是判据，是被判据依赖的）
+#   任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则**：
+#   非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（PITFALLS #35）。
+tools/verify/_lib/strip-comments.mjs
+
 npm run verify:list       # 列出回归脚本（不跑）
 ```
 
@@ -162,6 +180,7 @@ npm run verify:list       # 列出回归脚本（不跑）
 
 | 你改了什么 | 必须额外验证 |
 |---|---|
+| `src/ui/wheel/**` 或 `src/content/wheel-overlay.ts`（**账号选择器**） | `node tools/verify/verify-acct-grid.mjs`（真起 Chromium）。★ 两个表面共用一套类名契约：小窗走 `acct-grid.css`、页内浮层走 Shadow DOM **内联**样式 —— **改样式必须两处都改**，判据会比对类名集合 |
 | `src/background/core/tab-rules.ts`（DNR 规则） | `npm run verify -- --only v310` + **手工确认规则是逐条安装的**（`updateSessionRules` 是原子批量，一批被拒会连坐） |
 | `src/content/shield-main.ts`（平面补丁） | 至少跑 `--only defect` 与 `--only jarhygiene`（这两个覆盖串号与会话卫生） |
 | `src/content/auto-login.ts`（填表节奏） | `--only fillrhythm`（9/9）与 `--only autologin`（5/5） |
@@ -174,15 +193,28 @@ npm run verify:list       # 列出回归脚本（不跑）
 ### 跑验证脚本
 
 ```powershell
-npm run verify                      # 跑全部 12 个（几分钟，真起 Chromium）
+npm run verify:list                 # ★ 先看有几个、都是谁（数量以它为准，别在文档里写死）
+npm run verify                      # 跑全部（几分钟：编排器统一要求 --browser）
 npm run verify -- --only v310       # 只跑名字含 v310 的
 npm run verify -- --only jarhygiene
 ```
 
-★ **`npm run verify` 故意要求显式 `--browser`**（脚本内部检查）：
-每个脚本都真起一个带扩展的 Chromium（数十秒）并往 `tmp/` 写档案。
-不加这个开关会**拒绝运行并列出待跑清单**——因为"默认跑完几分钟"会让人不敢按，
+★ **本行曾写"跑全部 12 个"，而实际早已是 27 个**（脚本是 `readdirSync` 自动发现的）。
+⇒ 数字一律用 `npm run verify:list` 取，不要在文档里抄第二份（规则 12 的同类风险）。
+★★ 而且**绝大多数脚本并不需要浏览器**（打码、图标、CSS 变量、文档文本、本次新增的
+缺陷回归都是静态的、秒级）—— `--browser` 只是编排器的**统一确认开关**，
+不是"每个脚本都真起 Chromium"（README 里那句描述已过时，见 `tools/verify/README.md`）。
+
+★ **`npm run verify` 故意要求显式 `--browser`**（`run-all.mjs` 内部检查）：
+不加这个开关会**拒绝运行并列出待跑清单**——因为"默认跑完全部"会让人不敢按，
 于是"批量验证"这件事会重新退化（规则 13 的同类风险）。
+★ 但要说准它拦的是什么：**它拦的是"批量"这个动作，不是"每个脚本都要浏览器"**。
+只有 `verify-load.mjs` 与那几个浏览器回归（`v310` / `jarhygiene` / `defect` / `autologin` /
+`dynsnap` / `fillrhythm` / `httpscheme` / `adopt` / `boxmgmt` / `defbox` / `track`）真起 Chromium；
+打码、图标、CSS 变量、品牌色、文档、盒子对账、本轮新增的缺陷回归**都是纯静态、秒级**的
+⇒ 它们**可以直接单独跑**，不必为了改一行等几分钟。
+（原文写"每个脚本都真起一个带扩展的 Chromium（数十秒）并往 `tmp/` 写档案"，
+在脚本数量涨到 27 个之后已经不成立。）
 
 ### 提交与文档
 
@@ -190,7 +222,7 @@ npm run verify -- --only jarhygiene
   与服务器端统一。
 - **每修一个"看起来正常但其实是坏的"缺陷，就把它的判据写进脚本注释或
   [`docs/PITFALLS.md`](docs/PITFALLS.md)。**
-  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **31 条**）——在此之前这类教训
+  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **36 条**）——在此之前这类教训
   只散在 `CHANGELOG.md` 里，而两者的分工不同：
   `CHANGELOG.md` 记"每次发布改了什么"（历史），
   `PITFALLS.md` 记"**哪些错会静默发生、怎么一眼认出来**"（可复用的判据）。
