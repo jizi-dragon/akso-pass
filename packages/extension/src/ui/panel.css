@@ -60,6 +60,16 @@
   flex-wrap: wrap;
 }
 
+/* ★ v4.2.1：页头分两区（用户要求"把已登录账号的信息移到右边"）。
+   `.head-left` 是**身份**（帮助气泡 + 云端账号），`.head-right` 是**操作与统计**。
+   此前身份被夹在"帮助气泡"与"导出数据"之间 ⇒ 扫视时第一眼找不到"我现在是谁"。 */
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;

@@ -42,28 +42,24 @@ body {
   border-bottom: 1px solid var(--sb-border);
 }
 
-.sb-side .sb-brand-ring {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+/* ★★ 2026-10-12：品牌标识改用**真实的 Akso logo 图**（`assets/Icon48.png`）。
+ *
+ * 此前这里是一个 CSS 画的锥形渐变环 —— 那是**我自己造的形状**，不是品牌标识。
+ * 用户两次指出"logo 不对"：第一次我把渐变环降级成了纯色圆点，第二次才问清楚 ——
+ * 他们要的是 **Akso 的 logo**（深蓝 "A" + 金色弧），仓库里 `assets/logo-master-422.png`
+ * 就是它，而它的派生产物 `Icon*.png` 已经是同一个图形。
+ *
+ * ★ 为什么用 `Icon48.png` 而不是把 `logo-master-422.png` 拷进 `dist/`：
+ *   ① `logo-master-422.png` 是**图标派生链的源文件**，`build.mjs` 刻意不把它发进包里
+ *      （"源文件不该发给用户"）；
+ *   ② `Icon48.png` 是同图形的产物、已经在 `dist/assets/`、且已声明为
+ *      `web_accessible_resources` ⇒ 扩展页可以直接引，**不需要动构建与图标派生链**。
+ */
+.sb-side .sb-brand-logo {
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* ★ 与账号中心页头的品牌环**同一形态**（锥形渐变 + 内圈白底）。
-     原先这里写的是一个纯色圆点 —— 那是把品牌标识降级成了"一个蓝点"，
-     与 `panel.css` 的 `.brand-ring` 不是同一个东西（用户 2026-10-12 指出）。
-     ⇒ 形态统一，只是尺寸按侧栏收窄。 */
-  background: conic-gradient(from 200deg, var(--sb-brand), #7C5CFF 40%, var(--sb-success) 75%, var(--sb-brand));
-  box-shadow: 0 3px 8px rgba(30, 111, 255, 0.26);
-}
-
-.sb-side .sb-brand-ring i {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--sb-surface);
-  box-shadow: inset 0 1px 2px rgba(23, 42, 84, 0.14);
+  object-fit: contain;
   display: block;
 }
 

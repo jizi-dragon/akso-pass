@@ -118,6 +118,7 @@ installLogPersist();
 void replayLogPersist();
 
 import { getPendingAutoLogin } from './core/auto-login-cache';
+import { isOfflineError } from './core/offline';
 import { siteAuth, probeScheme } from './core/site-auth';
 // v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
 import { translate } from '../shared/engines';
@@ -138,7 +139,11 @@ import {
   CLOUD_DEFAULT_BASE_URL,
   fetchCloudBoxNames,
   getCloudAuth,
+  invalidateCloudCache,
+  setCloudAuth,
 } from './core/cloud-store';
+// v4.2.1：登出要清"本机缓存的账号数据"（只读快照；里面从来没有口令）
+import { clearSnapshot } from './core/account-cache';
 import { cancelDeviceFlow, pollDeviceFlow, startDeviceFlow } from './core/cloud-device';
 import { listFavorites, resolveFavoriteUrl } from './core/favorites';
 import {
@@ -336,6 +341,45 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       const r = await tryRun(() => fetchCloudBoxNames(true));
       return { kind: 'par.boxes', result: r };
     }
+    /* ---- 站点的**自定义名称**（v4.2.1）----
+     * 与 `par.boxes` 同一约定：`data === null` = 没拿到（离线）⇒ UI 一个字都不动。 */
+    case 'par.sites': {
+      const r = await tryRun(async () => {
+        try {
+          return await parallelStore.listSites(true);
+        } catch (e) {
+          if (isOfflineError(e)) {
+            // 离线：如实返回 null（不是空数组 —— 空数组会被 UI 读成"没有任何站点"）
+            return null;
+          }
+          throw e;
+        }
+      });
+      return { kind: 'par.sites', result: r };
+    }
+    case 'par.renameSite': {
+      const r = await tryRun(async () => {
+        await parallelStore.renameSite(req.host, req.name);
+        // ★ 回传**归一化后**的名字而不是回显入参：服务端对空名有回落口径
+        //   （空名 = 恢复成 host），回显入参会让 UI 显示一个服务端并不认的名字。
+        const rows = await parallelStore.listSites(true);
+        const hit = rows.find((s) => s.host === req.host.trim().toLowerCase());
+        return { host: req.host, name: hit?.name ?? req.name, displayName: hit?.displayName ?? req.name };
+      });
+      return { kind: 'par.renameSite', result: r };
+    }
+    /* 添加站点时顺带落名（站点可能还不存在于云端 ⇒ 先建再写）。
+     * ★ 与 `par.renameSite` 的差别是**语义**：这个容忍"站点不存在"（建它），
+     *   而改名遇到不存在必须报错（否则用户会以为给一个不存在的站点改了名）。 */
+    case 'par.upsertSite': {
+      const r = await tryRun(async () => {
+        await parallelStore.upsertSite(req.host, req.name);
+        const rows = await parallelStore.listSites(true);
+        const hit = rows.find((s) => s.host === req.host.trim().toLowerCase());
+        return { host: req.host, name: hit?.name ?? req.name, displayName: hit?.displayName ?? req.name };
+      });
+      return { kind: 'par.upsertSite', result: r };
+    }
     case 'par.create': {
       const r = await tryRun(async () => {
         const account = await parallelStore.create({
@@ -516,6 +560,39 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
         };
       });
       return { kind: 'cloud.state', result: r };
+    }
+    /* ---- v4.2.1：弹窗身份菜单的两个动作（都**只动本机**）---- */
+    case 'cloud.sync': {
+      const r = await tryRun(async () => {
+        // ① 丢弃 background 的短命缓存（站点/盒子/账号），保证这次一定走网络
+        invalidateCloudCache();
+        // ② 重新拉账号（走 `listWithFallback`，失败会如实抛 OfflineError）
+        const accounts = await parallelStore.list();
+        // ③ 站点条数：拿不到不算失败（名字/清单是附属信息，不该让"同步"整个失败）
+        const sites = await parallelStore.listSites(true).catch(() => []);
+        log.info('cloud.sync 完成：账号 %d / 站点 %d', accounts.length, sites.length);
+        return { accounts: accounts.length, sites: sites.length };
+      });
+      return { kind: 'cloud.sync', result: r };
+    }
+    case 'cloud.logout': {
+      const r = await tryRun(async () => {
+        const cleared: string[] = [];
+        // ① 令牌：清了之后 `cloud.state` 立刻回报未登录
+        await setCloudAuth(null);
+        cleared.push('登录令牌');
+        // ② 本机缓存的账号数据（只读快照 + 元数据）。**不含口令**（快照里从来没有）
+        await clearSnapshot();
+        cleared.push('账号缓存');
+        // ③ 短命缓存（站点/盒子）—— 换账号后它们必然过期
+        invalidateCloudCache();
+        cleared.push('站点与盒子缓存');
+        // ④ 绑定的页签**不动**：用户是"退出云端账号库"，不是"关掉正在用的标签页"。
+        //    平台登录态在各自页签里，与云端账号库是两件事（见 README 的两种登录方式）。
+        log.info('cloud.logout：已清除 %s（云端数据未动）', cleared.join(' / '));
+        return { cleared };
+      });
+      return { kind: 'cloud.logout', result: r };
     }
     case 'cloud.device.start': {
       // 设备流第一拍（无凭据）。deviceCode 只留在 cloud-device 的模块内存里，**不回传页面**

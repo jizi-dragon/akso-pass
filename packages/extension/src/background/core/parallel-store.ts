@@ -30,6 +30,19 @@ export interface ParallelStore {
   renameBox(from: string, to: string): Promise<number>;
   clearBox(name: string): Promise<number>;
   delete(id: string): Promise<void>;
+  /**
+   * 站点清单（host ↔ 用户自定义名称）。v4.2.1 新增，给「站点管理」显示名字用。
+   *
+   * ★ 为什么它必须经过这一层而不是 UI 直接问云端：本仓的 UI **从不直接
+   *   `fetch` 云端**（`ui/**` 里零 `cloudRequest`）—— 授权、token、离线回落
+   *   全在 background。UI 破例直连会绕过这三样，而且**失败形态是静默的**
+   *   （UI 里一个 `catch {}` 就看不出来了）。
+   */
+  listSites(force?: boolean): Promise<{ host: string; name: string; displayName: string }[]>;
+  /** 给站点改自定义名称（只改 name，不动 baseUrl —— 后者是 host 的唯一来源） */
+  renameSite(host: string, name: string): Promise<void>;
+  /** 添加站点时落名：站点不存在就建（与 `renameSite` 的差别是"容忍不存在"） */
+  upsertSite(host: string, name: string): Promise<void>;
 }
 
 /**
@@ -210,6 +223,26 @@ export const parallelStore: ParallelStore = {
 
   clearBox(name: string): Promise<number> {
     return cloudStore.clearBox(name);
+  },
+
+  /**
+   * 站点清单（host ↔ 自定义名称）。
+   *
+   * ★ **离线时不回落只读副本**：账号快照（`account-cache`）里没有站点名这一项，
+   *   而"站点名"在离线时也不是必需（站点管理本来就不能在离线时编辑）。
+   *   ⇒ 直接让 `OfflineError` 抛出去，由 UI 显示"离线"而不是显示一个**半空的名字**。
+   *   ★ 这条判断是有意的：宁可不显示，也不要显示"名字为空 = 看起来没设过"。
+   */
+  listSites(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+    return cloudStore.listSites(force);
+  },
+
+  renameSite(host: string, name: string): Promise<void> {
+    return cloudStore.renameSite(host, name);
+  },
+
+  upsertSite(host: string, name: string): Promise<void> {
+    return cloudStore.upsertSite(host, name);
   },
 
 

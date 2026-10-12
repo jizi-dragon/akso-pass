@@ -111,6 +111,46 @@ export function containsChinese(text: string): boolean {
 }
 
 /**
+ * 从站点地址推导一个**默认显示名**。
+ *
+ * # 为什么不是直接用完整 host
+ *
+ * 用户 2026-10-12 明确要求：没填名称时，**从地址里截取**，例如
+ * `tonbridge-config.aksoegmp.com` → `tonbridge-config`。
+ * 完整 host 当名字的问题是它把"识别"这件事推给用户：一排
+ * `tonbridge-config.aksoegmp.com` / `standard-val.aksoegmp.com` / `www.dragonrain.top`
+ * 各不相同却同样长，扫视时分不出谁是谁。
+ *
+ * # 规则（保持简单，方便预测）
+ *
+ * 1. 去掉端口（`10.100.0.105:8080` → `10.100.0.105`）
+ * 2. 取第一个点号之前的部分（`a.b.c` → `a`）
+ * 3. 结果若是 `www` ⇒ 用**第二段**（`www.dragonrain.top` → `dragonrain`）；
+ *    只取 `www` 当名字等于什么都没说
+ * 4. IP 字面量（全数字段）⇒ **整串原样返回**：`10.100` 比 `10.100.0.105` 更难认
+ * 5. 兜底：算出来为空就返回原 host（宁可长，不要空）
+ */
+export function deriveSiteNameFromHost(host: string): string {
+  const raw = (host ?? '').trim().toLowerCase();
+  if (!raw) {
+    return '';
+  }
+  const noPort = raw.replace(/:\d+$/, '');
+  const parts = noPort.split('.').filter(Boolean);
+  if (parts.length === 0) {
+    return raw;
+  }
+  // IP 字面量：所有段都是数字 ⇒ 整串返回（截成 10.100 反而更难认）
+  if (parts.every((p) => /^\d+$/.test(p))) {
+    return noPort;
+  }
+  if (parts[0] === 'www') {
+    return parts[1] ?? parts[0];
+  }
+  return parts[0];
+}
+
+/**
  * 识别**词典释义**而不是翻译结果。
  *
  * # 为什么需要它（2026-10-12 实测事故）

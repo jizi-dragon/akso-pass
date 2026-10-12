@@ -9,6 +9,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* ★ 身份菜单相对**整个面板**定位（见 `.identity-menu`）⇒ 这里必须是定位上下文。
+     弹窗只有 ~328px 宽、内容又排得满，菜单若锚在按钮下方就会**压住主按钮**。 */
+  position: relative;
 }
 
 /* ---- 品牌头 ---- */
@@ -19,29 +22,20 @@ body {
   padding: 4px 2px 0;
 }
 
-.brand-ring {
-  position: relative;
+/* ★ v4.2.1：品牌标识改成**真实 Akso logo**。原先的 `.brand-ring` 是我用 CSS 画的
+   锥形渐变环 —— 那是我自己造的形状，不是品牌标识（用户指出过一次，我上一轮只改了
+   侧栏、漏了这里）。三个页面（popup / 账号中心 / 翻译面板）现在共用同一个
+   `assets/Icon48.png`。判据：这三个页面里 `.brand-ring` 的命中数应为 0。 */
+.brand-logo {
   width: 38px;
   height: 38px;
-  border-radius: 50%;
   flex: none;
-  background: conic-gradient(from 200deg, var(--sb-brand), #7C5CFF 40%, var(--sb-success) 75%, var(--sb-brand));
-  box-shadow: 0 4px 12px rgba(30, 111, 255, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.brand-ring i {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--sb-surface);
-  box-shadow: inset 0 1px 3px rgba(23, 42, 84, 0.12);
+  object-fit: contain;
+  display: block;
 }
 
 .brand-text {
-  flex: 1;
-  min-width: 0;
+  flex: 1;  min-width: 0;
 }
 .brand-text h1 {
   margin: 0;
@@ -187,4 +181,138 @@ body {
   height: 3px;
   border-radius: 50%;
   background: var(--sb-border-strong);
+}
+
+/* ---- 云端身份区（v4.2.1）----
+   未登录时整块 `hidden`（这时显示的是「登录」按钮）；
+   已登录显示账号，点开是「同步数据 / 退出账号」菜单。 */
+.identity {
+  position: relative;
+}
+
+.identity-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: var(--sb-radius);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface-2);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+.identity-btn:hover {
+  border-color: var(--sb-border-strong);
+  background: var(--sb-surface);
+}
+
+.identity-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--sb-brand-soft);
+  color: var(--sb-brand);
+  background-size: cover;
+  background-position: center;
+}
+/* 有头像图时不显示首字母，只留图 */
+.identity-av.has-img {
+  color: transparent;
+}
+
+.identity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.identity-text b {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.identity-text i {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--sb-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-caret {
+  flex: none;
+  color: var(--sb-text-secondary);
+  font-size: 10px;
+}
+
+.identity-menu {
+  /* ★★ 锚在**面板右下**而不是按钮正下方：弹窗内容排得满，按钮下方就是主操作
+     （打开管理页），菜单从那里展开会**压住主按钮** —— 实测截图确认过。
+     popup 面板不该因为"打开一个菜单"而重排，所以这里用**覆盖式**定位：
+     右下角浮起来，不改变 `.pop` 的流式布局。 */
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  top: auto;
+  min-width: 168px;
+  z-index: 20;
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  box-shadow: var(--sb-shadow);
+  overflow: hidden;
+}
+
+.identity-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.identity-item:hover {
+  background: var(--sb-brand-soft-2);
+}
+.identity-item b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sb-text);
+}
+.identity-item i {
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--sb-text-secondary);
+}
+.identity-item.danger b {
+  color: var(--sb-danger);
+}
+.identity-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* ★★ v4.2.1：`popup.html` 用的是 `theme.css` + `popup.css`，**不引 `panel.css`**
+   ⇒ `.hidden` 必须在这里自己定义一次。
+   我在这一版新增的 `#identity` / `#identity-menu` / `#open-vault` 都靠它做显隐；
+   不定义的话三个元素**永远显示**（包括"登录"按钮与已登录状态同时出现）。
+   ★ 这正是 PITFALLS #41 的同族形态：样式缺失不报错，只让界面"看起来不对"。
+   判据：popup.html 里每个 `class="… hidden"` 的元素，在它的样式链里都能找到
+   `.hidden { display: none }`。 */
+.hidden {
+  display: none !important;
 }

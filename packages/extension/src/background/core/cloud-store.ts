@@ -1,6 +1,8 @@
 import { LOCAL_KEYS, SESSION_COLORS } from '../../shared/constants';
 import type { ParallelAccount } from '../../shared/types';
 import { OfflineError } from './offline';
+// v4.2.1：站点显示名从地址推导（用户要求：未填名称时从地址截取，如 tonbridge-config）
+import { deriveSiteNameFromHost } from '../../shared/snake-case';
 // ★ 2026-10-09：本模块此前**一行日志都没有**，而它这条链路上全是决定性的状态跃迁
 //   （网络不通 / 401 清会话 / 代理劫持 / 服务端 5xx）。
 //   ★ 这些是**罕见但关键**的事件，所以走 `diag()`（`storage.local` 环形 60）
@@ -300,6 +302,15 @@ interface CloudSite {
   name: string;
   baseUrl: string;
   host: string;
+  /**
+   * 显示名（站点管理那一行的**主标题**）。
+   *
+   * ★ v4.2.1：用户要求"名称留空时**从地址里截取**"（`tonbridge-config.aksoegmp.com`
+   *   → `tonbridge-config`）。服务端建站时把 `name` 填成了完整 host，所以"name 非空"
+   *   并不代表"用户起过名"—— 直接用 name 当显示名就等于永远显示一长串域名。
+   * ⇒ 显示名的口径收在这一处：**name 与 host 不同才算用户起过名**，否则用推导名。
+   */
+  displayName: string;
 }
 
 interface CloudBox {
@@ -338,11 +349,17 @@ async function loadSites(force = false): Promise<CloudSite[]> {
     .map((raw) => {
       const rec = asRecord(raw);
       const baseUrl = str(rec.baseUrl);
+      const host = hostOfUrl(baseUrl) || hostOfUrl(rec.host);
+      const name = str(rec.name);
       return {
         id: str(rec.id),
-        name: str(rec.name),
+        name,
         baseUrl,
-        host: hostOfUrl(baseUrl) || hostOfUrl(rec.host),
+        host,
+        // 显示名口径见接口注释：**name 与 host 不同**才算用户起过名；
+        // 否则用从地址推导的短名（服务端建站时把 name 填成了完整 host，
+        // 直接用 name 就等于永远显示一长串域名）。
+        displayName: name && name !== host ? name : deriveSiteNameFromHost(host),
       };
     })
     .filter((s) => Boolean(s.id));
@@ -453,6 +470,67 @@ async function getOne(id: string): Promise<ParallelAccount> {
 
 async function patchAccount(id: string, patch: Record<string, unknown>): Promise<void> {
   await cloudRequest(`/api/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+  invalidateCloudCache();
+}
+
+/**
+ * 站点清单（host ↔ 自定义名称）。
+ *
+ * ★ 给「站点管理」用：那一栏要显示**用户给站点起的名字**，而不只是域名。
+ *   服务端 `site_public()` 早就带 `name`（v4.2.1 核对），缺的只是把它传到 UI ——
+ *   此前 `renderSites(hosts: string[])` 只拿得到 host，名字在传输层就被丢了。
+ *
+ * ★ `name` 为空时由调用方回落到 host 显示（服务端建的站点 `name` 默认就是 host，
+ *   但用户清空过名字的情况也要能显示）。
+ */
+async function loadSiteNames(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+  const sites = await loadSites(force);
+  return sites.map((s) => ({ host: s.host, name: s.name, displayName: s.displayName }));
+}
+
+/**
+ * 给站点改自定义名称。
+ *
+ * ★ 只 PATCH `name`，**不动 `baseUrl`** —— baseUrl 是 host 的唯一来源
+ *   （`host_of(base_url)`），改了它等于把站点的身份键换掉，账号会全部错位。
+ *   `SitePatch` 是逐字段显式建模的（服务端注释里写了原因：`BaseModel` 默认忽略多余字段，
+ *   漏字段会**静默不生效**），所以传 `{ name }` 是安全的。
+ */
+async function renameSiteOnCloud(host: string, name: string): Promise<void> {
+  const wanted = host.trim().toLowerCase();
+  const sites = await loadSites(true);
+  const hit = sites.find((s) => s.host === wanted);
+  if (!hit) {
+    throw new Error(`云端找不到站点 ${wanted}（先在「站点管理」里添加并授权该站点）`);
+  }
+  const trimmed = name.trim();
+  await cloudRequest(`/api/sites/${encodeURIComponent(hit.id)}`, {
+    method: 'PATCH',
+    // 空名 = 恢复成 host（服务端建的默认名就是 host，口径一致）
+    body: { name: trimmed || wanted },
+  });
+  invalidateCloudCache();
+}
+
+/**
+ * 添加站点时顺带落名：**站点不存在就建**，存在就改名。
+ *
+ * ★ 与 `renameSiteOnCloud` 的差别是**语义**：那个假定站点已存在、找不到就报错
+ *   （用户不该以为给一个不存在的站点改了名）；这个的用途正是"刚添加的站点"，
+ *   所以它必须能创建。合成一条会让"新建"与"改名"共用同一条找不到时的处置，
+ *   而它们该有相反的行为。
+ *
+ * ★ 名字为空时回落到 host —— 与用户要求的口径一致（"未填写名称时自动从地址填充"），
+ *   也与服务端建站点时的默认名一致（`ms.name.strip() or host`）。
+ */
+async function upsertSiteOnCloud(host: string, name: string): Promise<void> {
+  const wanted = host.trim().toLowerCase();
+  const name2 = name.trim() || wanted;
+  const id = await ensureSite(wanted); // 不存在就在这里建
+  await cloudRequest(`/api/sites/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { name: name2 },
+  });
   invalidateCloudCache();
 }
 
@@ -609,6 +687,21 @@ export const cloudStore = {
       throw new Error('盒子名为空');
     }
     return clearBoxImpl(trimmed);
+  },
+
+  /** 站点清单（host ↔ 用户自定义名称），见 `loadSiteNames` 的说明 */
+  async listSites(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+    return loadSiteNames(force);
+  },
+
+  /** 站点改名，见 `renameSiteOnCloud` 的说明 */
+  async renameSite(host: string, name: string): Promise<void> {
+    return renameSiteOnCloud(host, name);
+  },
+
+  /** 添加站点时落名（站点不存在就建），见 `upsertSiteOnCloud` 的说明 */
+  async upsertSite(host: string, name: string): Promise<void> {
+    return upsertSiteOnCloud(host, name);
   },
 
   /**

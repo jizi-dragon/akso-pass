@@ -35,6 +35,23 @@ export type RuntimeRequest =
    * ★ 这条消息给 UI 一个**对账依据**：`result.data` 为 `null` 表示"没拿到"
    *   （离线），那时 UI 的约定是**一个字都不动**。 */
   | { kind: 'par.boxes' }
+  /* ---- 站点的**自定义名称**（v4.2.1）----
+   * "站点管理"此前只显示域名，而服务端 `site_public()` 早就带 `name`
+   * （`site` 表有 `name` 列、`/api/sites` 有完整 CRUD）—— 缺口在**传输层**：
+   * `renderSites(hosts: string[])` 只拿得到 host，名字在中途就被丢了。
+   * ★ 与 `par.boxes` 同一约定：`result.data` 为 `null` 表示"没拿到"（离线），
+   *   那时 UI **一个字都不动** —— 不要把"没拿到"显示成"名字是空的"。 */
+  | { kind: 'par.sites' }
+  | { kind: 'par.renameSite'; host: string; name: string }
+  /**
+   * 添加站点时顺带把名称落库（v4.2.1）。
+   *
+   * ★ 与 `par.renameSite` 的差别是**语义**而不是实现：这个用于"站点还不存在于云端"的场景，
+   *   它必须先建站点（`ensureSite`）再写名字；`renameSite` 假定站点已存在、找不到就报错。
+   *   合成一条的话，"新建"与"改名"就会共用一条找不到时的处置，而它们该有相反的行为
+   *   （新建=创建，改名=报错）。
+   */
+  | { kind: 'par.upsertSite'; host: string; name: string }
   | { kind: 'par.create'; siteHost: string; tabName: string; username: string; password: string; open: boolean; box?: string; scheme?: 'http' | 'https' }
   | { kind: 'par.probeScheme'; host: string }
   | { kind: 'par.update'; id: string; patch: Partial<Pick<ParallelAccount, 'tabName'>> }
@@ -59,6 +76,13 @@ export type RuntimeRequest =
   | { kind: 'data.import'; data: DataBackup }
   /* ---- 数据源（本地 ↔ 云端，v3.14）---- */
   | { kind: 'cloud.state' }
+  /* ---- v4.2.1：弹窗的身份菜单 ----
+   * `cloud.sync`  = 丢弃本机缓存、从云端重新拉一遍（账号/站点/盒子）。
+   * `cloud.logout` = 退出登录：清令牌 + 清**本机缓存的账号数据**。
+   * ★ 两者都**只动本机** —— 云端账号库一条记录都不改。用户是"退出登录"，
+   *   不是"注销账号"，把这两件事混起来会毁掉别人的数据。 */
+  | { kind: 'cloud.sync' }
+  | { kind: 'cloud.logout' }
   /* ---- 云端设备授权（RFC 8628 设备流，v3.14.1）---- */
   /** 起一次设备授权（无凭据）：服务端返回批准页 URL；`deviceCode` 留在 SW 内存里，不回传 */
   | { kind: 'cloud.device.start'; clientName?: string }
@@ -125,6 +149,10 @@ export type RuntimeResponse =
    * 而不是含糊的"可能是旧的"（`account-cache.ts` 的设计意图）。 */
   | { kind: 'par.offline'; result: Result<{ offline: boolean; savedAt?: number; ageMs?: number; revision?: number }> }
   | { kind: 'par.boxes'; result: Result<{ names: string[]; default: string } | null> }
+  /* `null` = 没拿到（离线）⇒ UI 保持原样，不要把"没拿到"渲染成"名字为空" */
+  | { kind: 'par.sites'; result: Result<{ host: string; name: string; displayName: string }[] | null> }
+  | { kind: 'par.renameSite'; result: Result<{ host: string; name: string; displayName: string }> }
+  | { kind: 'par.upsertSite'; result: Result<{ host: string; name: string; displayName: string }> }
   | { kind: 'par.create'; result: Result<ParallelAccount> }
   | { kind: 'par.probeScheme'; result: Result<'http' | 'https'> }
   | { kind: 'par.update'; result: Result<ParallelAccount> }
@@ -141,6 +169,8 @@ export type RuntimeResponse =
   | { kind: 'data.import'; result: Result<{ created: number; skipped: number; hosts: string[] }> }
   /* ---- 数据源（本地 ↔ 云端，v3.14）---- */
   | { kind: 'cloud.state'; result: Result<CloudState> }
+  | { kind: 'cloud.sync'; result: Result<{ accounts: number; sites: number }> }
+  | { kind: 'cloud.logout'; result: Result<{ cleared: string[] }> }
   /* ---- 云端设备授权（RFC 8628 设备流，v3.14.1）---- */
   | { kind: 'cloud.device.start'; result: Result<CloudDeviceStart> }
   | { kind: 'cloud.device.poll'; result: Result<CloudDevicePoll> }

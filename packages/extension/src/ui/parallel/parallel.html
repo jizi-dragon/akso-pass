@@ -14,7 +14,11 @@
            样式在 `ui/sidebar.css`（唯一来源），改一处两个页面同时生效。 -->
     <aside class="sb-side">
       <div class="sb-brand">
-        <span class="sb-brand-ring" aria-hidden="true"><i></i></span>
+        <!-- ★ v4.2.1：品牌标识用**真实 Akso logo**（`assets/Icon48.png`，即
+             `logo-master-422.png` 的派生产物）。此前是 CSS 画的渐变环 —— 那是我自己
+             造的形状、不是品牌标识。用 Icon48 而不是 logo-master：后者是图标派生链的
+             **源文件**，构建刻意不发进包（"源文件不该发给用户"）。 -->
+        <img class="sb-brand-logo" src="../../assets/Icon48.png" alt="" aria-hidden="true" />
         <div class="sb-brand-text">
           <h1>Akso Pass</h1>
           <p>多账号并行工作台</p>
@@ -51,17 +55,16 @@
         <button id="auth-relogin" class="btn-ghost btn-sm" type="button">重新登录</button>
       </div>
 
+      <!-- ★★ v4.2.1 重排（用户要求"把已登录账号的信息移到右边"）：
+           改前 `#cloud-account` 夹在"帮助气泡"与"导出数据"之间 —— 它是**身份信息**，
+           却和工具按钮混在一排，扫视时第一眼找不到"我现在是谁"。
+           现在页头分两区：
+             · `.head-left`  —— 身份：帮助气泡 ＋ 云端账号（头像 + 名字 + 服务端地址）
+             · `.head-right` —— 操作与统计（导出/导入/诊断 ＋ 账号/在线/盒子），右对齐 -->
       <header class="head">
-        <div class="head-right">
-          <!-- ★★ v3.19（2026-10-09）：这里原先有 `#source-switch`（本地/云端数据源分段控件）
-               与一段讲"本地 → 云端合并上传、本地数据不会被删除"的说明文字。
-               ★ 本地数据源**已整体废除**（决策：强制云端登录），渲染函数也早被删了 ——
-                 但这段 HTML **留了下来**：
-                 · `#source-switch` 是个**空容器**（没有任何 TS 引用它）⇒ 死标记
-                 · `#source-help-pop` 的说明文字**与现在的行为相反** ⇒ 对用户说谎
-               ⇒ 全部清掉，换成一个只讲**当前真实模型**的说明气泡。 -->
+        <div class="head-left">
+          <!-- 云端账号库说明：圆形 ? —— 点开是气泡（不是 alert），可点外部 / Esc 关闭 -->
           <div class="cloud-tools">
-            <!-- 云端账号库说明：圆形 ? —— 点开是气泡（不是 alert），可点外部 / Esc 关闭 -->
             <button id="cloud-help" class="cloud-help" type="button" aria-haspopup="dialog"
               aria-expanded="false" aria-controls="cloud-help-pop" title="账号存在哪里？离线能用吗？">?</button>
             <div id="cloud-help-pop" class="help-pop hidden" role="dialog" aria-label="云端账号库说明">
@@ -74,7 +77,24 @@
               <p><b>口令</b>：由服务端加密存放，本机不落明文。</p>
             </div>
           </div>
-          <span id="cloud-account" class="cloud-account hidden"></span>
+          <!-- 已登录的云端账号。★ v4.2.1：**整块可点** —— 点开是
+               「同步数据 / 退出账号」（用户要求：在这块上弹选项，而不是只放在扩展弹窗里）。
+               `parallel.ts` 往 `#cloud-account` 里塞头像 + 名字。 -->
+          <div class="cloud-id">
+            <button id="cloud-account" class="cloud-account hidden" type="button"
+              aria-haspopup="menu" aria-expanded="false"></button>
+            <div id="cloud-account-menu" class="cloud-menu hidden" role="menu">
+              <button id="cloud-menu-sync" class="cloud-menu-item" type="button" role="menuitem">
+                <b>同步数据</b><i>从云端重新拉取账号与站点</i>
+              </button>
+              <button id="cloud-menu-logout" class="cloud-menu-item danger" type="button" role="menuitem">
+                <b>退出账号</b><i>清除本机缓存的账号数据</i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="head-right">
           <div class="head-actions">
             <button id="data-export" class="btn-ghost btn-sm" type="button">导出数据</button>
             <button id="data-import" class="btn-ghost btn-sm" type="button">导入数据</button>
@@ -173,9 +193,14 @@
           </div>
           <p class="desc">浏览器实际授权清单。只有授权过的站点才会改写鉴权头与隔离存储；移除后新导航不再生效。</p>
           <form id="site-form" class="site-grid">
-            <input id="s-host" placeholder="host，例如 example.com" autocomplete="off" />
+            <!-- ★ v4.2.1：添加站点时就能填名称；**留空 ⇒ 自动用站点地址填充**
+                 （用户要求："未填写站点名称时，自动从站点地址中填充"）。
+                 顺序按"先地址、后名称"——地址是必需的身份，名称是可选别名。 -->
+            <input id="s-host" placeholder="站点地址，例如 example.com" autocomplete="off" />
+            <input id="s-name" placeholder="站点名称（留空则用地址）" autocomplete="off" maxlength="120" />
             <button class="btn-ghost" type="submit">添加并授权</button>
           </form>
+          <p class="hint">站点名称只影响显示；账号绑定的是<b>站点地址</b>。留空时自动用地址当名称。</p>
           <ul id="site-list" class="plain site-list"></ul>
         </section>
 

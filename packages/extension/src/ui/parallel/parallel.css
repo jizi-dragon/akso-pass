@@ -392,11 +392,24 @@
 }
 
 /* ---- 站点管理 ---- */
+/* ★ v4.2.1：站点表单从「地址 + 按钮」变成「地址 + 名称 + 按钮」
+   ⇒ 列数从 `1fr auto` 改成 `1fr 1fr auto`。少改这一行的表现是
+   **按钮被挤到第二行左边**（不报错，只是看起来莫名）。
+   窄屏（<620px）回落成两行：两个输入各占一行，按钮另起一行。 */
 .site-grid {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr 1fr auto;
   gap: 8px;
   align-items: center;
+}
+
+@media (max-width: 620px) {
+  .site-grid {
+    grid-template-columns: 1fr auto;
+  }
+  .site-grid #s-name {
+    grid-column: 1 / -1;
+  }
 }
 
 .plain {
@@ -421,9 +434,31 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ★ v4.2.1：站点行新增「改名称」后操作区变成两个按钮。
+   必须 `flex: none` + 不换行 —— `.meta` 是 `flex:1; min-width:0` 的可收缩列，
+   操作区若参与收缩，长域名会把它挤成竖排（出现"移除授/权"式的断字）。
+   判据：给一个 60 字符的 host，两个按钮仍须在同一行。 */
+.site-list .site-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+}
 .site-list .alias {
   font-weight: 600;
   font-size: 13px;
+}
+
+/* 就地改名的输入框（替代 `window.prompt`：样式可控 + 可自动化验证）。
+   占满 `.alias` 原来的位置，所以宽度设 100%。 */
+.site-list .site-rename-input {
+  width: 100%;
+  max-width: 340px;
+  padding: 5px 9px;
+  font-size: 13px;
+  font-weight: 600;
 }
 .site-list .sub {
   font-size: 11.5px;
@@ -605,6 +640,59 @@
 }
 
 /* ---- 云端登录态 chip（数据源在云端且已登录时显示邮箱）---- */
+/* ★ v4.2.1：账号块变成**可点的身份入口**（用户要求：在这块上弹「同步数据/退出账号」，
+   而不是只放在扩展弹窗里）。`position: relative` 是给下面的菜单当定位上下文的。 */
+.cloud-id {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cloud-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 210px;
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  box-shadow: var(--sb-shadow);
+  overflow: hidden;
+}
+
+.cloud-menu-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.cloud-menu-item:hover {
+  background: var(--sb-brand-soft-2);
+}
+.cloud-menu-item b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sb-text);
+}
+.cloud-menu-item i {
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--sb-text-secondary);
+}
+.cloud-menu-item.danger b {
+  color: var(--sb-danger);
+}
+.cloud-menu-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .cloud-account {
   max-width: 240px;
   overflow: hidden;
@@ -729,7 +817,26 @@
 
 /* 「已登录谁」胶囊里的头像。形态与网站控制台、桌面账号页三处保持一致 ——
    同一件事在三个界面上长得一样，用户才不用重新认一遍。 */
-.cloud-account { display: inline-flex; align-items: center; gap: 6px; }
+/* v4.2.1：这块从 `<span>` 变成了 `<button>`（可点开身份菜单）。
+   ★ 必须显式重置 button 的浏览器默认样式（`theme.css` 的 `button{}` 只设了
+     `font`/`border-radius`，没清 padding/background）—— 不清的话它会变成
+     一个**默认灰底方块**，把原来的绿色身份胶囊顶掉。 */
+.cloud-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+.cloud-account:hover {
+  filter: brightness(0.97);
+}
+.cloud-caret {
+  flex: none;
+  font-size: 9px;
+  opacity: 0.65;
+}
 .cloud-av {
   width: 20px; height: 20px; border-radius: 50%; flex: none;
   display: inline-grid; place-items: center;

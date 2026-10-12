@@ -8,13 +8,38 @@
   <body>
     <main class="pop">
       <header class="brand">
-        <span class="brand-ring" aria-hidden="true"><i></i></span>
+        <!-- ★ v4.2.1：这里原先也是 `brand-ring`（CSS 画的锥形渐变环，不是品牌标识）。
+             改用真实 Akso logo —— 与 `parallel.html` / `translate.html` 的侧栏同一个文件。
+             ★ 三个页面都要用同一份，别再各画一个形状（这一处我一轮前正是漏了）。 -->
+        <img class="brand-logo" src="../../assets/Icon48.png" alt="" aria-hidden="true" />
         <div class="brand-text">
           <h1>Akso Pass</h1>
           <p>多账号并行 · 纯浏览器隔离</p>
         </div>
         <span class="ver" id="ext-version">v—</span>
       </header>
+
+      <!-- 云端身份区：未登录显示「登录」，已登录显示账号 → 点开是操作菜单 -->
+      <section id="identity" class="identity hidden">
+        <button id="identity-btn" class="identity-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span id="identity-avatar" class="identity-av" aria-hidden="true">·</span>
+          <span class="identity-text">
+            <b id="identity-name">未登录</b>
+            <i id="identity-sub">点击登录云端账号库</i>
+          </span>
+          <span class="identity-caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="identity-menu" class="identity-menu hidden" role="menu">
+          <button id="menu-sync" class="identity-item" type="button" role="menuitem">
+            <b>同步数据</b>
+            <i>从云端重新拉取账号与站点</i>
+          </button>
+          <button id="menu-logout" class="identity-item danger" type="button" role="menuitem">
+            <b>退出账号</b>
+            <i>清除本机缓存的账号数据</i>
+          </button>
+        </div>
+      </section>
 
       <section class="stats">
         <div class="stat">
@@ -43,18 +68,18 @@
           </svg>
         </span>
         <span class="launch-text">
-          <b>打开并行管理页</b>
-          <i>添加账号 · 授权站点 · 管理并行标签</i>
+          <!-- ★ v4.2.1：按用户要求"打开并行管理页" → **"打开管理页"**
+               （那一页现在同时承载账号中心与翻译面板，叫"并行"已经不准确）。 -->
+          <b>打开管理页</b>
+          <i>账号中心 · 翻译面板 · 站点授权</i>
         </span>
         <span class="launch-arrow" aria-hidden="true">→</span>
       </button>
 
-      <!-- 云端账号库入口。**只负责把用户送到官网** —— 登录、注册、账号管理都在那边，
-           扩展本身不碰登录表单（口令不该经过扩展的 DOM）。见 EXTENSION-SPLIT-PLAN §7。 -->
-      <button id="open-vault" class="launch secondary" type="button">
+      <button id="open-vault" class="launch secondary hidden" type="button">
         <span class="launch-text">
-          <b>登录云端账号库</b>
-          <i>在浏览器里登录 · 跨设备同步站点与账号</i>
+          <b>登录</b>
+          <i>登录云端账号库 · 跨设备同步站点与账号</i>
         </span>
         <span class="launch-arrow" aria-hidden="true">↗</span>
       </button>

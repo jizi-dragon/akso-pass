@@ -152,12 +152,17 @@ const CASES = [
     // ★ 第 12 节（DOM 双向一致性）的反证 —— **反方向**：重新放一个孤儿 id。
     //   ★ 这一条验的是规则 20 的**另一半**（HTML 有、TS 零引用）。
     //     它不会崩，所以没有任何运行期信号 —— 只有静态判据能发现它。
-    //   ★ 锚点用**实测原文**（是 `span` 不是 `div` —— 猜标签名会 SKIP）。
+    //   ★ 锚点用**实测原文**（猜标签名会 SKIP）。
+    //   ★★ v4.2.1：这块从 `<span>` 改成了 `<button>`（它现在是可点开身份菜单的身份入口）。
+    //     改标记会让这条反证的锚点**静默失配**，报"锚点没找到" —— 那是判据**如实报错**，
+    //     不是源码坏了。⇒ 改 `parallel.html` 里这一行时必须同步改这里
+    //     （同 AGENTS 规则 39：同一事实的声明会跨文件；这里是"跨判据"）。
     label: '⑫ 重新放一个孤儿 id（HTML 有、TS 零引用）⇒ 双向判据必须红',
     file: PH_TS,
-    anchor: '          <span id="cloud-account" class="cloud-account hidden"></span>',
-    broken: '          <span id="cloud-account" class="cloud-account hidden"></span>\n'
-          + '          <div id="definitely-orphan-id"></div>',
+    anchor: '            <button id="cloud-account" class="cloud-account hidden" type="button"',
+    broken: '            <button id="cloud-account" class="cloud-account hidden" type="button"\n'
+          + '              aria-haspopup="menu" aria-expanded="false"></button>\n'
+          + '            <div id="definitely-orphan-id"></div>',
   },
   {
     // ★ 第 13 节（静默失败必须留痕）的反证 —— 形态 A：`catch` 里的留痕被拆掉。

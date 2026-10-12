@@ -61,6 +61,7 @@ const selDelete = document.getElementById('sel-delete') as HTMLButtonElement;
 
 const siteForm = document.getElementById('site-form') as HTMLFormElement;
 const sHost = document.getElementById('s-host') as HTMLInputElement;
+const sName = document.getElementById('s-name') as HTMLInputElement;
 const siteListEl = document.getElementById('site-list') as HTMLUListElement;
 
 const importToggle = document.getElementById('import-toggle') as HTMLButtonElement;
@@ -90,6 +91,9 @@ const parHintEl = document.getElementById('par-hint') as HTMLParagraphElement;
 const sourceHelpBtn = document.getElementById('cloud-help') as HTMLButtonElement;
 const sourceHelpPop = document.getElementById('cloud-help-pop') as HTMLDivElement;
 const cloudAccountEl = document.getElementById('cloud-account') as HTMLSpanElement;
+const cloudMenuEl = document.getElementById('cloud-account-menu') as HTMLDivElement;
+const cloudMenuSync = document.getElementById('cloud-menu-sync') as HTMLButtonElement;
+const cloudMenuLogout = document.getElementById('cloud-menu-logout') as HTMLButtonElement;
 const authBarEl = document.getElementById('auth-bar') as HTMLDivElement;
 const authReloginBtn = document.getElementById('auth-relogin') as HTMLButtonElement;
 
@@ -1199,15 +1203,53 @@ async function loadSites(): Promise<void> {
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });
   }
 
+  // 站点名从云端拉；拿不到（离线）时 `siteNames` 为 null，渲染回落成显示域名
+  await refreshSiteNames();
+
   const sitesKey = JSON.stringify([
     grantedHosts,
     blockedHosts,
     browserAccounts.map((a) => [a.id, a.tabName, a.box ?? '']),
+    // ★ 名字也要进 key：它是渲染输入的一部分，不进 key 的话"改了名字但 hosts 没变"
+    //   就**不会重渲染**（表现是"点了保存没反应"，而数据其实已经改好了）。
+    siteNames,
   ]);
   if (sitesKey !== lastSitesKey) {
     lastSitesKey = sitesKey;
     renderSites(grantedHosts, blockedHosts);
   }
+}
+
+/** 站点名映射：host → { 用户设的名, **显示名** }。
+ *
+ * ★ 显示名由 background 算好（`name 与 host 不同才算用户起过名`，否则从地址推导），
+ *   UI 不再自己推导 —— 否则"推导规则"会有两份，改一处另一处静默不变。
+ */
+let siteNames: Record<string, { name: string; displayName: string }> | null = null;
+
+async function refreshSiteNames(): Promise<boolean> {
+  try {
+    const res = await send({ kind: 'par.sites' });
+    if (res.kind === 'par.sites' && res.result.ok) {
+      const rows = res.result.data;
+      siteNames = rows
+        ? Object.fromEntries(rows.map((r) => [r.host, { name: r.name, displayName: r.displayName }]))
+        : null;
+      return siteNames !== null;
+    }
+  } catch {
+    // 消息层失败按"没拿到"处理（与离线同一条路）
+  }
+  siteNames = null;
+  return false;
+}
+
+/** 站点在某一行上显示的主标题与副标题 */
+function siteTitleOf(host: string): { title: string; sub: string | null } {
+  const hit = siteNames?.[host];
+  const title = hit?.displayName?.trim() || host;
+  // 副标题放**完整地址**：显示名是别名，地址才是账号绑定的身份键，必须能核对
+  return { title, sub: title === host ? null : host };
 }
 
 function renderSites(hosts: string[], blocked: string[] = []): void {
@@ -1233,6 +1275,7 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     seen.add(host);
     const isBlocked = !hosts.includes(host) || blocked.includes(host);
     const n = countAccountsFor(host);
+    const { title, sub } = siteTitleOf(host);
 
     const li = document.createElement('li');
     li.className = 'site-row';
@@ -1241,18 +1284,48 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     meta.className = 'meta';
     const alias = document.createElement('div');
     alias.className = 'alias';
-    alias.textContent = isBlocked ? `${host}（已停用）` : host;
+    // 名字（或域名）+ 停用标记；域名作为副标题显示在下面
+    alias.textContent = isBlocked ? `${title}（已停用）` : title;
     if (isBlocked) {
       alias.style.color = '#C2410C';
     }
-    const sub = document.createElement('div');
-    sub.className = 'sub';
-    sub.textContent = isBlocked
+    const subEl = document.createElement('div');
+    subEl.className = 'sub';
+    const stateText = isBlocked
       ? `${n} 个并行账号 · 改头规则已全部暂停`
       : n > 0
         ? `${n} 个并行账号`
         : '该站点暂无并行账号（添加账号后自动更新）';
-    meta.append(alias, sub);
+    // ★ 有自定义名时**必须**把域名也显示出来：名字是别名，域名才是真正的身份键
+    //   （账号绑的是 siteHost）。只显示别名会让用户无法核对"这个站点到底是哪个"。
+    subEl.textContent = sub ? `${sub} · ${stateText}` : stateText;
+    meta.append(alias, subEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'site-actions';
+
+    if (!isBlocked) {
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'btn-ghost btn-sm';
+      renameBtn.type = 'button';
+      // ★★ v4.2.1 修（用户报"站点的名称无法更改，出现报错"）：
+      //   站点的名字存在**云端**。只在浏览器里授权过、而云端没有这条站点记录的
+      //   （例如 `127.0.0.1`、没有并行账号的 `www.dragonrain.top`），
+      //   改名必然以"云端找不到站点"失败 —— 而按钮照样显示 ⇒ 用户看到的就是**报错**。
+      //   ⇒ 云端**没有**这条记录时，按钮改成「添加到云端」，走的正是 `par.upsertSite`
+      //     （它容忍不存在：先建再写名）。**让按钮的承诺与它能做到的事一致。**
+      const inCloud = Boolean(siteNames?.[host]);
+      renameBtn.textContent = inCloud ? '改名称' : '添加到云端';
+      renameBtn.title = inCloud
+        ? '给这个站点起一个好记的名字（只影响显示，不影响账号绑定的域名）'
+        : '云端还没有这个站点。点它把站点与名称存到云端账号库（会先创建）';
+      renameBtn.addEventListener('click', () => {
+        // 预填**用户设的名**（而不是显示名）—— 显示名可能是从地址推导的，
+        // 预填它等于把推导结果写死成"用户起过的名"。
+        beginRename(li, actions, host, siteNames?.[host]?.name ?? '', !inCloud);
+      });
+      actions.appendChild(renameBtn);
+    }
 
     const actionBtn = document.createElement('button');
     actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
@@ -1267,9 +1340,134 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
       }
       void revokeHost(host);
     });
+    actions.appendChild(actionBtn);
 
-    li.append(meta, actionBtn);
+    li.append(meta, actions);
     siteListEl.appendChild(li);
+  }
+}
+
+/**
+ * 就地编辑站点名（**不用 `window.prompt`**）。
+ *
+ * ★ 为什么不用 prompt：① 它在扩展页里是浏览器模态框，样式不可控、移动端体验差；
+ *   ② **无法用自动化验证**（Playwright 只能靠 dialog 事件间接驱动，写不出可靠判据）——
+ *   而"判据不可写"在这个仓里等于"这条路径不会被验"。
+ * ★ 交互：Enter 保存 / Esc 取消 / 失焦保存（与"改页签名"的习惯一致）。
+ *   空串是**合法输入**，语义 = 恢复显示域名（服务端也有同样的回落口径）。
+ */
+function beginRename(
+  row: HTMLLIElement,
+  actions: HTMLDivElement,
+  host: string,
+  currentName: string,
+  createIfMissing = false,
+): void {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'site-rename-input';
+  // 预填用户设的名；**不要**预填推导名（那会把"从地址截出来的"写死成用户输入）
+  input.value = currentName === host ? '' : currentName;
+  input.placeholder = '例如 通桥医疗（留空 = 用地址推导）';
+  input.maxLength = 120; // 与云端 `SitePatch.name` 的上限一致，别让用户打完才被 422 拒
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn-primary btn-sm';
+  saveBtn.type = 'button';
+  saveBtn.textContent = '保存';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-ghost btn-sm';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = '取消';
+
+  const meta = row.querySelector('.meta');
+  const alias = row.querySelector('.alias');
+  if (!(meta instanceof HTMLElement) || !(alias instanceof HTMLElement)) {
+    return;
+  }
+  // 编辑态：名字那行换成输入框；按钮组换成 保存/取消
+  alias.replaceWith(input);
+  actions.replaceChildren(saveBtn, cancelBtn);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const restore = (): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    void loadSites(); // 复用既有入口重渲染（名字没变时它也会把编辑态还原）
+  };
+  const commit = async (): Promise<void> => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    await renameSiteRow(host, input.value, saveBtn, cancelBtn, createIfMissing);
+  };
+
+  saveBtn.addEventListener('click', () => void commit());
+  cancelBtn.addEventListener('click', restore);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      restore();
+    }
+  });
+  // 失焦保存：但点"取消"也会先触发 blur ⇒ 用 `relatedTarget` 排除按钮自身
+  input.addEventListener('blur', (e) => {
+    const to = e.relatedTarget;
+    if (to === saveBtn || to === cancelBtn) {
+      return;
+    }
+    void commit();
+  });
+}
+
+/**
+ * 改名并落到云端。
+ *
+ * ★ 成功后**重新拉一次**站点清单再渲染 —— 不本地"猜"结果：服务端对空名有回落口径
+ *   （空名 = 恢复成 host），本地猜会把一个服务端并不认的名字显示出来。
+ * ★ 失败时**明确报错**并保持原样：静默失败会让用户以为改成功了。
+ */
+async function renameSiteRow(
+  host: string,
+  name: string,
+  saveBtn: HTMLButtonElement,
+  cancelBtn: HTMLButtonElement,
+  createIfMissing = false,
+): Promise<void> {
+  saveBtn.disabled = true;
+  cancelBtn.disabled = true;
+  saveBtn.textContent = '保存中…';
+  try {
+    // ★ 云端还没有这条记录时走 `upsertSite`（先建再写名）；否则走 `renameSite`
+    //   （找不到就报错 —— 那是对的，用户不该以为给一个不存在的站点改了名）。
+    const res = createIfMissing
+      ? await send({ kind: 'par.upsertSite', host, name })
+      : await send({ kind: 'par.renameSite', host, name });
+    const failedKind = createIfMissing ? 'par.upsertSite' : 'par.renameSite';
+    if (res.kind === failedKind && !res.result.ok) {
+      throw new Error(res.result.error);
+    }
+    await refreshSiteNames();
+    lastSitesKey = ''; // 强制重渲染（名字变了，但 hosts 没变 ⇒ 原 key 不变）
+    await loadSites();
+  } catch (e) {
+    // ★ 报错要给出**下一步**，不能只说"失败了" —— 用户看到的原话是"出现报错"，
+    //   而"云端找不到站点"本身不是他能理解的措辞。
+    const raw = e instanceof Error ? e.message : String(e);
+    const hint = /找不到站点/.test(raw)
+      ? '\n\n这个站点在云端账号库里还没有记录。请改用「添加到云端」，或先登录云端账号库。'
+      : '';
+    alert(`保存站点名称失败：${raw}${hint}`);
+    lastSitesKey = ''; // 还原成非编辑态（否则输入框会留在页面上）
+    await loadSites();
   }
 }
 
@@ -1334,7 +1532,9 @@ async function unblockHost(host: string): Promise<void> {
 /* ==================== 下拉填充（防闪烁：选项未变化不重建） ==================== */
 
 async function fillSiteOptions(): Promise<void> {
-  const key = grantedHosts.join('|');
+  // ★ v4.2.1：选项内容里现在带**站点名称**，所以 key 要含 siteNames ——
+  //   只按 hosts 判"没变化"的话，改了名字下拉不会更新（表现是"改名没生效"）。
+  const key = `${grantedHosts.join('|')}::${JSON.stringify(siteNames ?? null)}`;
   if (key === lastHostOptions && pHostSelect.options.length) {
     return;
   }
@@ -1354,7 +1554,13 @@ async function fillSiteOptions(): Promise<void> {
   for (const h of grantedHosts) {
     const opt = document.createElement('option');
     opt.value = h;
-    opt.textContent = h;
+    // ★ 用户要求 2：选站点时按**名称**认，而不是认域名。
+    //   但域名不能丢 —— 它是账号真正绑定的东西，出问题时要靠它定位。
+    //   原生 `<option>` 不能富文本，所以用 `名称（域名）` 这个折中；
+    //   名字为空时退化成只显示域名（此时两者相同，不必重复）。
+    const { title, sub } = siteTitleOf(h);
+    opt.textContent = sub ? `${title}（${sub}）` : title;
+    opt.title = h;
     pHostSelect.append(opt);
   }
 
@@ -1397,17 +1603,132 @@ siteForm.addEventListener('submit', (e) => {
   if (!host) {
     return;
   }
+  // ★ v4.2.1：名称留空 ⇒ **用站点地址填**（用户要求的回落口径）。
+  //   注意这里用的是 `host` 而不是用户原样输入 —— 用户可能粘的是
+  //   `https://a.com/x`，拿整串当名字会很难看。
+  const name = sName.value.trim() || host;
   void (async () => {
     if (parsed.scheme) {
       await writeSchemeHint(host, parsed.scheme);
     }
+    // ★ 授权请求必须在**用户手势里最先发起**（AGENTS §2：晚一步手势失效、request 必然失败）。
+    //   所以它排在写云端站点名之前 —— 后者是网络调用，放前面会把手势耗掉。
     const ok = await chrome.permissions.request({ origins: [patternOfHost(host)] }).catch(() => false);
     if (!ok) {
       alert(`未完成授权：${host}`);
       return;
     }
+    // 授权成功后再把名称落到云端。**失败不阻断**：授权已经生效，
+    // 名只是显示信息，为它回滚一次成功的授权是本末倒置。
+    try {
+      await send({ kind: 'par.upsertSite', host, name });
+    } catch (err) {
+      // ★ 用 `log`（转发 logger）而不是裸 `console.*`：本仓规则 21 要求一切日志走打码通道，
+      //   而裸 console 只证明"没绕过 A 通道"，不证明"没有 B 通道"（verify-log-redaction 会红）。
+      log.warn('站点名称未保存到云端（授权已生效，不影响使用）：%s', err instanceof Error ? err.message : String(err));
+    }
     sHost.value = '';
+    sName.value = '';
+    await loadSites(); // 立刻把新站点（含名字）画出来
     await send({ kind: 'par.grantChanged' });
+    await refreshAll();
+  })();
+});
+
+/* ==================== 云端身份菜单（v4.2.1）====================
+ *
+ * 用户要求：点页头那块已登录账号 → 弹「同步数据 / 退出账号」，
+ * **不是**只在扩展弹窗里给（那是我上一版的错位：功能做在了 popup，用户在账号中心点不出来）。
+ *
+ * ★ 两个动作都**只动本机**：退出 = 清令牌 + 清本机缓存的账号数据；
+ *   云端账号库一条记录都不动（"退出登录" ≠ "注销账号"）。
+ */
+
+function closeCloudMenu(): void {
+  cloudMenuEl.classList.add('hidden');
+  cloudAccountEl.setAttribute('aria-expanded', 'false');
+}
+
+cloudAccountEl.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const nowHidden = cloudMenuEl.classList.toggle('hidden');
+  cloudAccountEl.setAttribute('aria-expanded', nowHidden ? 'false' : 'true');
+});
+// 点外部 / Esc 关闭（与帮助气泡同一套习惯）
+document.addEventListener('click', () => closeCloudMenu());
+cloudMenuEl.addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeCloudMenu();
+  }
+});
+
+cloudMenuSync.addEventListener('click', () => {
+  closeCloudMenu();
+  void (async () => {
+    const label = cloudMenuSync.querySelector('b');
+    const original = label?.textContent ?? '同步数据';
+    cloudMenuSync.disabled = true;
+    if (label) {
+      label.textContent = '同步中…';
+    }
+    try {
+      const res = await send({ kind: 'cloud.sync' });
+      if (res.kind === 'cloud.sync' && res.result.ok) {
+        if (label) {
+          label.textContent = `已同步（${res.result.data.accounts} 个账号）`;
+        }
+        // 站点名与账号列表都可能变了 ⇒ 整页刷新（复用既有入口，不另造渲染路径）
+        lastSitesKey = '';
+        await loadSites();
+        await refreshAll();
+      } else {
+        // ★ 失败必须说出来：静默失败会让用户以为"同步过了"，而数据其实没动
+        const msg = res.kind === 'cloud.sync' && !res.result.ok ? res.result.error : '未知原因';
+        if (label) {
+          label.textContent = `同步失败：${String(msg).split('\n')[0].slice(0, 14)}`;
+        }
+      }
+    } finally {
+      cloudMenuSync.disabled = false;
+      window.setTimeout(() => {
+        if (label) {
+          label.textContent = original;
+        }
+      }, 2600);
+    }
+  })();
+});
+
+cloudMenuLogout.addEventListener('click', () => {
+  closeCloudMenu();
+  if (
+    !confirm(
+      '退出云端账号？\n\n'
+        + '· 本机将清除登录令牌与缓存的账号数据\n'
+        + '· 云端账号库里的数据不受影响，重新登录即可恢复\n'
+        + '· 已打开的平台页签不受影响（平台登录态与云端账号库是两件事）',
+    )
+  ) {
+    return;
+  }
+  void (async () => {
+    try {
+      const res = await send({ kind: 'cloud.logout' });
+      if (res.kind === 'cloud.logout' && !res.result.ok) {
+        alert(`退出失败：${res.result.error}`);
+        return;
+      }
+    } catch (e) {
+      alert(`退出失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // ★ 退出后**主动清掉页面上还留着的账号列表**：不清的话界面仍显示上一个账号的
+    //   9 个账号，而它们已经不可用了 —— 用户会因此认为"退出没生效"
+    //   （这正是用户报的第 3 条：功能其实生效了，但界面没跟着变）。
+    browserAccounts = [];
+    lastSitesKey = '';
+    siteNames = null;
     await refreshAll();
   })();
 });
@@ -1461,7 +1782,7 @@ function renderAuthBar(): void {
   cloudAccountEl.classList.toggle('hidden', !cloudAuthorized);
   cloudAccountEl.textContent = '';
   // 云端地址放进 tooltip：它原来是数据源按钮的 title，按钮删了 ⇒ 这个信息不该默默丢
-  cloudAccountEl.title = cloudBaseUrl ? `云端账号库：${cloudBaseUrl}` : '云端账号库';
+  cloudAccountEl.title = cloudBaseUrl ? `云端账号库：${cloudBaseUrl}（点此管理）` : '云端账号库（点此管理）';
   if (cloudAuthorized) {
     const label = cloudDisplayName || cloudEmail || '已登录云端';
     const av = document.createElement('span');
@@ -1477,11 +1798,15 @@ function renderAuthBar(): void {
     }
     const name = document.createElement('span');
     name.textContent = label;
-    cloudAccountEl.append(av, name);
+    // ★ v4.2.1：点这块弹「同步数据 / 退出账号」（用户要求 1+3）。
+    //   加个 ▾ 让"可点"这件事**看得见** —— 光有 hover 效果，用户不会知道这里能点。
+    const caret = document.createElement('span');
+    caret.className = 'cloud-caret';
+    caret.textContent = '▾';
+    cloudAccountEl.append(av, name, caret);
   }
 
-  // ③ 说明文案：**只有云端一种形态**，不再分叉
-  //    （旧文案里"密码 AES-GCM 加密存放在本机"已随本地数据源废除 —— 留着就是说谎）
+  // ③ 说明文案：**只有云端一种形态**，不再分叉  //    （旧文案里"密码 AES-GCM 加密存放在本机"已随本地数据源废除 —— 留着就是说谎）
   parHintEl.textContent =
     '页签名即该账号所有标签页的标题；密码存放在云端账号库（服务端加密），本机不落明文。';
 }
