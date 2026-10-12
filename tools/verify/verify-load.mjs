@@ -22,7 +22,7 @@
  *   而**失败信息只在 `chrome://extensions` 上**（人不去点就看不到）。
  */
 import { createHash } from 'node:crypto';
-import fs, { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,9 +168,32 @@ try {
     missingDisk.length ? `缺 ${missingDisk.join(', ')}`
       : `${new Set(onDisk).size} 个全部存在`);
 
-  // ---------------- ③ 三个自有页面能开且无未捕获错误
-  console.log('\n=== ③ 三个自有页面能打开且无未捕获错误 ===');
-  for (const p of ['ui/popup/popup.html', 'ui/parallel/parallel.html', 'ui/wheel/wheel.html']) {
+  // ---------------- ③ 自有页面能开且无未捕获错误
+  //
+  // ★★ 这份清单是**手写的**，所以新增页面**必须在这里登记** ——
+  //   不登记的表现是"新页面从来不被试装"，而**校验仍然全绿**
+  //   （2026-10-12 v4.2.0 新增 `ui/translate/translate.html` 时正是靠手动核对发现的）。
+  //   ⇒ 判据：`src/ui/**/*.html` 的集合必须等于下面这个数组的集合。
+  console.log('\n=== ③ 自有页面能打开且无未捕获错误 ===');
+  const OWN_PAGES = [
+    'ui/popup/popup.html',
+    'ui/parallel/parallel.html',
+    'ui/translate/translate.html',
+    'ui/wheel/wheel.html',
+  ];
+  // 反向核对：源码里有多少个 html，清单里就该有多少条（漏登记 = 永远不试装）
+  const htmlOnDisk = readdirSync(path.join(root, 'packages', 'extension', 'src', 'ui'), { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith('.html'))
+    .map((f) => `ui/${f.split(path.sep).join('/')}`)
+    .sort();
+  const listed = [...OWN_PAGES].sort();
+  check(
+    '自有页面清单与源码里的 html 一一对应（新增页面必须登记，否则从不试装）',
+    htmlOnDisk.length === listed.length && htmlOnDisk.every((f, i) => f === listed[i]),
+    `源码 ${htmlOnDisk.length} 个：${htmlOnDisk.join(', ')}`,
+  );
+  for (const p of OWN_PAGES) {
     const pg = await ctx.newPage();
     const errs = [];
     pg.on('pageerror', (e) => errs.push(e.message));

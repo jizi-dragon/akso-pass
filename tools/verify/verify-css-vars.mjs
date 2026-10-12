@@ -54,15 +54,28 @@ const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ');
 function cssChain(htmlAbs) {
   const seen = [];
   const cycles = [];
+  const missing = [];
   const queue = [];
   const html = readFileSync(htmlAbs, 'utf8');
   for (const tag of html.match(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi) ?? []) {
     const m = /href=["']([^"']+)["']/i.exec(tag);
-    if (m) queue.push({ p: path.resolve(path.dirname(htmlAbs), m[1]), from: htmlAbs, depth: 0 });
+    if (m) queue.push({ p: path.resolve(path.dirname(htmlAbs), decodeURIComponent(m[1])), from: htmlAbs, depth: 0 });
   }
   while (queue.length) {
     const { p, from, depth } = queue.shift();
-    if (!existsSync(p)) continue;
+    if (!existsSync(p)) {
+      // ★★ 2026-10-12：**这里原先直接 `continue`，把"缺文件"静默吞掉** ——
+      //   于是"链很短"与"一切正常"在输出上长得一模一样。
+      //   实测事故：`translate.html` 漏了一行 `<link href="../panel.css">`，
+      //   该页**外壳样式一条都没加载**（`.hidden` 不存在 ⇒ 提示条常显、
+      //   `.block-head.row` 的 flex 不存在 ⇒ 标题与开关上下堆叠、
+      //   `.wrap` 的 min-height 不存在 ⇒ 保存条位置错乱），
+      //   三处看起来毫不相干的"布局缺陷"其实是同一个缺失的 link，
+      //   而**这个脚本当时是全绿的**。
+      //   ⇒ 判据：每个 `<link rel=stylesheet>` 都必须解析到一个**存在**的文件。
+      missing.push(`${path.basename(from)} → ${path.relative(UI, p).replace(/\\/g, '/')}`);
+      continue;
+    }
     if (seen.includes(p)) {
       // 已在链上 ⇒ 这是一条**重复引用**（环，或菱形依赖）
       cycles.push(`${path.basename(from)} → ${path.basename(p)}`);
@@ -75,7 +88,7 @@ function cssChain(htmlAbs) {
       queue.push({ p: path.resolve(path.dirname(p), m[1]), from: p, depth: depth + 1 });
     }
   }
-  return { chain: seen, cycles };
+  return { chain: seen, cycles, missing };
 }
 
 console.log('=== 前提 ===');
@@ -97,8 +110,13 @@ let totalChainFiles = 0;
 for (const html of htmls) {
   const rel = path.relative(UI, html).replace(/\\/g, '/');
   console.log(`\n=== ${rel} ===`);
-  const { chain, cycles } = cssChain(html);
+  const { chain, cycles, missing } = cssChain(html);
   totalChainFiles += chain.length;
+  // ★★ 每个 `<link rel=stylesheet>` 都必须指向**存在**的文件。
+  //   这是本轮（2026-10-12）真实事故的判据：漏一个 link ⇒ 整页外壳样式不加载，
+  //   而"链很短"与"一切正常"在旧输出里长得一模一样（旧实现在缺文件时直接 continue）。
+  check(`${rel} 的每个 <link> 都指向存在的文件`, missing.length === 0,
+    missing.length ? `缺失：${missing.join(' / ')}` : `${chain.length} 个都命中`);
   check(`${rel} 的样式链非空`, chain.length > 0,
     chain.map((c) => path.basename(c)).join(' → ') || '（空）');
   // ★★ 环 / 重复引用：`@import` 成环时**浏览器行为是实现相关的**，而"去重"会把环静默吞掉

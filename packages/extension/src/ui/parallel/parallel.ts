@@ -235,7 +235,13 @@ async function loadBrowserAccounts(): Promise<void> {
     syncBatchBar();
   }
   setStat('stat-accounts', browserAccounts.length);
-  setStat('stat-online', browserAccounts.filter((a) => a.tabIds.length > 0).length);
+  const onlineCount = browserAccounts.filter((a) => a.tabIds.length > 0).length;
+  setStat('stat-online', onlineCount);
+  // ★ v4.2.0：侧边导航上的在线数角标（同一事实的第二处显示）。
+  //   同一个数字两处显示是刻意的（导航栏在翻译面板上也能看到账号状态），
+  //   但**必须由同一处赋值**（都在这里），否则两处会给出不同的数 ——
+  //   而"哪个是真的"没有人能判断（本仓历史上 `reused` 就是这么错过的）。
+  setStat('nav-online', onlineCount);
 }
 
 function badgeOf(a: BrowserAccount): { cls: string; text: string } {

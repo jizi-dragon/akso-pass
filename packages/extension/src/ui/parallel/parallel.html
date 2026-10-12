@@ -3,10 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="../sidebar.css" />
+    <link rel="stylesheet" href="../panel.css" />
     <link rel="stylesheet" href="parallel.css" />
   </head>
   <body>
-    <main class="wrap">
+    <!-- ============ 侧边导航（v4.2.0 合并翻译扩展时新增多页外壳） ============
+         ★ 类名合约与 `ui/translate/translate.html` **必须一致**：
+           .sb-side / .sb-brand / .sb-nav / .sb-nav-item(.is-active) / .sb-side-foot
+           样式在 `ui/sidebar.css`（唯一来源），改一处两个页面同时生效。 -->
+    <aside class="sb-side">
+      <div class="sb-brand">
+        <span class="sb-brand-ring" aria-hidden="true"><i></i></span>
+        <div class="sb-brand-text">
+          <h1>Akso Pass</h1>
+          <p>多账号并行工作台</p>
+        </div>
+      </div>
+      <nav class="sb-nav" aria-label="主导航">
+        <a class="sb-nav-item is-active" href="parallel.html" aria-current="page">
+          <span class="sb-nav-icon" aria-hidden="true">▦</span>
+          <span>账号中心</span>
+          <span class="sb-nav-badge" id="nav-online">0</span>
+        </a>
+        <a class="sb-nav-item" href="../translate/translate.html">
+          <span class="sb-nav-icon" aria-hidden="true">文</span>
+          <span>翻译面板</span>
+        </a>
+      </nav>
+      <div class="sb-side-foot">
+        <span>账号中心</span>
+        <span id="ver-chip" class="status-chip">v—</span>
+      </div>
+    </aside>
+
+    <main class="wrap sb-main">
       <!-- 数据源提示条（云端不可用 / 合并结果；无事发生时不占位） -->
       <div id="cloud-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
@@ -21,13 +52,6 @@
       </div>
 
       <header class="head">
-        <div class="brand">
-          <span class="brand-ring" aria-hidden="true"><i></i></span>
-          <div class="brand-text">
-            <h1>Akso Pass</h1>
-            <p>多账号并行工作台</p>
-          </div>
-        </div>
         <div class="head-right">
           <!-- ★★ v3.19（2026-10-09）：这里原先有 `#source-switch`（本地/云端数据源分段控件）
                与一段讲"本地 → 云端合并上传、本地数据不会被删除"的说明文字。
@@ -62,7 +86,9 @@
             <span class="stat stat-online"><i class="pulse-dot"></i><b id="stat-online">0</b><span>在线</span></span>
             <span class="stat"><b id="stat-boxes">1</b><span>盒子</span></span>
           </div>
-          <span id="ver-chip" class="status-chip">v—</span>
+          <!-- ★ v4.2.0：`#ver-chip` 移到左侧导航栏页脚（那里是"这一页是什么"
+               的位置），这里不再重复一个 id —— 两个同 id 元素会让
+               `getElementById` 只拿到第一个，而**第二个永远不更新**（静默）。 -->
         </div>
       </header>
 

@@ -1,6 +1,6 @@
 import type { RuntimeRequest, RuntimeResponse, Result, StatusContext, StatusList } from '../shared/messages';
 import type { BridgeUpPayload } from '../shared/types';
-import { CONTENT_MESSAGE, EXT_VERSION, LOCAL_KEYS } from '../shared/constants';
+import { CONTENT_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../shared/constants';
 // ★ 日志的**唯一公开面**（AGENTS.md 规则 3）：取 logger 与读缓冲都从这里。
 //   直接 `console.*` 会绕过强制打码；直接读 ring 会绕过 `drain()` 的游标还原。
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
@@ -119,6 +119,11 @@ void replayLogPersist();
 
 import { getPendingAutoLogin } from './core/auto-login-cache';
 import { siteAuth, probeScheme } from './core/site-auth';
+// v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
+import { translate } from '../shared/engines';
+import { loadTranslationSettings } from '../shared/translate-settings';
+import { incrementStats } from '../shared/translate-stats';
+import { toSnakeCase, validateTranslation, looksLikeDictionaryEntry } from '../shared/snake-case';
 import {
   forensics,
   handleOpenError,
@@ -678,11 +683,84 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     return true;
   }
 
+  // 1.5 翻译链路（v4.2.0 合并 Akso Instant Translate）
+  if (
+    req &&
+    typeof req === 'object' &&
+    (req as { type?: string }).type === TRANSLATE_MESSAGE.request
+  ) {
+    const text = (req as { text?: unknown }).text;
+    void handleTranslateRequest(typeof text === 'string' ? text : '').then(sendResponse);
+    return true;
+  }
+
   // 2. （已移除）旧版本地引擎 NM 桥 —— v2.4 起纯浏览器模式，不再转发引擎指令
   // 3. 普通扩展内部请求
   void dispatch(req as RuntimeRequest).then(sendResponse);
   return true;
 });
+
+/**
+ * 翻译请求的全部服务端逻辑：读设置 → 校验开关 → 调引擎 → 校验结果 →
+ * **命名规范转换** → 记统计。
+ *
+ * ★ 为什么 snake_case 转换放在 background 而不是页面：
+ *   两条路径（点图标 / Alt+T）**共用同一份结果**。放在页面里就等于两份调用点，
+ *   而"其中一条忘了转"不会报错，只会让两个入口给出的格式不一样。
+ *
+ * ★ 统计**只在这里 +1**：页面拿到的永远是"已成功"的结果，
+ *   所以不会出现"失败也计数"（而在页面里计数就得自己判断 success，那是第二处真相）。
+ */
+async function handleTranslateRequest(rawText: string): Promise<{
+  success: boolean;
+  text?: string;
+  engine?: string;
+  error?: string;
+}> {
+  const text = rawText.trim();
+  if (!text) {
+    return { success: false, error: '输入框内容为空' };
+  }
+  try {
+    const settings = await loadTranslationSettings();
+    if (!settings.translate_enabled) {
+      return { success: false, error: '翻译功能已关闭，请在「翻译面板」中开启' };
+    }
+
+    const result = await translate(
+      text,
+      settings.target_language,
+      settings.source_language,
+      settings.translation_provider,
+    );
+
+    // ★ v1.4.1 的修复必须保留：引擎识别不了源语言时会**原样返回输入**，
+    //   而那是"成功"响应 ⇒ 不校验就会把中文当译文回填、并提示"翻译完成"。
+    const invalid = validateTranslation(result.text, settings.target_language);
+    if (invalid) {
+      return { success: false, error: invalid };
+    }
+    // ★★ v4.2.0：词典释义也不能当译文（实测 `行动措施` → `take action /measures /steps to do sth`）。
+    //   自动模式已在引擎层把这类结果拒掉并落到下一个引擎；**用户手选「有道」时**会走到这里
+    //   ⇒ 必须给出"为什么不行"和"怎么办"，而不是把那串东西填进输入框。
+    if (looksLikeDictionaryEntry(result.text)) {
+      return {
+        success: false,
+        error: '该引擎返回的是词典释义（如「take action /measures /steps」），不是可用译文。请改用「自动模式」或「腾讯交互翻译」。',
+      };
+    }
+
+    const finalText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
+
+    await incrementStats();
+    log.info('翻译成功 engine=%s snake=%s len=%d', result.engine, settings.naming_convention_mode, finalText.length);
+    return { success: true, text: finalText, engine: result.engine };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.warn('翻译失败：%s', msg);
+    return { success: false, error: msg };
+  }
+}
 
 /* ---------------- 实例状态轮盘（v3.15）：上下文 / 读取 / 切换 ---------------- */
 
@@ -862,7 +940,34 @@ chrome.commands.onCommand.addListener((command) => {
     void flashBadge('★');
     void toggleFavoritesOverlay();
   }
+  if (command === TRANSLATE_COMMAND) {
+    // v4.2.0：Alt+T —— 翻译当前输入框内容并只写剪贴板（不回填）
+    void runTranslateHotkey();
+  }
 });
+
+/**
+ * `Alt+T` 的实际落地：把命令转给**当前标签页**的内容脚本。
+ *
+ * ★ 为什么必须在 SW 里转一手：`chrome.commands` 的 `onCommand` **只发给扩展的
+ *   service worker**，页面里的内容脚本收不到。所以"快捷键"这条链是
+ *   `SW.onCommand → tabs.sendMessage → content/translate.ts`，中间少一环就是"按了没反应"。
+ *
+ * ★ 为什么**不报错给用户**：内容脚本没注入的页面（`chrome://`、扩展页、PDF 阅读器）
+ *   本来就不该有翻译。这时静默返回是**正确行为**，弹个错误反而像出了故障
+ *   （与 akso-pass 既有的 `toggleFavoritesOverlay` 处理 `chrome://` 的做法一致）。
+ */
+async function runTranslateHotkey(): Promise<void> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+      return;
+    }
+    await chrome.tabs.sendMessage(tab.id, { type: TRANSLATE_MESSAGE.hotkey });
+  } catch {
+    // 内容脚本未就绪（页面刚打开/正在导航）：下一次按就好了，不必打扰用户
+  }
+}
 
 /** 常用页面书签轮盘（v3.16，Alt+1）——同状态轮盘，只做页面内浮层 */
 let lastFavToggleAt = 0;

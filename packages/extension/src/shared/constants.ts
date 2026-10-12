@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.1.4';
+export const EXT_VERSION = '4.2.0';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -71,6 +71,42 @@ export const DEFAULT_FAVORITES: ReadonlyArray<{ name: string; path: string }> = 
 
 /** 常用页面书签上限（轮盘一环的上限；超出提示去管理页精简） */
 export const FAVORITES_MAX = 10;
+
+/**
+ * 翻译链路的消息协议（v4.2.0 合并 Akso Instant Translate）。
+ *
+ * ★ 按本仓约定集中在这里定义，**不要在调用点就地写字符串字面量** ——
+ *   那样"一边改了另一边没改"会静默失效（翻译会变成永远超时，而不是报错）。
+ */
+export const TRANSLATE_MESSAGE = {
+  /** content → background：翻译一段文本（结果由 background 决定是否转 snake_case） */
+  request: 'ql:translateRequest',
+  /**
+   * background → content：用户按了 `Alt+T`。
+   * ★ `chrome.commands` 的 `onCommand` **只在 SW 里触发**（页面拿不到），
+   *   所以快捷键链路必须是 SW 转一手 —— 这条消息就是那一手。
+   */
+  hotkey: 'ql:translateHotkey',
+} as const;
+
+/** 翻译命令的 `commands` 名（manifests 里注册，用户可在 chrome://extensions/shortcuts 改键） */
+export const TRANSLATE_COMMAND = 'translate-input';
+
+/** 翻译次数统计在 `storage.local` 里的键 */
+export const TRANSLATION_STATS_KEY = 'ql:translateStats';
+
+/**
+ * 页面内翻译 UI 的元素 id。
+ *
+ * ★ 全部带 `ql_` 前缀（原扩展是 `akso_`）：合并后与 akso-pass 自己的注入元素
+ *   （`akso_translate_*` 是原扩展的，而 akso-pass 用 `__ql_*` 命名空间）保持族内一致，
+ *   同时**避免与原扩展的元素 id 撞车**——万一两个扩展同时装着，同 id 会互相覆盖。
+ */
+export const TRANSLATE_UI_ID = {
+  icon: 'ql_translate_icon',
+  toast: 'ql_translate_toast',
+} as const;
+
 
 /** background 向内容脚本下发的消息 type */
 export const CONTENT_MESSAGE = {

@@ -49,16 +49,53 @@ async function generateGridCss() {
   return outFile;
 }
 
-/** 仅复制 UI 静态文件（html/css），不含源码 */
+/** 仅复制 UI 静态文件（html/css），不含源码
+ *
+ * ★★ v4.2.0 修：**先把目标目录建出来**，不要依赖"第一个条目恰好是目录"。
+ *
+ *   原实现只在遇到**子目录**时才 `mkdirSync(out)`，根层同名文件直接 `copyFileSync`
+ *   ⇒ 它隐含依赖"`readdirSync` 的第一个条目是目录"。这个前提一直成立，
+ *   直到 v4.2.0 在 `src/ui/` **根层**新增了 `panel.css`（与 `parallel/` 同级）：
+ *   字母序 `panel.css` < `parallel` ⇒ 先拷文件、而 `dist/ui` 还不存在 ⇒
+ *   `ENOENT ... copyfile panel.css`，**构建整体失败**。
+ *
+ *   ⇒ 现在无条件 `mkdirSync(to, { recursive: true })`。这条判据是
+ *     "把 `src/ui/` 根层的第一个条目换成一个文件，构建仍必须成功"。
+ */
 function copyUiStatics(from, to) {
+  mkdirSync(to, { recursive: true });
   for (const entry of readdirSync(from)) {
     const src = path.join(from, entry);
     const out = path.join(to, entry);
     if (statSync(src).isDirectory()) {
-      mkdirSync(out, { recursive: true });
       copyUiStatics(src, out);
     } else if (entry.endsWith('.html') || entry.endsWith('.css')) {
       copyFileSync(src, out);
+    }
+  }
+}
+
+/**
+ * 复制 `src/content/` 下的 **css**（内容脚本的样式表）。
+ *
+ * ★★ v4.2.0 补：此前**根本没有这一步** —— `copyExtensionStatics()` 只拷 `assets/`
+ *   与 `ui/`，而 `content_scripts[].css` 指向的 `content/translate.css` 因此**从未进包**。
+ *   直到 v4.2.0 才由 `content_scripts` 引用 css 条目，这个缺口才第一次暴露。
+ *
+ *   ⇒ 缺口的表现是 Chrome 装载时报"找不到文件"，属**运行期才发现**的一类
+ *     （与规则 35「manifest 合法 ≠ Chrome 装得上」同族）。
+ *     判据：`dist/` 里必须存在 `manifest.content_scripts[].css` 的**每一个**文件。
+ *
+ * ★ 只拷 `.css`：`.ts` 是源文件（由 esbuild 打包成 `content/*.js`），拷进去等于把源码
+ *   发给用户（`copyExtensionStatics` 里 `logo-master-422.png` 那条同类处置）。
+ */
+function copyContentStatics() {
+  const from = path.join(extDir, 'src', 'content');
+  const to = path.join(dist, 'content');
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from)) {
+    if (entry.endsWith('.css')) {
+      copyFileSync(path.join(from, entry), path.join(to, entry));
     }
   }
 }
@@ -81,6 +118,7 @@ function copyExtensionStatics() {
   }
   copyFileSync(path.join(extDir, 'manifest.json'), path.join(dist, 'manifest.json'));
   copyUiStatics(path.join(extDir, 'src', 'ui'), path.join(dist, 'ui'));
+  copyContentStatics();
 }
 
 const extensionOptions = {
@@ -100,8 +138,12 @@ const extensionOptions = {
     'content/wheel-overlay': path.join(extDir, 'src', 'content', 'wheel-overlay.ts'),
     'content/status-overlay': path.join(extDir, 'src', 'content', 'status-overlay.ts'),
     'content/favorites-overlay': path.join(extDir, 'src', 'content', 'favorites-overlay.ts'),
+    // v4.2.0：翻译（合并 Akso Instant Translate）—— 浮动图标 + Alt+T
+    'content/translate': path.join(extDir, 'src', 'content', 'translate.ts'),
     'ui/popup/popup': path.join(extDir, 'src', 'ui', 'popup', 'popup.ts'),
     'ui/parallel/parallel': path.join(extDir, 'src', 'ui', 'parallel', 'parallel.ts'),
+    // v4.2.0：翻译面板（侧栏导航的第二个页面）
+    'ui/translate/translate': path.join(extDir, 'src', 'ui', 'translate', 'translate.ts'),
     'ui/wheel/wheel': path.join(extDir, 'src', 'ui', 'wheel', 'wheel.ts'),
   },
 };

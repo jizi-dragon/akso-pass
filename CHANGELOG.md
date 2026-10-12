@@ -5,6 +5,85 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.0（2026-10-12）
+
+**合并 `Akso Instant Translate`（输入框即时翻译）进 akso-pass，并按用户要求重构为「图标可选 + `Alt+T` 取译文到剪贴板」，设置面板迁入新的多页管理外壳。**
+
+> 用户 2026-10-12 下达的 6 条调整：① 核心仍是翻译；② 浮动图标改为**可选项**；
+> ③ 新增快捷键：光标在输入框内时翻译其中文为英文（沿用原扩展的命名规范格式），
+> **结果只写剪贴板、不回填原框**；④ 翻译成功的页面内反馈保留；
+> ⑤ 合并为一个扩展；⑥ 废弃原 popup 设置面板，管理页改成**侧栏导航的两页**
+> （账号中心 / 翻译面板），设置项**全量迁移**。
+
+### 新增
+
+| 文件 | 职责 |
+|---|---|
+| `shared/engines.ts` | 4 路免费引擎（TranSmart / 有道 / MyMemory / Lingva）+ 自动模式赛马与三级兜底。**放 shared 而不是 content** —— 引擎适配器约 8 KB，只在 background 跑，放 content 等于给每个页面白送 8 KB（规则 10） |
+| `shared/snake-case.ts` | 命名规范转换 + 汉字残留校验。**两个消费方共用一份**（background 落地、面板实时预览） |
+| `shared/translate-settings.ts` | 翻译设置的类型/默认值/读写/**越界修正**（`normalizeTranslationSettings` 是纯函数，可直接判据） |
+| `shared/translate-stats.ts` | 使用统计（`storage.local`；只统计**成功**；保留 90 天 / 12 个月） |
+| `content/translate.ts` + `.css` | 页面内浮动图标（可选）+ `Alt+T` + Toast。**幂等守卫、`ql_` 前缀 id、绝不写页面 storage** |
+| `ui/translate/*` (html/css/ts) | 翻译面板（15 语言 / 5 引擎卡 / 命名规范实时预览 / 统计 / 合规告知 / 快捷键真实键位） |
+| `ui/sidebar.css` | 侧栏导航外壳（两个页面**共用一份**） |
+| `ui/panel.css` | 管理页共享外壳样式（**从 `parallel.css` 程序化搬出**，见下） |
+
+### 改动
+
+| # | 改动 | 为什么 |
+|---|---|---|
+| 1 | `manifest.json`：新增 `translate-input` 命令（`Alt+T`）、第 5 个 content script、版本 4.2.0 | 快捷键必须注册在 `commands` 里，否则 `chrome.commands.onCommand` 永远不触发 |
+| 2 | 侧栏导航（`ui/sidebar.css`）同时改 `parallel.html` 与 `translate.html` | 用户要求"不要追加在账号页后面，要单独起页 + 侧栏" |
+| 3 | `parallel.html` 移除页头 `.brand` 与 `#ver-chip`（移到侧栏页脚） | 侧栏已有品牌区；两个同 id 元素会让 `getElementById` 只拿到第一个，**第二个永远不更新**（静默） |
+| 4 | `parallel.ts` 新增 `nav-online` 赋值 | 侧栏要显示在线数。★ 同一个数字两处显示**必须同一处赋值**，否则两处给出不同的数而"哪个是真的"无人能判 |
+| 5 | `service-worker.ts`：翻译消息分支 + `Alt+T` 命令转发 | `chrome.commands.onCommand` **只在 SW 触发**，页面收不到 ⇒ 必须 SW 转一手 |
+| 6 | `build.mjs`：`entryPoints` +2；**修 `copyUiStatics` 的隐含前提**；**补 `copyContentStatics`** | 见下「顺带修掉的两个构建缺陷」 |
+| 7 | `verify-load.mjs`：自有页面清单加入翻译面板，并**反向核对清单与源码 html 一一对应** | 手写清单漏登记 = 新页面**从不被试装**，而校验**照样全绿** |
+
+### ★★ 顺带修掉的两个构建缺陷（都不是翻译功能引入的，是它**照出来的**）
+
+| # | 缺陷 | 根因 | 判据 |
+|---|---|---|---|
+| 1 | `copyUiStatics` **依赖"第一个条目是目录"** | 它只在遇到子目录时 `mkdirSync`。v4.2.0 在 `src/ui/` **根层**加了 `panel.css`，字母序 `panel.css` < `parallel` ⇒ 先拷文件而 `dist/ui` 不存在 ⇒ `ENOENT`，**构建整体失败** | 把 `src/ui/` 根层第一个条目换成文件，构建仍须成功 |
+| 2 | **`content_scripts[].css` 从未进包** | `copyExtensionStatics()` 只拷 `assets/` 与 `ui/`，没有任何一步拷 `src/content/*.css`。v4.2.0 第一次让 content script 引用 css，缺口才暴露 | `dist/` 里必须存在 `manifest.content_scripts[].css` 的**每一个**文件 |
+
+★ 缺陷 2 的形态与本仓规则 35（「manifest 合法 ≠ Chrome 装得上」）同族：
+它只在**装载时**报"找不到文件"，而 `npm run build` 是绿的。
+
+### 判据
+
+- `npm run typecheck` exit 0；`npm run build` BUILD_OK；`npm run check-deps` DEP_OK
+- `verify-load` **20/20**（新增"新页面必须登记"1 条 + 翻译面板的开页与无错误 2 条）
+- `verify-css-vars` **28/28**、`verify-brand` **10/10**、`verify-agents-budget` **11/11**、
+  `verify-deadprotocol` OK、`verify-user-docs` **7/7**
+- 产物核对：`manifest` 引用的文件**零缺失**；用户 6 条要求**逐条在 `dist/` 里有落点**（12/12）
+
+### ★★ 用户实测反馈后的三处修复（同日，v4.2.0 内）
+
+用户在真实浏览器里试过之后报了三件事，**两类根因、三处修复**：
+
+| # | 用户原话 | 真实根因 | 修复 |
+|---|---|---|---|
+| 1 | "翻译功能没有生效" | **不是链路坏**（实测 5/5 全通），而是**产物是垃圾**：自动模式赛马里「网易有道」走的是**网络释义**接口，返回词条 —— `行动措施` → `take action /measures /steps to do sth`。而它通常**更快**，于是 `Promise.any` 把词典结果当赢家，用户拿到一串带 `/` 与 `to do sth` 的文本，界面还提示"✅ 已翻译" | 新增 `looksLikeDictionaryEntry()`；自动模式里拿到词典释义**主动 reject**，判据从"谁先返回"改成"**谁先返回可用结果**"；手选有道时明确报错并指路（PITFALLS #42） |
+| 2 | "logo 不对" | 侧栏品牌环被写成了**纯色圆点**（`background: var(--sb-brand)` + 带边框），把原来的**锥形渐变环**降级了 | 改回与 `panel.css` 的 `.brand-ring` **同形态**的 conic-gradient 环，仅按侧栏收窄尺寸 |
+| 3 | "页面按钮杂乱无序、毫无逻辑、根本无法配置" | **`translate.html` 漏了一行 `<link href="../panel.css">`**。那一行提供 `.wrap` / `.block` / `.block-head.row` / **`.hidden`** / `.desc` / `.stat` —— 缺了它等于整页**外壳样式一条都没加载**。三处"看起来毫不相干的布局缺陷"（提示条常显 / 开关掉行 / 保存条压住卡片）其实是**同一个缺失的 link**；而 `verify-css-vars` 当时**全绿**，因为它 `if (!existsSync(p)) continue;` 把缺文件静默跳过了（PITFALLS #41） | 补回 link；**顺带重排了面板信息层级**（总开关置顶放大 → 怎么用 → 命名规范 → 高级折叠 → 统计 → 保存条，并新增"试一次"按钮）；`cssChain()` 增加 `missing[]` 并落成判据"每个 `<link>` 都必须指向存在的文件"（反证：探针页面当场变红） |
+
+★ 另修：`translate.html` 里 `#engine-hint` 是**孤儿 id**（HTML 有、TS 零引用），
+被 `verify-log-redaction` 的孤儿标记判据抓到（规则 20）—— 去掉 id。
+**我自己的契约核对早就列出了它，我却挥手放过了**：判据给了结论，我没读。
+
+### ★ 已知代价（诚实标注）
+
+- **每帧注入体积 38.5 KB → 60.9 KB**（`content/translate.js` 18.2 KB + `translate.css` 4.1 KB）。
+  其中 **5.7 KB（31%）是 `getLogger` 打码通道** —— **刻意不省**：本仓规则 3/21 要求
+  日志必须走打码通道，而翻译功能手上是**用户任意文本**（可能就是敏感字段）。
+  省掉它就把"凭据/内容不入日志"的机制降级成约定。
+- **剪贴板是跨账号共享资源**：写入系统剪贴板对 `akso-pass` 的"账号间零共享"是一条
+  **显式例外**（剪贴板无法按 tab 隔离）。功能上无害（用户主动发起），但**必须写进文档**，
+  否则以后有人会把它当成"第八个平面漏了"。
+- **翻译内容出境**：请求直发腾讯 / 有道 / MyMemory / Lingva。已在翻译面板用醒目提示告知
+  （用户 2026-10-12 确认"内部工具、可用公网引擎"）。
+
 ## 4.1.4（2026-10-12）
 
 **修复：自动登录的「试次」记账口径 —— 中止的轮次白吃机会、且观察窗期间无人重填。**

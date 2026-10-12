@@ -1,0 +1,200 @@
+/* 侧边导航外壳（**多页 UI 的唯一布局源**）
+ *
+ * ★ 为什么单独一个文件：`parallel.html`（账号中心）与 `translate.html`（翻译面板）
+ *   是两个独立页面，但**导航栏必须是同一套**。各写一份 = 同一段布局两份维护，
+ *   而"漏改一边"不会报错，只会让两个页面的侧栏**看起来不一样**（本仓规则 12 的同类风险）。
+ *
+ * ★ 色值一律取 `tokens.css` 的 `--sb-*` 令牌，**这里不出现任何硬编码色**：
+ *   `tools/verify/verify-brand.mjs` 会把 TS/JS 里的品牌色硬编码**只减不增**（冻结基线 15），
+ *   而 CSS 侧靠"令牌唯一来源"这条纪律。要改品牌色**只改 tokens.css**。
+ *
+ * ★ 命名前缀 `sb-`：本文件与 `theme.css` 的全局选择器（`*` / `body` / `button` / `.card`）
+ *   同页加载，所以布局类名必须带前缀，避免与 theme.css 打架。
+ */
+
+body {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* ── 侧栏 ── */
+.sb-side {
+  flex: 0 0 208px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 12px;
+  background: var(--sb-surface);
+  border-right: 1px solid var(--sb-border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.sb-side .sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--sb-border);
+}
+
+.sb-side .sb-brand-ring {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* ★ 与账号中心页头的品牌环**同一形态**（锥形渐变 + 内圈白底）。
+     原先这里写的是一个纯色圆点 —— 那是把品牌标识降级成了"一个蓝点"，
+     与 `panel.css` 的 `.brand-ring` 不是同一个东西（用户 2026-10-12 指出）。
+     ⇒ 形态统一，只是尺寸按侧栏收窄。 */
+  background: conic-gradient(from 200deg, var(--sb-brand), #7C5CFF 40%, var(--sb-success) 75%, var(--sb-brand));
+  box-shadow: 0 3px 8px rgba(30, 111, 255, 0.26);
+}
+
+.sb-side .sb-brand-ring i {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--sb-surface);
+  box-shadow: inset 0 1px 2px rgba(23, 42, 84, 0.14);
+  display: block;
+}
+
+.sb-side .sb-brand-text h1 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--sb-text);
+  line-height: 1.2;
+}
+
+.sb-side .sb-brand-text p {
+  font-size: 11px;
+  margin: 2px 0 0;
+  color: var(--sb-text-secondary);
+}
+
+/* ── 导航项 ── */
+.sb-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--sb-radius);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--sb-text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  /* 只过渡颜色/背景：避免与"减少动效"偏好打架（prefers-reduced-motion 见下） */
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.sb-nav-item:hover {
+  background: var(--sb-brand-soft-2);
+  color: var(--sb-text);
+}
+
+.sb-nav-item.is-active {
+  background: var(--sb-brand-soft);
+  color: var(--sb-brand);
+}
+
+.sb-nav-item .sb-nav-icon {
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.sb-nav-item .sb-nav-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sb-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-nav-item.is-active .sb-nav-badge {
+  color: var(--sb-brand);
+}
+
+.sb-side-foot {
+  margin-top: auto;
+  padding: 10px 8px 0;
+  border-top: 1px solid var(--sb-border);
+  font-size: 11px;
+  color: var(--sb-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+/* ── 内容区：把原来的 .wrap 变成右侧一栏 ── */
+.sb-main {
+  flex: 1 1 auto;
+  min-width: 0; /* 防长内容把 flex 撑破（含长账号名/长 URL） */
+}
+
+/* ── 无侧栏的窄屏（扩展 popup / 轮盘小窗不受影响：它们不引本文件） ── */
+@media (max-width: 720px) {
+  body {
+    flex-direction: column;
+  }
+  .sb-side {
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto;
+    position: static;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--sb-border);
+    overflow-x: auto;
+  }
+  .sb-side .sb-brand {
+    padding: 0 10px 0 0;
+    margin: 0 6px 0 0;
+    border-bottom: none;
+    border-right: 1px solid var(--sb-border);
+  }
+  .sb-nav {
+    flex-direction: row;
+  }
+  .sb-nav-item {
+    width: auto;
+    white-space: nowrap;
+  }
+  .sb-side-foot {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-nav-item {
+    transition: none;
+  }
+}

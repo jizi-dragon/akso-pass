@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>翻译面板 · Akso Pass</title>
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="../sidebar.css" />
+    <!-- ★★ 这一行是承重的，别删：`panel.css` 提供 .wrap/.head/.block/.block-head.row/
+         .notice/.hidden/.desc/.stat/.field 等**外壳与通用件**。
+         2026-10-12 重写本页时漏掉过它一次，后果不是"少一点样式"而是：
+           · `.hidden` 不存在 ⇒ 关闭提示条一直显示、开关的行显隐失效
+           · `.block-head.row` 的 `display:flex` 不存在 ⇒ 标题与开关**上下堆叠**
+           · `.wrap` 的 `min-height:100vh` 不存在 ⇒ 吸底保存条压到卡片上
+         三条看起来毫不相干的"布局缺陷"，其实是**同一个缺失的 link**。
+         ⇒ 判据：`tools/verify/verify-css-vars.mjs` 之外，本仓另有
+           "自有页面必须引到 panel.css"的核对（`tmp/check-page-links.mjs`）。 -->
+    <link rel="stylesheet" href="../panel.css" />
+    <link rel="stylesheet" href="translate.css" />
+  </head>
+  <body>
+    <!-- ============ 侧边导航（两个页面共用同一套类名合约） ============ -->
+    <aside class="sb-side">
+      <div class="sb-brand">
+        <span class="sb-brand-ring" aria-hidden="true"><i></i></span>
+        <div class="sb-brand-text">
+          <h1>Akso Pass</h1>
+          <p>多账号并行工作台</p>
+        </div>
+      </div>
+      <nav class="sb-nav" aria-label="主导航">
+        <a class="sb-nav-item" href="../parallel/parallel.html">
+          <span class="sb-nav-icon" aria-hidden="true">▦</span>
+          <span>账号中心</span>
+        </a>
+        <a class="sb-nav-item is-active" href="translate.html" aria-current="page">
+          <span class="sb-nav-icon" aria-hidden="true">文</span>
+          <span>翻译面板</span>
+        </a>
+      </nav>
+      <div class="sb-side-foot">
+        <span>翻译面板</span>
+        <span id="ver-chip" class="status-chip">v—</span>
+      </div>
+    </aside>
+
+    <main class="wrap sb-main">
+      <!-- ★ 内容与保存条**包在一个 flex 列里**，保存条靠 `margin-top:auto` 钉到底部。
+          为什么不用 `position:sticky`：吸底条会**浮在内容之上**，而"浮着"就会遮住
+          它下面的东西（实测：它正好压在引擎卡上）。用户报的"根本没法配置"里
+          有一部分就是这个 —— 想点的控件被一条浮层挡着。
+          ⇒ 改成流式布局：内容不够高时保存条在底部，内容够高时它在文档末尾，
+            **任何情况下都不与内容重叠**。 -->
+      <div class="t-shell">
+      <!-- ============================================================
+           ① 总开关（第一眼要看到的唯一一件事）
+           ============================================================ -->
+      <header class="head t-head">
+        <div class="brand-text">
+          <h1>翻译面板</h1>
+          <p>光标放进输入框 → <kbd>Alt+T</kbd> → 译文进剪贴板</p>
+        </div>
+        <label class="t-power" for="translate_enabled">
+          <input id="translate_enabled" type="checkbox" class="t-switch-input" />
+          <span class="t-switch" aria-hidden="true"><i></i></span>
+          <span class="t-power-text">
+            <b id="enabled_label">翻译功能已开启</b>
+            <small id="enabled_sub">页面会出现翻译图标，Alt+T 可用</small>
+          </span>
+        </label>
+      </header>
+
+      <!-- 总开关关闭时的整页提示（比"控件灰掉"更明确：一眼知道为什么点不动） -->
+      <div id="disabled-banner" class="notice warn hidden" role="status">
+        翻译功能已关闭：页面上不会出现翻译图标，<kbd>Alt+T</kbd> 也不会响应。打开右上角开关即可恢复。
+      </div>
+
+      <!-- ============================================================
+           ② 常用：两条路径 + 命名规范（配置翻译"做什么"）
+           ============================================================ -->
+      <section class="card block">
+        <div class="block-head">
+          <h2>怎么用</h2>
+          <p class="desc">两条路径并存，语义不同 —— 别再猜哪个是哪个。</p>
+        </div>
+
+        <div class="t-paths">
+          <div class="t-path">
+            <div class="t-path-key"><kbd>Alt+T</kbd></div>
+            <div class="t-path-body">
+              <b>取译文到剪贴板</b>
+              <span>光标在输入框内时按一下。翻译并复制，<b>原输入一字不动</b>，到下一个框直接 <kbd>Ctrl+V</kbd>。</span>
+            </div>
+            <button id="test-btn" class="btn-ghost btn-sm" type="button" title="在当前页面上试一次（需先聚焦某个输入框）">试一次</button>
+          </div>
+
+          <div class="t-path">
+            <div class="t-path-key t-path-key-icon" aria-hidden="true">🔵</div>
+            <div class="t-path-body">
+              <b>点图标回填原文</b>
+              <span>输入框右下角的小图标。<b>翻译并覆盖原框</b>（会改掉你写的中文）。</span>
+              <label class="t-inline-switch" for="floating_icon_enabled">
+                <input id="floating_icon_enabled" type="checkbox" class="t-switch-input" />
+                <span class="t-switch t-switch-sm" aria-hidden="true"><i></i></span>
+                <span>显示这个图标</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <p class="hint">
+          快捷键改键去
+          <a id="shortcut-link" href="#">chrome://extensions/shortcuts</a>
+          —— 当前生效键位：<b id="hotkey-display">Alt+T</b>。
+          若显示「未设置」，说明被别的扩展占用了，请到该页面重新指定。
+        </p>
+      </section>
+
+      <!-- 命名规范模式：字段名场景的核心开关，独立成卡（带实时预览） -->
+      <section class="card block">
+        <div class="block-head row">
+          <div>
+            <h2>命名规范模式</h2>
+            <p class="desc">翻译结果转成 <code>snake_case</code>，可直接当字段名 / API 参数名 / 变量名。</p>
+          </div>
+          <label class="t-switch-only" for="naming_convention_mode">
+            <input id="naming_convention_mode" type="checkbox" class="t-switch-input" />
+            <span class="t-switch" aria-hidden="true"><i></i></span>
+          </label>
+        </div>
+
+        <div class="t-preview">
+          <label class="t-preview-in">
+            <span>试一段（输入即预览）</span>
+            <input id="preview-input" type="text" value="Quality Deviation (QD)" />
+          </label>
+          <div class="t-preview-out">
+            <span class="t-preview-label">结果</span>
+            <code id="preview-output">—</code>
+          </div>
+        </div>
+        <p class="hint">
+          含换行的段落<b>原样保留</b>（多行是段落不是字段名）；单行不论多长都转换；
+          超 60 字符按<b>完整单词</b>截断；结果短于 3 字符则保留原文。
+        </p>
+      </section>
+
+      <!-- ============================================================
+           ③ 高级（默认折叠：语言 / 引擎，改一次就很少再动）
+           ============================================================ -->
+      <details class="card block t-adv" id="adv">
+        <summary class="t-adv-summary">
+          <span class="t-adv-title">高级设置</span>
+          <span class="t-adv-current" id="adv-current">英语 · 自动模式</span>
+          <span class="t-adv-arrow" aria-hidden="true">▾</span>
+        </summary>
+
+        <div class="t-adv-body">
+          <div class="t-sub">
+            <h3>目标语言</h3>
+            <label class="t-field">
+              <span>翻译成</span>
+              <select id="target_language"></select>
+            </label>
+            <p class="hint">
+              源语言固定为<b>自动检测</b>。
+              <b>有道</b>只服务中↔英方向且不接受语言参数，选其它语言时它会失败并由兜底引擎接管。
+            </p>
+          </div>
+
+          <div class="t-sub">
+            <h3>翻译引擎</h3>
+            <div id="engine-list" class="t-engines" role="radiogroup" aria-label="翻译引擎"></div>
+            <p class="hint">
+              全部引擎<b>免费、无需 API Key、无需注册</b>。自动模式并行赛马两个国内引擎，谁快用谁；
+              都失败再依次用海外两路兜底 —— 要 4 路同时挂才会失败。
+              <b>返回词典释义（含「/」或 sth/sb）的引擎会被自动跳过</b>，不会把词条当译文给你。
+            </p>
+          </div>
+
+          <div class="notice warn t-privacy">
+            <b>翻译内容会发送到第三方。</b>
+            请求由浏览器直接发往腾讯交互翻译 / 网易有道 / MyMemory / Lingva 的公开接口，
+            <b>不经过本项目任何服务器</b>。含敏感信息的字段请不要翻译。
+          </div>
+        </div>
+      </details>
+
+      <!-- ============================================================
+           ④ 只读：使用统计（不是设置项，放最后，且不占视觉重量）
+           ============================================================ -->
+      <section class="card block t-stats-card">
+        <div class="block-head">
+          <h2>使用统计</h2>
+          <p class="desc">只统计<b>成功</b>的翻译；数据存本机，保留最近 90 天 / 12 个月。</p>
+        </div>
+        <div class="t-stats">
+          <span class="stat"><b id="stat-today">0</b><span>今日</span></span>
+          <span class="stat"><b id="stat-month">0</b><span>本月</span></span>
+          <span class="stat"><b id="stat-total">0</b><span>累计</span></span>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           ⑤ 保存：钉在内容之后（流式，不浮在内容上）
+           ============================================================ -->
+      <div class="t-savebar">
+        <span class="t-savebar-hint">改开关会立即保存；语言与引擎改完点这里。</span>
+        <span id="save-feedback" class="t-feedback" role="status" aria-live="polite"></span>
+        <button id="btn-save" class="btn-primary" type="button">保存设置</button>
+      </div>
+      </div>
+    </main>
+
+    <script src="translate.js"></script>
+  </body>
+</html>

@@ -15,7 +15,7 @@
 > |---|---|
 > | ★ **规则的正文（判据 + 出处叙事）** | [docs/RULES.md](docs/RULES.md) |
 > | **隔离平面总表（权威口径）** | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) §Architecture |
-> | **踩过的坑（39 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | **踩过的坑（42 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 功能清单与使用说明（给人看的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
 > | 现状快照与安全边界 | [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) |
 > | 现场排障与诊断埋点怎么读 | [docs/DIAG-GUIDE.md](docs/DIAG-GUIDE.md) |
@@ -141,9 +141,12 @@ node tools/verify/verify-falsify-icons.mjs           # ↑ 的反证（**4/4**�
 node tools/verify/verify-user-docs.mjs               # 用户可见的功能描述（**7 条**）
 node tools/verify/verify-falsify-userdocs.mjs        # ↑ 的反证（**5/5**）
 
-# 装载冒烟：真起 Chromium + --load-extension（**17 条**，约 15 秒）
+# 装载冒烟：真起 Chromium + --load-extension（**20 条**，约 15 秒）
 #   ★ 它验「manifest 合法 ≠ Chrome 装得上」那一步；**不验**登录/列表/开页签/盒子/
 #     设备流/离线降级 —— 那些要真实云端账号 + 真实内网平台，**必须人工走**（B7 的剩余部分）。
+#   ★★ 它内置一份**自有页面清单**（`OWN_PAGES`）。新增 `src/ui/**/*.html` **必须登记**，
+#      否则新页面**从不被试装**而校验**照样全绿** —— 有一条判据专门反向核对
+#      "清单 == 源码里的 html 集合"（v4.2.0 加翻译面板时补上的）。
 node tools/verify/verify-load.mjs
 
 # CSS 变量卫生：静态、秒级、**不需要浏览器**
@@ -222,7 +225,7 @@ npm run verify -- --only jarhygiene
   与服务器端统一。
 - **每修一个"看起来正常但其实是坏的"缺陷，就把它的判据写进脚本注释或
   [`docs/PITFALLS.md`](docs/PITFALLS.md)。**
-  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **39 条**）——在此之前这类教训
+  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **42 条**）——在此之前这类教训
   只散在 `CHANGELOG.md` 里，而两者的分工不同：
   `CHANGELOG.md` 记"每次发布改了什么"（历史），
   `PITFALLS.md` 记"**哪些错会静默发生、怎么一眼认出来**"（可复用的判据）。
@@ -238,7 +241,7 @@ npm run verify -- --only jarhygiene
 |---|---|
 | Node | **最低 20**（`.nvmrc` = 20，`engines` = `>=20` 无上界）。实测本机日常为 Node 24 |
 | 包管理器 | **npm**（workspaces：`packages/*`）。构建与工具链都用它 |
-| 构建 | `scripts/build.mjs`（esbuild）。产物 `dist/`，**iife + 11 个入口**（实测：`background` 1 + `content` 6 + `ui` 4） |
+| 构建 | `scripts/build.mjs`（esbuild）。产物 `dist/`，**iife + 12 个入口**（实测：`background` 1 + `content` 7 + `ui` 4）。★ 这三个数字会随功能增长 —— **以 `scripts/build.mjs` 的 `entryPoints` 为准**，不要把本行的数字抄到别处（规则 12） |
 | 类型检查 | `tsc --noEmit`，`strict` + `noUnusedLocals/Parameters` + `noFallthroughCasesInSwitch` |
 | **没有的东西** | **无单元测试框架、无 lint、无 CI**（`.github/` 不存在）。这不是遗漏，是现状——所以**规则 13–17 的验证资产就是全部保障** |
 | 浏览器 | Chrome / Edge，**`minimum_chrome_version: 110`**。装载：`chrome://extensions` → 开发者模式 → 加载已解压的 `dist/` |

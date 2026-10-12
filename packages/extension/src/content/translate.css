@@ -1,0 +1,126 @@
+/* 页面内翻译 UI 的样式（浮动图标 + Toast）
+ *
+ * ★ 注入到**用户访问的每一个页面**（`<all_urls>` + `all_frames`），所以：
+ *   · 所有选择器都以 `#ql_translate_icon` / `#ql_translate_toast` 开头 —— 不出现
+ *     裸标签选择器（`div {}` 那种），否则会**改掉站点的布局**（本仓规则 10 的同族风险）；
+ *   · 数值一律用 `!important`：站点的重置样式（`* { margin:0 }` / `line-height:1.2`）
+ *     会通过**继承**钻进我们的节点，而不加 `!important` 就会"图标被压扁/错位"。
+ *
+ * ★ 类名合约（与 `content/translate.ts` 里拼的串**必须**一致）：
+ *   `ql_toast` / `ql_toast_success|error|warning|info` / `ql_toast_show`
+ *   `ql_icon_loading` / `ql_spinner`
+ *   判据：`tools/verify/verify-css-vars.mjs` 管的是 `var()` 解析，
+ *   而这条合约靠"改一处要改两处"的注释守住 —— 改类名时**两个文件一起改**。
+ */
+
+#ql_translate_icon {
+  position: absolute !important;
+  z-index: 2147483646 !important; /* 比站点绝大多数弹层高，但低于我们自己的 Toast */
+  display: none;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 50% !important;
+  background: #1E6FFF !important;
+  box-shadow: 0 1px 4px rgba(23, 42, 84, 0.35) !important;
+  cursor: pointer !important;
+  opacity: 0.92 !important;
+  box-sizing: border-box !important;
+  /* 不被站点的 text 样式污染 */
+  font-size: 0 !important;
+  line-height: 0 !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  touch-action: manipulation !important;
+}
+
+#ql_translate_icon:hover {
+  opacity: 1 !important;
+  transform: scale(1.08) !important;
+}
+
+#ql_translate_icon:active {
+  transform: scale(0.96) !important;
+}
+
+#ql_translate_icon .ql_spinner {
+  display: none;
+  width: 11px !important;
+  height: 11px !important;
+  border: 2px solid rgba(255, 255, 255, 0.4) !important;
+  border-top-color: #FFFFFF !important;
+  border-radius: 50% !important;
+  animation: ql_spin 0.7s linear infinite !important;
+}
+
+#ql_translate_icon.ql_icon_loading svg {
+  display: none !important;
+}
+
+#ql_translate_icon.ql_icon_loading .ql_spinner {
+  display: block !important;
+}
+
+@keyframes ql_spin {
+  to { transform: rotate(360deg); }
+}
+
+#ql_translate_toast {
+  position: fixed !important;
+  left: 50% !important;
+  bottom: 28px !important;
+  z-index: 2147483647 !important; /* 最高层：反馈必须可见，否则"翻译成功"用户看不到 */
+  max-width: min(560px, calc(100vw - 40px)) !important;
+  padding: 10px 18px !important;
+  margin: 0 !important;
+  border-radius: 999px !important;
+  background: #1B2A4A !important;
+  color: #FFFFFF !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.5 !important;
+  letter-spacing: 0 !important;
+  text-align: center !important;
+  word-break: break-word !important;
+  box-shadow: 0 6px 24px rgba(23, 42, 84, 0.28) !important;
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  pointer-events: none !important;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  box-sizing: border-box !important;
+}
+
+#ql_translate_toast.ql_toast_show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#ql_translate_toast.ql_toast_success {
+  background: #22C55E !important;
+}
+
+#ql_translate_toast.ql_toast_error {
+  background: #EF4444 !important;
+}
+
+#ql_translate_toast.ql_toast_warning {
+  background: #F59E0B !important;
+}
+
+/* 尊重"减少动效"偏好：转圈是必要的进度反馈，保留；
+   但入场位移与 hover 缩放要去掉 —— 前庭敏感用户对位移最敏感。 */
+@media (prefers-reduced-motion: reduce) {
+  #ql_translate_toast {
+    transition: opacity 0.01s linear !important;
+    transform: translate(-50%, 0) !important;
+  }
+  #ql_translate_icon:hover,
+  #ql_translate_icon:active {
+    transform: none !important;
+  }
+}

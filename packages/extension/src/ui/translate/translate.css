@@ -1,0 +1,522 @@
+/* 翻译面板专属样式（`t-` 前缀 = translate）
+ *
+ * ★ 外壳/通用件（.wrap/.head/.block/.notice/.stat/.field/.desc/.hidden…）在
+ *   `../panel.css`，本文件**不重复定义**它们 —— 两个页面共用一份。
+ * ★ 色值一律取 `tokens.css` 的 `--sb-*`（与 verify-brand 的"令牌唯一来源"纪律一致）。
+ *
+ * ★★ 2026-10-12 重排（用户反馈"杂乱无序、毫无逻辑、无法配置"）：
+ *   原先 6 个平铺卡片、每张都自带标题与开关，用户到了页面**不知道先看哪**。
+ *   现在的信息层级：
+ *     ① 总开关（页面唯一最重要的东西，放页头且放大）
+ *     ② 怎么用（两条路径 + 图标开关，配图式左右布局）
+ *     ③ 命名规范模式（高频 + 带实时预览）
+ *     ④ 高级（语言 / 引擎）→ **默认折叠**，summary 上直接回显当前值
+ *     ⑤ 使用统计（只读，放最后、压小）
+ *     ⑥ 保存条**吸底**（长页面不用回到顶部找按钮）
+ */
+
+/* ────────────────────────── ① 总开关 ────────────────────────── */
+
+.t-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+/* 总开关做成"卡片式"而不是一行 label：它是这一页的主控 */
+.t-power {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--sb-radius-lg);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  box-shadow: var(--sb-shadow-sm);
+  cursor: pointer;
+  user-select: none;
+  min-width: 268px;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.t-power:hover {
+  border-color: var(--sb-border-strong);
+}
+
+/* 开启时整块高亮 —— "它现在是开着的"要一眼可见，而不是只看开关滑块 */
+.t-power:has(.t-switch-input:checked) {
+  border-color: var(--sb-brand);
+  background: var(--sb-brand-soft);
+}
+
+.t-power-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.t-power-text b {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.t-power-text small {
+  font-size: 11.5px;
+  color: var(--sb-text-secondary);
+  line-height: 1.35;
+}
+
+/* ────────────────────────── 开关本体 ────────────────────────── */
+
+.t-switch-wrap,
+.t-switch-only,
+.t-inline-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.t-inline-switch {
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sb-text-secondary);
+}
+
+/* 真 checkbox 留在 DOM 里（键盘可达 + 屏幕阅读器可读），只视觉隐藏。
+   用 absolute+opacity 而不是 display:none —— 后者会让它**脱离 tab 顺序**。 */
+.t-switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.t-switch {
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--sb-disabled);
+  transition: background-color 0.16s ease;
+}
+
+.t-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(23, 42, 84, 0.28);
+  transition: transform 0.16s ease;
+}
+
+.t-switch-sm {
+  width: 34px;
+  height: 19px;
+}
+
+.t-switch-sm i {
+  width: 15px;
+  height: 15px;
+}
+
+.t-switch-input:checked + .t-switch {
+  background: var(--sb-brand);
+}
+
+.t-switch-input:checked + .t-switch i {
+  transform: translateX(18px);
+}
+
+.t-switch-input:checked + .t-switch-sm i {
+  transform: translateX(15px);
+}
+
+/* 键盘用户唯一能看到的焦点线索（原生 checkbox 被藏了） */
+.t-switch-input:focus-visible + .t-switch {
+  outline: 2px solid var(--sb-brand);
+  outline-offset: 2px;
+}
+
+/* ────────────────────────── ② 两条路径 ────────────────────────── */
+
+.t-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.t-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--sb-radius);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface-2);
+}
+
+.t-path-key {
+  flex: 0 0 auto;
+  min-width: 62px;
+  padding-top: 1px;
+  text-align: center;
+}
+
+.t-path-key-icon {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.t-path-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.t-path-body b {
+  font-size: 13.5px;
+}
+
+.t-path-body > span {
+  font-size: 12.5px;
+  color: var(--sb-text-secondary);
+  line-height: 1.6;
+}
+
+/* 行内的"试一次"按钮：不参与换行挤压 */
+.t-path > .btn-ghost {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+/* ────────────────────────── ③ 命名规范预览 ────────────────────────── */
+
+.t-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 14px 0 6px;
+  padding: 14px;
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface-2);
+  border: 1px solid var(--sb-border);
+}
+
+.t-preview-in,
+.t-preview-out {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.t-preview-in > span,
+.t-preview-label {
+  font-size: 11.5px;
+  color: var(--sb-text-secondary);
+  letter-spacing: 0.04em;
+}
+
+.t-preview-in input {
+  width: 100%;
+}
+
+.t-preview-out code {
+  display: block;
+  padding: 9px 12px;
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-border-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--sb-brand);
+  word-break: break-all; /* 60 字符上限，窄屏必溢出，不换行会撑破卡片 */
+  min-height: 38px;
+  box-sizing: border-box;
+}
+
+/* ────────────────────────── ④ 高级（折叠） ────────────────────────── */
+
+.t-adv {
+  padding: 0; /* summary 自己带内边距，卡片不留 */
+  overflow: hidden;
+}
+
+.t-adv-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+/* 去掉浏览器默认的三角（各内核写法不同，三条都要） */
+.t-adv-summary::-webkit-details-marker {
+  display: none;
+}
+.t-adv-summary::marker {
+  content: '';
+}
+
+.t-adv-summary:hover {
+  background: var(--sb-surface-2);
+}
+
+.t-adv-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* summary 上直接回显当前配置 —— 折叠状态下也能读到"现在配的是什么" */
+.t-adv-current {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--sb-text-secondary);
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--sb-brand-soft);
+  color: var(--sb-brand);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.t-adv-arrow {
+  flex: none;
+  color: var(--sb-text-secondary);
+  transition: transform 0.16s ease;
+}
+
+.t-adv[open] .t-adv-arrow {
+  transform: rotate(180deg);
+}
+
+.t-adv-body {
+  padding: 4px 20px 20px;
+  border-top: 1px solid var(--sb-border);
+}
+
+.t-sub + .t-sub {
+  margin-top: 18px;
+}
+
+.t-sub h3 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  color: var(--sb-text-secondary);
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.t-sub .t-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.t-sub .t-field > span {
+  flex: 0 0 auto;
+}
+
+.t-sub .t-field select {
+  flex: 0 1 260px;
+}
+
+/* ────────────────────────── 引擎卡 ────────────────────────── */
+
+.t-engines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.t-engine {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--sb-radius);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.t-engine:hover {
+  border-color: var(--sb-border-strong);
+  background: var(--sb-surface-2);
+}
+
+.t-engine.is-active {
+  border-color: var(--sb-brand);
+  background: var(--sb-brand-soft);
+}
+
+.t-engine input {
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--sb-brand);
+}
+
+.t-engine-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.t-engine-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.t-engine-desc {
+  font-size: 11.5px;
+  color: var(--sb-text-secondary);
+  line-height: 1.55;
+}
+
+.t-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--sb-brand-soft);
+  color: var(--sb-brand);
+}
+
+.t-engine.is-active .t-tag {
+  background: var(--sb-surface);
+}
+
+.t-tag.t-tag-plain {
+  background: var(--sb-surface-2);
+  color: var(--sb-text-secondary);
+  border: 1px solid var(--sb-border);
+}
+
+/* ────────────────────────── 合规告知 ────────────────────────── */
+
+.t-privacy {
+  margin-top: 18px;
+  line-height: 1.65;
+}
+
+/* ────────────────────────── ⑤ 统计（压小，别抢主开关的注意力） ────────────────────────── */
+
+.t-stats-card .block-head h2 {
+  font-size: 14px;
+}
+
+.t-stats {
+  display: flex;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+.t-stats .stat b {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ────────────────────────── ⑥ 保存条（流式钉底，不浮在内容上） ────────────────────────── */
+
+/* 内容 + 保存条的 flex 列：`.wrap` 已有 min-height:100vh，所以内容不满一屏时
+   保存条会被 margin-top:auto 推到视口底部，内容满一屏时它就接在文档末尾。
+   ★ 刻意**不用 position:sticky/fixed** —— 浮层必然遮住它下面的内容，
+     而"想点的控件被一条浮层挡着"正是用户抱怨"无法配置"的一部分。 */
+.t-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 18px;
+  min-height: 0;
+}
+
+.t-savebar {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  border-radius: var(--sb-radius-lg);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  box-shadow: var(--sb-shadow);
+}
+
+.t-savebar-hint {
+  font-size: 12px;
+  color: var(--sb-text-secondary);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.t-feedback {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sb-success);
+  flex: 0 0 auto;
+}
+
+.t-savebar .btn-primary {
+  flex: 0 0 auto;
+}
+
+/* ────────────────────────── 窄屏 ────────────────────────── */
+
+@media (max-width: 720px) {
+  .t-preview {
+    grid-template-columns: 1fr;
+  }
+  .t-paths .t-path {
+    flex-wrap: wrap;
+  }
+  .t-path-key {
+    min-width: 0;
+  }
+  .t-path > .btn-ghost {
+    align-self: flex-start;
+  }
+  .t-power {
+    min-width: 0;
+    width: 100%;
+  }
+  .t-adv-current {
+    max-width: 100%;
+  }
+  .t-savebar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-switch,
+  .t-switch i,
+  .t-engine,
+  .t-adv-arrow {
+    transition: none;
+  }
+}
