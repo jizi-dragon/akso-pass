@@ -57,8 +57,19 @@ let hideTimer: number | undefined;
 
 /* ────────────────────────── 元素判定 ────────────────────────── */
 
+/**
+ * 哪些 `<input type>` **不参与翻译**。
+ *
+ * ★★ 2026-10-12 实测补 `number`：`<input type="number">` **不可能含中文**
+ *   （浏览器拒收非数字字符），给它出图标是**纯噪音** —— 实测聚焦 number 框会出图标，
+ *   点了/按了才失败，而报的是「结果仍为中文，引擎未能正确识别源语言」。
+ *   用户无法从这句话理解"为什么数字框翻译失败"，而真因是**这里根本没有可译的东西**。
+ *   ⇒ 与 `checkbox`/`radio` 同类：**不是可翻译元素**，直接不出图标、不占一次 API 调用。
+ *
+ * ★ `hidden`：元素不可见，出了图标也无处可点。
+ */
 const EXCLUDED_INPUT_TYPES = new Set([
-  'checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image', 'range', 'color', 'hidden',
+  'checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image', 'range', 'color', 'hidden', 'number',
 ]);
 
 function isTranslatable(el: EventTarget | null): el is HTMLElement {
@@ -371,7 +382,9 @@ async function translateToClipboard(): Promise<void> {
   }
   const el = targetEl;
   if (!el) {
-    showToast('⚠️ 请先把光标放进输入框，再按 Alt+T', 'warning');
+    // ★ 这条提示是"翻译看起来没生效"最常见的真实原因：焦点不在输入框里。
+    //   给的是**可执行的下一步**，不是"操作失败"。
+    showToast('⚠️ 请先把光标放进输入框（网页上的文本框/多行框/富文本都可以），再按 Alt+T', 'warning');
     return;
   }
   const source = readText(el).trim();

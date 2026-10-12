@@ -229,6 +229,12 @@ async function renderHotkey(): Promise<void> {
  *   ① 快捷键没注册 / 被占用、② 内容脚本没注入该页、③ 引擎不通、④ 光标不在输入框。
  *   这个按钮把 ①②④ 一次性排掉（它走的是**和快捷键完全相同的那条消息链路**），
  *   剩下的如果还失败，页面上的 Toast 会直接报出引擎层的具体错误。
+ *
+ * ★★ 2026-10-12：`chrome://` / 应用商店这类**浏览器内部页**必须给出**可理解**的说明。
+ *   它们是**浏览器安全边界**（Chrome 不往这些页面注入任何扩展脚本），不是本扩展的缺陷 ——
+ *   但用户看到的只是"按了没反应"，于是会以为功能坏了。
+ *   实测边界：`chrome://*`、`chrome-extension://*`、`chromewebstore.google.com`、
+ *   `chrome.google.com/webstore`（PDF 查看器反而**可以**注入）。
  */
 async function onTest(): Promise<void> {
   try {
@@ -237,15 +243,23 @@ async function onTest(): Promise<void> {
       showFeedback('拿不到当前标签页', false);
       return;
     }
-    if (!tab.url || !/^(https?|file):/i.test(tab.url)) {
-      showFeedback('当前页签是浏览器内部页，翻译脚本注入不进去（换普通网页试）', false);
+    const url = tab.url ?? '';
+    const isInternal = /^(chrome|edge|about|devtools|view-source):/i.test(url)
+      || /^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(url);
+    if (isInternal) {
+      showFeedback('当前是浏览器内部页/应用商店 —— 浏览器不允许任何扩展在这里注入，换个普通网页试', false);
+      return;
+    }
+    if (!/^(https?|file):/i.test(url)) {
+      showFeedback('当前页签类型不支持翻译，请在普通网页上使用', false);
       return;
     }
     try {
       await chrome.tabs.sendMessage(tab.id, { type: TRANSLATE_MESSAGE.hotkey });
       showFeedback('已发出（若失败，请看页面底部的提示）');
     } catch {
-      showFeedback('当前页签没有翻译脚本 —— 请刷新该页面后重试', false);
+      // 走到这里通常是：页面在扩展加载/更新**之前**就打开了（内容脚本不在），或 file:// 未授权
+      showFeedback('当前页面没有翻译脚本 —— 刷新该页面后重试；若是本地文件请在扩展详情里开启「允许访问文件网址」', false);
     }
   } catch (e) {
     showFeedback(`试一次失败：${e instanceof Error ? e.message : String(e)}`, false);

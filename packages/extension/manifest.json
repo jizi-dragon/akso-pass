@@ -3,7 +3,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgrqmWvIcwnFDVgV78RDqrx9FQHmgcRY+AwSpGpDsIffWE89bbqkWTc7v0JKSUz3hRXg1PS4inOR7FaUiJ4qZDCrcblyr+n2B3WWe5Ss6EoZcVppA64lWCz1NZ/X1VUYr4tyR4HV7vVgZhQURi5H41Qmxc7tVhT3rWfNMU42dmAV8Mg1Lwg3VbfUFvxRX7BbkA9zTSsktYDX6ok9ujwVGQ9qxfbbvoJ09cBMpxoLyqWpqSijFFBYKHOD4fBiK2hcV9ZQD6n9ie068xIm58CYmybwu+ySK9WgN0U4Tw9l3EqSwtYj1WboaR4Yt0jtOR8EFt860sloPQCdT646my19JVQIDAQAB",
   "name": "Akso Pass · 多账号并行",
   "short_name": "Akso Pass",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "纯浏览器多账号并行 + 输入框即时翻译：每账号独立标签页与存储命名空间，页签名自定义，账号存云端账号库；Alt+T 取译文到剪贴板。",
   "minimum_chrome_version": "110",
   "commands": {
@@ -51,39 +51,71 @@
       "128": "assets/Icon128.png"
     }
   },
-  "permissions": ["tabs", "scripting", "cookies", "storage", "webRequest", "declarativeNetRequestWithHostAccess", "webNavigation"],
+  "permissions": [
+    "tabs",
+    "scripting",
+    "cookies",
+    "storage",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess",
+    "webNavigation"
+  ],
   "host_permissions": [],
-  "optional_host_permissions": ["*://*/*"],
+  "optional_host_permissions": [
+    "*://*/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/shield-bridge.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/shield-bridge.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/shield-main.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/shield-main.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "world": "MAIN"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/title-hook.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/title-hook.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/auto-login.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/auto-login.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/translate.js"],
-      "css": ["content/translate.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/translate.js"
+      ],
+      "css": [
+        "content/translate.css"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
