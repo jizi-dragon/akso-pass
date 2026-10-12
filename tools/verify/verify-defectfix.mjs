@@ -76,7 +76,32 @@ function functionBody(rawCode, signature) {
   if (at < 0) {
     return null;
   }
-  const open = rawCode.indexOf('{', at);
+  /* ★★ 2026-10-12 修：**"函数体的 `{`" ≠ "锚点之后的第一个 `{`"**。
+   *
+   * 缺陷形态（我自己踩的）：给 `revokeHost` 加了一个对象参数之后，
+   *   `async function revokeHost(displayHost, opts: { deleteCloudRecord?: boolean } = {})`
+   * 锚点后面的第一个 `{` 落在**参数的类型注解**上 ⇒ 取到的"函数体"只有 89 个字符
+   * （就是那张参数表），于是 H 组两条断言报"不符" —— 而**代码其实是对的**。
+   * ★ 这类假红最坏的后果是判据被人为放宽（规则 17 的同类）。
+   *
+   * ⇒ 先跳过**参数表**（配平圆括号），再从那里找体的 `{`。
+   *   两对括号各自配平，所以参数里的对象类型、默认值、箭头函数都不会干扰。
+   */
+  let i = at;
+  let paren = 0;
+  for (; i < rawCode.length; i++) {
+    const c = rawCode[i];
+    if (c === '(') {
+      paren++;
+    } else if (c === ')') {
+      paren--;
+      if (paren === 0) {
+        i++;
+        break;
+      }
+    }
+  }
+  const open = rawCode.indexOf('{', i);
   if (open < 0) {
     return null;
   }

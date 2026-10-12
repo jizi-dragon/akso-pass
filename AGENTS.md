@@ -15,7 +15,7 @@
 > |---|---|
 > | ★ **规则的正文（判据 + 出处叙事）** | [docs/RULES.md](docs/RULES.md) |
 > | **隔离平面总表（权威口径）** | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) §Architecture |
-> | **踩过的坑（44 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | **踩过的坑（45 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 功能清单与使用说明（给人看的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
 > | 现状快照与安全边界 | [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) |
 > | 现场排障与诊断埋点怎么读 | [docs/DIAG-GUIDE.md](docs/DIAG-GUIDE.md) |
@@ -228,7 +228,7 @@ npm run verify -- --only jarhygiene
   与服务器端统一。
 - **每修一个"看起来正常但其实是坏的"缺陷，就把它的判据写进脚本注释或
   [`docs/PITFALLS.md`](docs/PITFALLS.md)。**
-  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **44 条**）——在此之前这类教训
+  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **45 条**）——在此之前这类教训
   只散在 `CHANGELOG.md` 里，而两者的分工不同：
   `CHANGELOG.md` 记"每次发布改了什么"（历史），
   `PITFALLS.md` 记"**哪些错会静默发生、怎么一眼认出来**"（可复用的判据）。

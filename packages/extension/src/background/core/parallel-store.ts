@@ -45,6 +45,14 @@ export interface ParallelStore {
   renameSite(host: string, name: string): Promise<void>;
   /** 添加站点时落名：站点不存在就建（与 `renameSite` 的差别是"容忍不存在"） */
   upsertSite(host: string, name: string): Promise<void>;
+  /**
+   * ★ v4.2.7：删云端站点（**服务端会级联删掉它下面的账号**）。
+   *
+   * ★ 返回值刻意做成三态而不是 `void`：`missing`（云端本来就没有）与
+   *   `deleted` 都算"云端已经干净了"，而 `offline` 意味着**本机删了、云端还在** ——
+   *   这三件事对用户的意思完全不同，不能压成一个布尔。
+   */
+  deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }>;
 }
 
 /**
@@ -245,6 +253,10 @@ export const parallelStore: ParallelStore = {
 
   upsertSite(host: string, name: string): Promise<void> {
     return cloudStore.upsertSite(host, name);
+  },
+
+  deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }> {
+    return cloudStore.deleteSite(host);
   },
 
 

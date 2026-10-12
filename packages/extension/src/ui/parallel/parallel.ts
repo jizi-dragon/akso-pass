@@ -1546,15 +1546,39 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     if (needsGrant) {
       actionBtn.className = 'btn-ghost btn-sm';
       actionBtn.textContent = '删除';
-      actionBtn.title = '把这一行从站点管理里去掉（它本来就没有浏览器授权，所以不会有权限变化）';
+      actionBtn.title = '把这一行从站点管理里去掉，并删掉云端那条站点记录（它本来就没有浏览器授权，所以权限无变化）';
       actionBtn.addEventListener('click', () => {
+        /* ★★ v4.2.7 补：这一态**也必须**能删云端记录。
+         *
+         * 缺陷形态（判据 E3 抓到的）：原来这里只 `hideHost(host)` 然后 `continue`，
+         * 于是**走不到 `revokeHost`**，云端那条站点记录就留下了 ——
+         * 而这恰恰是用户第 ② 条报的主要场景：
+         * 「当我在扩展中添加了一个站点时，云端也会同步增加一个站点，
+         *   但是当我删除一个站点时，云端不会删除站点。」
+         * （新加的站点多半是"零账号、还没授权"⇒ 正好落在这一态。）
+         *
+         * ★ 它**没有**浏览器授权 ⇒ 不需要撤销，也不该进"停用"名单
+         *   （那会给一个从未生效的站点留下"已停用"的假状态，见 `LOCAL_KEYS.hiddenHosts`）。
+         *   ⇒ 所以这里只做两件事：落"已删除"标记 + 删云端记录。
+         */
         if (!confirm(`删除站点「${title}」？\n\n`
-          + `· 它本来就没有浏览器授权，所以浏览器权限不会有任何变化\n`
-          + `· 这一行会从站点管理里消失\n`
-          + '· 云端账号库里的站点与账号**不受影响**')) {
+          + '· 它本来就没有浏览器授权，所以浏览器权限不会有任何变化\n'
+          + '· 这一行会从站点管理里消失\n'
+          + '· **云端那条站点记录也会一起删掉**')) {
           return;
         }
-        void hideHost(host);
+        void (async () => {
+          await hideHost(host);
+          const res = await send({ kind: 'par.deleteSite', host }).catch(() => null);
+          const r = res && res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
+          if (r?.kind === 'offline') {
+            alert(`「${title}」已从本机删除，但**云端那条站点记录没能删掉**（当前连不上云端）。\n\n`
+              + '换一台电脑登录时它还会出现。联网后可以再删一次。');
+          } else if (r?.kind === 'deleted' && (r.accountsDeleted ?? 0) > 0) {
+            alert(`注意：云端同时删掉了该站点下的 ${r.accountsDeleted} 个账号。`);
+          }
+          await refreshAll();
+        })();
       });
       actions.appendChild(actionBtn);
       li.append(head, domain, count, actions);
@@ -1572,24 +1596,40 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     actionBtn.textContent = isBlocked ? '恢复使用' : '删除';
     actionBtn.title = isBlocked
       ? '解除本地停用（改头规则对它重新生效）'
-      : `删除这个站点：撤销浏览器授权 + 从站点管理里去掉（云端记录不受影响）`;
+      : `删除这个站点：撤销浏览器授权 + 从站点管理里去掉 + 删掉云端那条站点记录`;
     actionBtn.addEventListener('click', () => {
       if (isBlocked) {
         void unblockHost(host);
         return;
       }
-      if (
-        !confirm(
-          `删除站点「${title}」？\n\n`
-            + `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
-            + '· 这一行会从站点管理里消失（以后要用，重新授权即可）\n'
-            + '· 云端账号库里的站点与账号**不受影响**\n'
-            + '· 浏览器内已打开页签的登录态不受影响',
-        )
-      ) {
+      /* ★★ v4.2.7（用户要求「删除站点时云端也要删」）：
+       *
+       * 云端那条 `DELETE /api/sites/{id}` **会级联删掉该站点下的所有账号** ——
+       * 所以首页必须先看账号数：
+       *   · 有账号 ⇒ **拒绝删云端**，明确让用户先处理账号（不能替他删掉 N 个账号）
+       *   · 零账号 ⇒ 本机与云端一起删
+       *
+       * ★ 确认框按"云端会不会被删"分两套文案 —— 同一个「删除」按钮在不同状态下
+       *   后果不同，那就必须让用户在**点之前**看到差别（这正是前几轮反复栽的那类：
+       *   承诺与效果不一致）。
+       */
+      const hasAccounts = n > 0;
+      const lines = hasAccounts
+        ? [
+            `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效`,
+            '· 这一行会从站点管理里消失（以后要用，重新授权即可）',
+            `· **云端那条站点记录保留** —— 它下面还有 ${n} 个账号；`,
+            '  要连云端一起删，请先删掉这些账号（云端删站点会连带删账号）',
+          ]
+        : [
+            `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效`,
+            '· 这一行会从站点管理里消失（以后要用，重新授权即可）',
+            '· **云端那条站点记录也会一起删掉**（云端同站点下没有账号）',
+          ];
+      if (!confirm(`删除站点「${title}」？\n\n${lines.join('\n')}\n· 浏览器内已打开页签的登录态不受影响`)) {
         return;
       }
-      void revokeHost(host);
+      void revokeHost(host, { deleteCloudRecord: !hasAccounts });
     });
     actions.appendChild(actionBtn);
 
@@ -1732,7 +1772,10 @@ async function renameSiteRow(
  * 若浏览器拒绝（required 权限 / 站点访问模式限制），则把该 host 写入本地停用名单，
  * 后台不再对其安装任何改头规则 —— 效果等价于功能层撤销，且不与 Chrome 的内部状态搏斗。
  */
-async function revokeHost(displayHost: string): Promise<void> {
+async function revokeHost(
+  displayHost: string,
+  opts: { deleteCloudRecord?: boolean } = {},
+): Promise<void> {
   const all = await chrome.permissions.getAll();
   const raws = (all.origins ?? []).filter((o) => originToHost(o) === displayHost);
   const errors: string[] = [];
@@ -1806,12 +1849,37 @@ async function revokeHost(displayHost: string): Promise<void> {
    * 站点列表有三个来源：有授权的 + 被停用的 + **被云端站点记录或本地账号引用的**。
    * 只把授权删掉的话，第三条来源仍然成立 ⇒ **下一轮刷新它又回来了**，
    * 而用户看到的是"删了没用"（这是"删不掉"的第二种成因，与权限回收失败不同）。
-   *
-   * ★ 这也让"删掉账号之后顺手删站点"这件事**在数据上也干净**：
-   *   云端那条站点记录（`siteNames` 的来源）我们**不动**（它是账号库的权威数据，
-   *   删它会影响别的设备），但本机不再显示它。
    */
   await hideHost(displayHost);
+
+  /* ★★ v4.2.7：**云端那条站点记录**（用户要求「删除站点时云端也要删」）。
+   *
+   * ★ 只在调用方说"这个站点没有账号"时才做 —— 服务端 `DELETE /api/sites/{id}`
+   *   会**级联删掉账号**，所以那个判断在调用点（那里才知道账号数）。
+   * ★ 结果**如实告知**，三种情况对用户的意思完全不同：
+   *     `deleted` —— 云端也干净了（服务端还会回报级联删了几个账号，一并说出来）
+   *     `missing` —— 云端本来就没有这条记录（可能是从没同步过）⇒ 也算干净
+   *     `offline` —— **本机删了、云端还在** ⇒ 必须说，否则换台电脑它又出现
+   */
+  if (opts.deleteCloudRecord) {
+    try {
+      const res = await send({ kind: 'par.deleteSite', host: displayHost });
+      const r = res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
+      if (!r) {
+        log.warn('云端站点删除没有拿到结果：%s', displayHost);
+      } else if (r.kind === 'offline') {
+        alert(
+          `「${displayHost}」已从本机删除，但**云端那条站点记录没能删掉**（当前连不上云端）。\n\n`
+            + `换一台电脑登录时它还会出现。联网后可以再删一次，或在云端账号库里删。`,
+        );
+      } else if (r.kind === 'deleted' && (r.accountsDeleted ?? 0) > 0) {
+        // ★ 级联删除是静默的 —— 服务端特意把它作为返回值给出来，这里必须转达
+        alert(`注意：云端同时删掉了该站点下的 ${r.accountsDeleted} 个账号。`);
+      }
+    } catch (err) {
+      log.warn('云端站点删除失败（本机已删除）：%s', err instanceof Error ? err.message : String(err));
+    }
+  }
 
   await send({ kind: 'par.grantChanged' });
   await refreshAll();
@@ -1960,15 +2028,35 @@ siteForm.addEventListener('submit', (e) => {
   //   `https://a.com/x`，拿整串当名字会很难看。
   const name = sName.value.trim() || host;
   void (async () => {
+    /* ★★★ v4.2.7 修（用户实测"根本没弹窗"）：**`permissions.request` 之前不能有任何 `await`**。
+     *
+     * 缺陷形态：这里原来先 `await writeSchemeHint(...)`，**然后**才 request。
+     * 而下面那句注释写着"必须在用户手势里最先发起" —— **注释是对的，代码没做到**。
+     * 一次 `await` 之后用户手势就没了，`permissions.request` 在扩展页里会**静默失败**
+     * （不弹窗、不抛错、返回 false）⇒ 用户看到的现象正是"添加成功了，但站点是未授权"。
+     *
+     * ★★ 为什么这条特别难自查：**失败形态是静默的**（没有异常、没有日志、页面正常），
+     *   而且 `catch(() => false)` 把它转成一个普通的 `false`，与"用户点了取消"不可分。
+     *   ⇒ 所以现在**先发请求、再 await**（`request` 返回 promise，同步发起即可保住手势），
+     *     并且下面**实查一次 `contains()`** 来确认授权真的生效，而不是只信返回值。
+     */
+    const grantedPromise = chrome.permissions
+      .request({ origins: [patternOfHost(host)] })
+      .catch(() => false);
+
+    const ok = await grantedPromise;
+    if (!ok) {
+      alert(`未完成授权：${host}\n\n（浏览器没有弹出授权窗，或你在窗里点了拒绝）`);
+      return;
+    }
+    // ★ 只信返回值不够：实查一次（这条在用户报"没弹窗"时是唯一能分辨真假的判据）
+    const really = await chrome.permissions.contains({ origins: [patternOfHost(host)] }).catch(() => false);
+    if (!really) {
+      alert(`授权没有生效：${host}\n\n请在 chrome://extensions 里把「网站访问权限」设为「在特定网站上」后重试。`);
+      return;
+    }
     if (parsed.scheme) {
       await writeSchemeHint(host, parsed.scheme);
-    }
-    // ★ 授权请求必须在**用户手势里最先发起**（AGENTS §2：晚一步手势失效、request 必然失败）。
-    //   所以它排在写云端站点名之前 —— 后者是网络调用，放前面会把手势耗掉。
-    const ok = await chrome.permissions.request({ origins: [patternOfHost(host)] }).catch(() => false);
-    if (!ok) {
-      alert(`未完成授权：${host}`);
-      return;
     }
     // ★ v4.2.6：授权成功 ⇒ 解封（否则"删过这个站点"会让它永远加不回来）
     await unhideHost(host);

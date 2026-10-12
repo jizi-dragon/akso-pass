@@ -382,6 +382,14 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       });
       return { kind: 'par.upsertSite', result: r };
     }
+    /* ★ v4.2.7（用户要求"删除站点时云端也要删"）：删云端站点记录。
+     * ★ 服务端会**级联删掉该站点下的账号** —— UI 已经先确认过"这个站点没有账号"
+     *   才发这条；这里不重复判断（同一件事判断放两处迟早不一致），
+     *   但把服务端回报的 `accountsDeleted` 原样透传，让 UI 能如实告知。 */
+    case 'par.deleteSite': {
+      const r = await tryRun(async () => parallelStore.deleteSite(req.host));
+      return { kind: 'par.deleteSite', result: r };
+    }
     case 'par.create': {
       const r = await tryRun(async () => {
         const account = await parallelStore.create({

@@ -1,6 +1,6 @@
 import { LOCAL_KEYS, SESSION_COLORS } from '../../shared/constants';
 import type { ParallelAccount } from '../../shared/types';
-import { OfflineError } from './offline';
+import { isOfflineError, OfflineError } from './offline';
 // v4.2.1：站点显示名从地址推导（用户要求：未填名称时从地址截取，如 tonbridge-config）
 import { deriveSiteNameFromHost } from '../../shared/snake-case';
 // ★ 2026-10-09：本模块此前**一行日志都没有**，而它这条链路上全是决定性的状态跃迁
@@ -534,6 +534,49 @@ async function upsertSiteOnCloud(host: string, name: string): Promise<void> {
   invalidateCloudCache();
 }
 
+/**
+ * ★★ v4.2.7（用户要求）：「当我在扩展中添加了一个站点时，云端也会同步增加一个站点，
+ * 但是当我删除一个站点时，云端不会删除站点。」
+ *
+ * ⇒ 补上云端删除。**服务端那条 `DELETE /api/sites/{id}` 会级联删掉该站点下的所有账号**
+ *   （复合外键 `ON DELETE CASCADE`），所以：
+ *   · **调用前必须由调用方确认该站点没有账号** —— 这里只做"如实返回删掉了几个账号"，
+ *     不替调用方做决定（服务端也把它当返回值给出来，正是为了不被静默）。
+ *   · 云端**没有**这条站点记录时不当失败（`kind: 'missing'`）：本机删掉一个从没同步过的
+ *     站点是完全正常的路径，报错会让用户以为删除失败。
+ */
+export type CloudDeleteSiteResult =
+  | { kind: 'deleted'; accountsDeleted: number }
+  | { kind: 'missing' }
+  | { kind: 'offline'; reason: string };
+
+async function deleteSiteOnCloud(host: string): Promise<CloudDeleteSiteResult> {
+  const wanted = host.trim().toLowerCase();
+  let id: string | undefined;
+  try {
+    const sites = await loadSites(true);
+    id = sites.find((s) => s.host === wanted)?.id;
+  } catch (e) {
+    // 拿不到站点清单（离线/未授权）⇒ **如实报 offline**，不伪装成"删掉了"
+    return { kind: 'offline', reason: e instanceof Error ? e.message : String(e) };
+  }
+  if (!id) {
+    return { kind: 'missing' };
+  }
+  try {
+    const res = asRecord(await cloudRequest<unknown>(`/api/sites/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+    invalidateCloudCache();
+    // 服务端把级联删掉的账号数放在返回值里（它的注释写明了"必须如实告诉调用方"）
+    const n = Number(res.accountsDeleted ?? res.accounts_deleted ?? 0);
+    return { kind: 'deleted', accountsDeleted: Number.isFinite(n) ? n : 0 };
+  } catch (e) {
+    if (isOfflineError(e)) {
+      return { kind: 'offline', reason: e instanceof Error ? e.message : String(e) };
+    }
+    throw e;
+  }
+}
+
 /** 站点按 host 找；找不到就建一个（服务端会对 baseUrl 做域名预处理，所以建完以 id 为准） */
 async function ensureSite(host: string, scheme?: 'http' | 'https'): Promise<string> {
   const wanted = host.trim().toLowerCase();
@@ -702,6 +745,11 @@ export const cloudStore = {
   /** 添加站点时落名（站点不存在就建），见 `upsertSiteOnCloud` 的说明 */
   async upsertSite(host: string, name: string): Promise<void> {
     return upsertSiteOnCloud(host, name);
+  },
+
+  /** ★ v4.2.7：删云端站点（**级联删账号**），见 `deleteSiteOnCloud` 的说明 */
+  async deleteSite(host: string): Promise<CloudDeleteSiteResult> {
+    return deleteSiteOnCloud(host);
   },
 
   /**

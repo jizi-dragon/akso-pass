@@ -52,6 +52,14 @@ export type RuntimeRequest =
    *   （新建=创建，改名=报错）。
    */
   | { kind: 'par.upsertSite'; host: string; name: string }
+  /**
+   * ★ v4.2.7：删**云端**站点的记录（用户要求"删除站点时云端也要删"）。
+   *
+   * ★ 服务端那条 `DELETE /api/sites/{id}` **会级联删掉该站点下的所有账号**，
+   *   所以调用方（UI）必须**先确认该站点没有账号** —— 这个 kind 只负责如实执行与回报，
+   *   不替调用方做决定。三态返回的含义见 `parallel-store.deleteSite` 的注释。
+   */
+  | { kind: 'par.deleteSite'; host: string }
   | { kind: 'par.create'; siteHost: string; tabName: string; username: string; password: string; open: boolean; box?: string; scheme?: 'http' | 'https' }
   | { kind: 'par.probeScheme'; host: string }
   | { kind: 'par.update'; id: string; patch: Partial<Pick<ParallelAccount, 'tabName'>> }
@@ -153,6 +161,8 @@ export type RuntimeResponse =
   | { kind: 'par.sites'; result: Result<{ host: string; name: string; displayName: string }[] | null> }
   | { kind: 'par.renameSite'; result: Result<{ host: string; name: string; displayName: string }> }
   | { kind: 'par.upsertSite'; result: Result<{ host: string; name: string; displayName: string }> }
+  /** ★ v4.2.7：三态 —— `deleted`（含级联删了几个账号）/ `missing` / `offline` */
+  | { kind: 'par.deleteSite'; result: Result<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }> }
   | { kind: 'par.create'; result: Result<ParallelAccount> }
   | { kind: 'par.probeScheme'; result: Result<'http' | 'https'> }
   | { kind: 'par.update'; result: Result<ParallelAccount> }
