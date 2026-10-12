@@ -1172,6 +1172,43 @@ function patternOfHost(host: string): string {
   return `*://${host}/*`;
 }
 
+/**
+ * ★★ v4.2.4：**这个 host 是不是"云端服务自己"** —— 是的话它不属于"站点管理"。
+ *
+ * ## 缺陷形态（用户 2026-10-12 实测，原话"我认为这是很滑稽的事"）
+ *
+ * `grantedHosts` 是直接映射浏览器权限清单来的，而扩展为了**访问云端 API** 申请过
+ * 云端服务那条 origin（见 `parallel.ts` 里的 `CLOUD_ORIGIN_PATTERN`，设备流授权那一步）。
+ * ★ 这里刻意不把那串 origin 的字面量写出来 —— 它的结尾正是注释结束标记，
+ *   会让本段注释提前结束、进而破坏整个文件（我在这上面栽过七次，见 PITFALLS #43）。
+ * ⇒ **云端自己的域名进了"站点管理"**，成了一张：
+ *   · 没有并行账号（它不是平台，没有账号可加）
+ *   · 又删不掉（那是扩展**必须**保留的权限 —— Chrome 拒绝回收、
+ *     就算回收了扩展也就登不上云端账号库了）
+ * 的卡片。
+ * ★ 它还会出现在「添加账号」的站点下拉里 —— 那是更实际的问题：用户可能真的
+ *   把某个平台账号**建到云端域名上**，而那永远不会工作。
+ *
+ * ⇒ 判据：**与云端服务同源**的 host 一律不算"并行账号的站点"。
+ *   比对**host**（而不是整串 origin）⇒ 无论云端是 http 还是 https、带不带端口都能对上。
+ *
+ * ★★ 依赖顺序：它读 `cloudBaseUrl`，而那个值由 `loadCloudState()` 填。
+ *   `refreshAll()` 里 `loadCloudState()` **排在 `loadSites()` 之前** ——
+ *   这个顺序是**功能前提**，不是风格：调换之后 `cloudBaseUrl` 还是空串，
+ *   `isCloudHost` 一律返回 false ⇒ **过滤静默失效**，云端域名又回到列表里。
+ *   判据：`tmp/verify-twotier.mjs` 的 A/B 组会断言云端 host 不出现在站点卡片与下拉里。
+ */
+function isCloudHost(host: string): boolean {
+  if (!cloudBaseUrl) {
+    return false; // 还没拿到云端地址（未登录/离线）⇒ 什么都不排除
+  }
+  try {
+    return new URL(cloudBaseUrl).host.toLowerCase() === host.trim().toLowerCase();
+  } catch {
+    return false; // baseUrl 形状异常时**不排除**（宁可多显示一行，也不要漏掉真实站点）
+  }
+}
+
 /** 统计某 host 下已有的并行账号数（支持 *.example.com 通配模式粗匹配） */
 function countAccountsFor(displayHost: string): number {
   const bare = displayHost.replace(/^\*\./, '');
@@ -1184,7 +1221,13 @@ async function loadSites(): Promise<void> {
   const blocked = new Set<string>((blockedStored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
 
   grantedHosts = Array.from(
-    new Set((all.origins ?? []).map(originToHost).filter((h): h is string => h !== null)),
+    new Set(
+      (all.origins ?? [])
+        .map(originToHost)
+        // ★ v4.2.4：**云端服务自己的域名不算并行账号的站点**（见 `isCloudHost`）——
+        //   它是扩展为了访问云端 API 才申请的权限，永远删不掉也不该删。
+        .filter((h): h is string => h !== null && !isCloudHost(h)),
+    ),
   ).sort();
 
   // 名单自愈：浏览器层已无授权的停用条目直接移除
@@ -1217,6 +1260,8 @@ async function loadSites(): Promise<void> {
   const hiddenStored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
   const hiddenHosts = (hiddenStored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? [];
 
+  // ★ v4.2.4：`referenced` 也是渲染输入（云端站点记录 + 账号引用的 host）——
+  //   不进 key 的话"账号引用了新站点"不会让站点管理重新渲染（那正是这条路径的入口）。
   const sitesKey = JSON.stringify([
     grantedHosts,
     blockedHosts,
@@ -1257,7 +1302,13 @@ async function refreshSiteNames(): Promise<boolean> {
     if (res.kind === 'par.sites' && res.result.ok) {
       const rows = res.result.data;
       siteNames = rows
-        ? Object.fromEntries(rows.map((r) => [r.host, { name: r.name, displayName: r.displayName }]))
+        ? Object.fromEntries(
+            rows
+              // ★ v4.2.4：云端自己那条站点记录也过滤掉 —— 否则"缺授权"判定会
+              //   因为云端 host 有权限而算错，且它的名字会泄漏到站点下拉里
+              .filter((r) => !isCloudHost(r.host))
+              .map((r) => [r.host, { name: r.name, displayName: r.displayName }]),
+          )
         : null;
       return siteNames !== null;
     }
@@ -1279,9 +1330,34 @@ function siteTitleOf(host: string): { title: string; sub: string | null } {
 function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] = []): void {
   const hiddenSet = new Set(hidden);
   siteListEl.innerHTML = '';
+
+  /* ★★ v4.2.4 修（**这条让"一键授权"从死代码变成可达**）：
+   *
+   * 原来只遍历 `[...hosts, ...blocked]` —— 而"**缺授权**"的站点
+   * **两个都不在**（`hosts` 只收有浏览器授权的、`blocked` 只收被停用的）。
+   * ⇒ `needsGrant` 那一态**永远到不了**，上一版加的「授权」按钮是**死代码**。
+   *
+   * 触发场景正是用户描述的那个：**从云端同步下来的账号引用了某个站点，
+   * 而那个站点从没在本机授权过**（用户原话："当从云端同步账号时，站点并不会直接
+   * 同步过来，但是账号数据中存储得有站点数据"）。
+   * ⇒ 那些站点必须**出现在列表里**并带一个能授权的按钮 —— 否则用户看着
+   *   "账号列表里有这个站点的账号，站点管理里却没有它"，无从下手。
+   *
+   * ⇒ 数据源补齐为三个：有授权的 + 被停用的 + **有云端站点记录或本地账号引用的**。
+   */
+  const referenced = new Set<string>(
+    [
+      ...Object.keys(siteNames ?? {}),
+      ...browserAccounts.map((a) => a.siteHost).filter(Boolean),
+    ].filter((h) => !isCloudHost(h)),
+  );
+  const allHosts = [...new Set([...hosts, ...blocked, ...referenced])];
+
   // ★ v4.2.3：隐藏的行要一起算进"有没有东西可显示" —— 否则全部隐藏之后
   //   页面会是一片**空白**（连"尚无授权站点"的提示都没有），用户只会以为界面坏了。
-  const visible = [...hosts, ...blocked].filter((h) => !hiddenSet.has(h));
+  // ★ v4.2.4：这里必须用**补齐后的** `allHosts`（原来只看 `[...hosts, ...blocked]`，
+  //   于是"只有云端记录 / 只有账号引用"的站点会被判成空态，而实际有东西可显示）。
+  const visible = allHosts.filter((h) => !hiddenSet.has(h));
   if (!visible.length) {
     const li = document.createElement('li');
     li.className = 'empty';
@@ -1295,8 +1371,9 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     return;
   }
 
+  // ★ 补齐后的数据源已在函数开头算好（`allHosts`）—— 这里只负责遍历与渲染。
   const seen = new Set<string>();
-  for (const host of [...hosts, ...blocked]) {
+  for (const host of allHosts) {
     if (seen.has(host)) {
       continue;
     }
@@ -1454,10 +1531,20 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     }
 
     actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
-    // ★ 第五轮（要求 ④）按钮文案统一成「删除」。但**动作仍然是撤销浏览器授权**，
-    //   不是删云端记录 —— 所以确认框必须把这个区别说清，否则"删除"会让用户以为
-    //   账号数据没了（那才是真正危险的误解）。
-    actionBtn.textContent = isBlocked ? '恢复使用' : '删除';
+    /* ★★ v4.2.4：文案从「删除」改回「**取消授权**」—— 用户 2026-10-12 的反馈原话：
+     *   "点击删除后，仅仅是显示取消授权。"
+     *   那句"仅仅是"点出了真问题：**按钮承诺了"删除"，做到的却是"取消授权"**，
+     *   于是用户期待列表里少一行、而实际只是它变成"已停用"—— 承诺与效果不一致。
+     *   ★ 这不是改文案就完了：**它是这个动作唯一诚实的名字**。站点记录在云端，
+     *     扩展**删不掉**它（删掉就意味着要动云端数据，而那是另一个动作、有另一个后果）；
+     *     扩展能做的只有"撤销浏览器授权 + 本地停用改头"。
+     *   ⇒ 按钮说实话，确认框再把"云端不受影响"讲清楚。
+     *   ★ 而"我就是不想再看到这一行"这个诉求由「不再显示」（`needsGrant` 分支）承接。
+     */
+    actionBtn.textContent = isBlocked ? '恢复使用' : '取消授权';
+    actionBtn.title = isBlocked
+      ? '解除本地停用（改头规则对它重新生效）'
+      : `撤销浏览器对 ${host} 的授权，并在 Akso Pass 里停用它的鉴权改写（云端记录不受影响）`;
     actionBtn.addEventListener('click', () => {
       if (isBlocked) {
         void unblockHost(host);
