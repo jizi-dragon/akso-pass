@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.1';
+export const EXT_VERSION = '4.2.2';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -20,6 +20,14 @@ export const LOCAL_KEYS = {
   siteGrants: 'sb:siteGrants',
   /** 手动停用的站点（Chrome 拒绝回收授权时本地封锁，不再对其安装改头规则） */
   blockedHosts: 'ql:blockedHosts',
+  /**
+   * 账号中心当前选中的二级面板（v4.2.2 第五轮：`accounts` / `add` / `sites` / `favorites`）。
+   *
+   * ★ 为什么要记：这一页有 `setInterval(…, 3000)` 的刷新循环，而**刷新不该把用户
+   *   从"站点管理"弹回"并行账号"**。不记的话，用户每次被弹回去都会以为"点了没生效"。
+   * ★ 只存名字而不是索引：面板顺序将来可能调整，索引会指错。
+   */
+  parallelTab: 'ql:parallelTab',
   /** 记忆的盒子清单（空盒子也保留；缺省「默认盒子」不入库） */
   boxList: 'ql:boxes',
   /** 默认盒子的自定义名称（未归盒账号的归宿；缺省「默认盒子」） */

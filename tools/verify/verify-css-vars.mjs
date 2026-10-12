@@ -188,6 +188,95 @@ console.log('\n=== 自证：确实解析到了多份 CSS（否则上面每页都
 check('跨页面累计解析的链文件数 >= 页面数', totalChainFiles >= htmls.length,
   `${totalChainFiles} 个文件 / ${htmls.length} 个页面`);
 
+/* ==================== 块注释配平（v4.2.1 新增）====================
+ *
+ * ## 为什么要有这条（两次真实事故，都是我造成的）
+ *
+ * 用 `edit` 把一段"带注释开头的代码块"换掉时，如果锚点**从注释正文中间**开始，
+ * 那么注释的开头标记会被留在旧位置、而正文被搬到新位置 ⇒ 结果是一个**没有开头**的
+ * 注释正文，紧跟其后的下一条规则被**整个吞掉**（★ 本段自己就踩过这个坑：
+ * 我在这里写了一个字面的注释结束标记，把整段注释提前结束了 ⇒ 脚本直接语法错）：
+ *   · 第一次：`shared/snake-case.ts` —— 吞掉了 `looksLikeDictionaryEntry` 的文档注释
+ *   · 第二次：`ui/popup/popup.css` —— 吞掉了 `.hidden { display:none !important }`，
+ *     于是弹窗里所有靠 `.hidden` 显隐的元素**永远显示**
+ *   · 第三次：本条判据自己的注释 —— 语法错，脚本起不来（比前两次"好"，因为它响了）
+ *
+ * ## 为什么它必须是被判据而不是靠"小心"
+ *
+ * **两种形态都不会报错**：CSS 被吞 ⇒ 浏览器只是少应用一条规则；TS 被吞 ⇒ 只是少一段
+ * 注释。`tsc` 绿、`npm run build` 绿、`verify-load` 绿。唯一的信号是**运行时行为不对**，
+ * 而那时你会去查业务代码，不会去数注释。
+ *
+ * ★ 判据：`src/` 下每个 `.ts` / `.css` 文件里，注释**开始标记**与**结束标记**的数量
+ *   必须相等，且扫完之后**不能停在注释内部**（`depth !== 0`）。
+ *   —— 单靠数量相等会漏掉"多一个开始又多一个结束"的错配，所以要**同时**看最终深度。
+ *   ★ 注意：注释里**不能**写出这两个标记的字面量 —— 本段第三次踩坑就是这么来的。
+ */
+console.log('\n=== 块注释配平（吃掉规则不会报错，只能靠判据）===');
+const SRC = path.join(ROOT, 'packages', 'extension', 'src');
+const srcFiles = readdirSync(SRC, { recursive: true })
+  .map((f) => path.join(SRC, String(f)))
+  .filter((f) => f.endsWith('.ts') || f.endsWith('.css'));
+check('src 下有可扫的源文件', srcFiles.length > 0, `${srcFiles.length} 个`);
+const unbalanced = [];
+const lineCommentFakeClosers = [];
+for (const f of srcFiles) {
+  const text = readFileSync(f, 'utf8');
+  /* ★ 逐字符走一遍。**三种上下文必须都处理**，少一种就会误报：
+   *   · 字符串 / 模板串   —— 里面的标记是文本，不是注释
+   *   · **行注释**（双斜杠）—— ★ 这一条是实测补上的：`parallel.ts` 里有一句讲
+   *     "跳过全通配行"的注释，正文里带着一个通配 URL 模式（星号 + 协议 + 双斜杠 +
+   *     路径），结尾恰好是"星号紧跟斜杠" —— 那被当成了块注释结束 ⇒ 于是"未闭合"
+   *     从错误的地方开始算，最终报出 depth=2 的**假红**。
+   *     而假红的代价是这条判据被绕过（规则 17 的同类）。
+   *   · 块注释            —— 这一层才是我们真正要数的
+   *   正则字面量**不特殊处理**：在本仓 `src/` 下实测零命中"正则里含注释标记"，
+   *   为一个不存在的形态加状态机只会引入新误报。
+   *   ★ 注意：本段自己**不能**出现那两个标记的字面量 —— 我已经在这上面栽了四次。
+   */
+  let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let line = 1;
+  let pendingCloseInLineComment = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (c === '\n') { line += 1; lineComment = false; continue; }
+    if (lineComment) {
+      // 行注释里出现的块注释结束标记：**不会被吃掉**（行注释先结束），
+      // 但它会让"配平"这件事变得不可判定 ⇒ 单独列出来，不当作失衡。
+      if (c === '*' && n === '/') { pendingCloseInLineComment += 1; i += 1; }
+      continue;
+    }
+    if (quote) {
+      if (c === '\\') { i += 1; continue; }
+      if (c === quote) { quote = null; }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    // 行注释：只在**不是**块注释内部时才成立（块注释里的 `//` 是文本）
+    if (c === '/' && n === '/' && depth === 0) { lineComment = true; i += 1; continue; }
+    if (c === '/' && n === '*') { depth += 1; i += 1; continue; }
+    if (c === '*' && n === '/') { depth -= 1; i += 1; continue; }
+  }
+  if (depth !== 0) {
+    unbalanced.push(`${path.relative(SRC, f).replace(/\\/g, '/')}(深度 ${depth}，末行 ${line})`);
+  }
+  if (pendingCloseInLineComment > 0) {
+    lineCommentFakeClosers.push(`${path.relative(SRC, f).replace(/\\/g, '/')}(${pendingCloseInLineComment} 处)`);
+  }
+}
+check(`src 下 ${srcFiles.length} 个源文件的块注释都配平`, unbalanced.length === 0,
+  (unbalanced.length ? `未配平：${unbalanced.join(' / ')}` : `扫了 ${srcFiles.length} 个文件`)
+  // ★ 把"行注释里含注释结束标记"的干扰源**如实报出来**，但**不作为失败**：
+  //   那是**完全正常的写法**（`parallel.ts` 那句讲通配 URL 的注释就是），
+  //   把它判红等于让一条判据长期假红 —— 而假红会被绕过（规则 17）。
+  //   扫描器本身已经正确处理了这种形态（上面刚修），所以这里只是**披露**。
+  + (lineCommentFakeClosers.length
+    ? `；其中 ${lineCommentFakeClosers.length} 个文件的行注释里含结束标记（扫描器已正确跳过）：${lineCommentFakeClosers.join(' / ')}`
+    : '；无行注释干扰源'));
+
 const passed = results.filter(Boolean).length;
 console.log(`\n=== 汇总：${passed}/${results.length} 通过 ===`);
 if (passed !== results.length) {

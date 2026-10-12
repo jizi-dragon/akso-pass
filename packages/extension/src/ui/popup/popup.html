@@ -19,28 +19,13 @@
         <span class="ver" id="ext-version">v—</span>
       </header>
 
-      <!-- 云端身份区：未登录显示「登录」，已登录显示账号 → 点开是操作菜单 -->
-      <section id="identity" class="identity hidden">
-        <button id="identity-btn" class="identity-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-          <span id="identity-avatar" class="identity-av" aria-hidden="true">·</span>
-          <span class="identity-text">
-            <b id="identity-name">未登录</b>
-            <i id="identity-sub">点击登录云端账号库</i>
-          </span>
-          <span class="identity-caret" aria-hidden="true">▾</span>
-        </button>
-        <div id="identity-menu" class="identity-menu hidden" role="menu">
-          <button id="menu-sync" class="identity-item" type="button" role="menuitem">
-            <b>同步数据</b>
-            <i>从云端重新拉取账号与站点</i>
-          </button>
-          <button id="menu-logout" class="identity-item danger" type="button" role="menuitem">
-            <b>退出账号</b>
-            <i>清除本机缓存的账号数据</i>
-          </button>
-        </div>
-      </section>
-
+      <!-- ★★ v4.2.1（用户第五轮要求 ①②）：弹窗**不再承载任何账号库管理与登录入口**。
+           删掉了三块：
+             · `#identity`（身份区 + 同步/退出菜单）—— 那也是"管理"，且与账号中心重复
+             · `#open-vault`（登录云端账号库）—— 用户明确："不需要在此处显示登录"
+             · 主按钮文案里的"并行"字样（那一页现在是多页外壳）
+           ⇒ 弹窗只剩三件事：**这是什么（品牌）· 现在什么状况（统计）· 去哪儿（打开管理页）**。
+             登录统一在账号中心的**一级导航栏右侧**（用户第五轮要求 ③）。 -->
       <section class="stats">
         <div class="stat">
           <b id="stat-accounts">—</b>
@@ -74,14 +59,6 @@
           <i>账号中心 · 翻译面板 · 站点授权</i>
         </span>
         <span class="launch-arrow" aria-hidden="true">→</span>
-      </button>
-
-      <button id="open-vault" class="launch secondary hidden" type="button">
-        <span class="launch-text">
-          <b>登录</b>
-          <i>登录云端账号库 · 跨设备同步站点与账号</i>
-        </span>
-        <span class="launch-arrow" aria-hidden="true">↗</span>
       </button>
 
       <footer class="foot">

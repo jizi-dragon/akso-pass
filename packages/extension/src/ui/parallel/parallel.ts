@@ -96,6 +96,13 @@ const cloudMenuSync = document.getElementById('cloud-menu-sync') as HTMLButtonEl
 const cloudMenuLogout = document.getElementById('cloud-menu-logout') as HTMLButtonElement;
 const authBarEl = document.getElementById('auth-bar') as HTMLDivElement;
 const authReloginBtn = document.getElementById('auth-relogin') as HTMLButtonElement;
+/* ---- 两级导航（v4.2.1 第五轮）----
+   一级导航栏右侧的「登录」（未登录时显示）与遮罩上的「登录」是**同一个动作**
+   （走设备流授权）；`.tabbed` 是"二级导航及以下"的容器，未登录时整体加 `.is-locked`。 */
+const cloudLoginBtn = document.getElementById('cloud-login') as HTMLButtonElement;
+const loginMaskEl = document.getElementById('login-mask') as HTMLDivElement;
+const loginMaskBtn = document.getElementById('login-mask-btn') as HTMLButtonElement;
+const tabbedEl = document.getElementById('tabbed') as HTMLDivElement;
 
 /* ---- 设备授权等待面板（RFC 8628） ---- */
 const deviceModal = document.getElementById('device-modal') as HTMLDivElement;
@@ -1217,6 +1224,18 @@ async function loadSites(): Promise<void> {
   if (sitesKey !== lastSitesKey) {
     lastSitesKey = sitesKey;
     renderSites(grantedHosts, blockedHosts);
+    /* ★★ v4.2.2 修：**改名后"添加账号"的站点下拉必须跟着更新**。
+     *
+     * 缺陷形态（实测抓到，30/32）：改完名字后站点卡片更新了，而 `#p-host` 的选项
+     * **仍然显示旧名字**。根因是两份缓存的**失效时机不一致**：
+     *   · `renderSites` 靠 `lastSitesKey`，上面刚把它算进去了 ⇒ 会重渲染 ✅
+     *   · `fillSiteOptions` 靠 `lastHostOptions`，而它的 key 是在**上一次**调用时
+     *     用**旧**的 `siteNames` 算出来的 ⇒ 这次比对发现"没变化" ⇒ **不重建** ❌
+     *
+     * ⇒ 既然 `siteNames` 变了（走到了这一支），就顺手让下拉的缓存失效。
+     *   放在这里而不是散在各调用点：**任何**让 `siteNames` 变化的路径都会经过这一支。
+     */
+    lastHostOptions = '';
   }
 }
 
@@ -1275,31 +1294,52 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     seen.add(host);
     const isBlocked = !hosts.includes(host) || blocked.includes(host);
     const n = countAccountsFor(host);
-    const { title, sub } = siteTitleOf(host);
+    // ★ 卡片里名称与域名各占一行 ⇒ 这里只要名称（`siteTitleOf` 的 `sub` 已不再需要）
+    const { title } = siteTitleOf(host);
 
     const li = document.createElement('li');
-    li.className = 'site-row';
-
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const alias = document.createElement('div');
-    alias.className = 'alias';
-    // 名字（或域名）+ 停用标记；域名作为副标题显示在下面
-    alias.textContent = isBlocked ? `${title}（已停用）` : title;
+    // ★★ v4.2.1 第五轮（要求 ④）：从"一行"改成**卡片**。
+    //   用户原话：「站点数据也以卡片形式展示，让用户能够直观的看到站点名称、站点域名、
+    //   站点下拥有的账号数量」。⇒ 三件事各占一个明确的视觉位置：
+    //     ① 站点名称（主标题，最大字重）
+    //     ② 站点域名（副标题，**始终显示** —— 它是账号绑定的身份键）
+    //     ③ **账号数量**（单独一块，不是混在说明句子里）
+    li.className = 'site-card';
     if (isBlocked) {
-      alias.style.color = '#C2410C';
+      li.classList.add('is-blocked');
     }
-    const subEl = document.createElement('div');
-    subEl.className = 'sub';
-    const stateText = isBlocked
-      ? `${n} 个并行账号 · 改头规则已全部暂停`
-      : n > 0
-        ? `${n} 个并行账号`
-        : '该站点暂无并行账号（添加账号后自动更新）';
-    // ★ 有自定义名时**必须**把域名也显示出来：名字是别名，域名才是真正的身份键
-    //   （账号绑的是 siteHost）。只显示别名会让用户无法核对"这个站点到底是哪个"。
-    subEl.textContent = sub ? `${sub} · ${stateText}` : stateText;
-    meta.append(alias, subEl);
+
+    // ① 名称（+ 停用标记）
+    const head = document.createElement('div');
+    head.className = 'site-card-head';
+    const alias = document.createElement('div');
+    alias.className = 'site-card-name';
+    alias.textContent = title;
+    alias.title = host; // 悬停能看到真实身份键
+    head.appendChild(alias);
+    if (isBlocked) {
+      const off = document.createElement('span');
+      off.className = 'site-card-off';
+      off.textContent = '已暂停';
+      head.appendChild(off);
+    }
+
+    // ② 域名
+    const domain = document.createElement('div');
+    domain.className = 'site-card-domain';
+    domain.textContent = host;
+
+    // ③ 账号数量
+    const count = document.createElement('div');
+    count.className = 'site-card-count';
+    const num = document.createElement('b');
+    num.textContent = String(n);
+    const unit = document.createElement('span');
+    unit.textContent = isBlocked ? '个账号 · 改头已暂停' : '个账号';
+    count.append(num, unit);
+    if (isBlocked) {
+      count.classList.add('muted');
+    }
 
     const actions = document.createElement('div');
     actions.className = 'site-actions';
@@ -1310,12 +1350,12 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
       renameBtn.type = 'button';
       // ★★ v4.2.1 修（用户报"站点的名称无法更改，出现报错"）：
       //   站点的名字存在**云端**。只在浏览器里授权过、而云端没有这条站点记录的
-      //   （例如 `127.0.0.1`、没有并行账号的 `www.dragonrain.top`），
+      //   （例如 127.0.0.1、没有并行账号的 www.dragonrain.top），
       //   改名必然以"云端找不到站点"失败 —— 而按钮照样显示 ⇒ 用户看到的就是**报错**。
-      //   ⇒ 云端**没有**这条记录时，按钮改成「添加到云端」，走的正是 `par.upsertSite`
+      //   ⇒ 云端**没有**这条记录时按钮改成「添加到云端」，走的正是 par.upsertSite
       //     （它容忍不存在：先建再写名）。**让按钮的承诺与它能做到的事一致。**
       const inCloud = Boolean(siteNames?.[host]);
-      renameBtn.textContent = inCloud ? '改名称' : '添加到云端';
+      renameBtn.textContent = inCloud ? '更改名称' : '添加到云端';
       renameBtn.title = inCloud
         ? '给这个站点起一个好记的名字（只影响显示，不影响账号绑定的域名）'
         : '云端还没有这个站点。点它把站点与名称存到云端账号库（会先创建）';
@@ -1329,20 +1369,30 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
 
     const actionBtn = document.createElement('button');
     actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
-    actionBtn.textContent = isBlocked ? '恢复使用' : '移除授权';
+    // ★ 第五轮（要求 ④）按钮文案统一成「删除」。但**动作仍然是撤销浏览器授权**，
+    //   不是删云端记录 —— 所以确认框必须把这个区别说清，否则"删除"会让用户以为
+    //   账号数据没了（那才是真正危险的误解）。
+    actionBtn.textContent = isBlocked ? '恢复使用' : '删除';
     actionBtn.addEventListener('click', () => {
       if (isBlocked) {
         void unblockHost(host);
         return;
       }
-      if (!confirm(`移除对 ${host} 的授权？该站点的鉴权改写将立即失效（浏览器内的登录态不受影响）。`)) {
+      if (
+        !confirm(
+          `删除站点「${title}」？\n\n`
+            + `· 将撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
+            + '· 云端账号库里的站点与账号**不受影响**（重新授权即可恢复）\n'
+            + '· 浏览器内已打开页签的登录态不受影响',
+        )
+      ) {
         return;
       }
       void revokeHost(host);
     });
     actions.appendChild(actionBtn);
 
-    li.append(meta, actions);
+    li.append(head, domain, count, actions);
     siteListEl.appendChild(li);
   }
 }
@@ -1380,12 +1430,16 @@ function beginRename(
   cancelBtn.type = 'button';
   cancelBtn.textContent = '取消';
 
-  const meta = row.querySelector('.meta');
-  const alias = row.querySelector('.alias');
-  if (!(meta instanceof HTMLElement) || !(alias instanceof HTMLElement)) {
+  // ★★ v4.2.1 第五轮：卡片化之后名称那一格是 `.site-card-name`（不再是 `.alias`）。
+  //   ★ 这里**必须**保留"取不到就 return"的守卫：这一版的第一次改动我漏改了选择器，
+  //     于是 `beginRename` **在点按钮后静默返回** —— 编辑器不出现、也没有任何报错，
+  //     看起来就像"按钮点不动"。守卫生效时至少是**不做事**，而不是做一半。
+  const alias = row.querySelector('.site-card-name');
+  if (!(alias instanceof HTMLElement)) {
+    log.warn('beginRename：找不到名称节点（选择器与卡片结构不一致）⇒ 放弃进入编辑态');
     return;
   }
-  // 编辑态：名字那行换成输入框；按钮组换成 保存/取消
+  // 编辑态：名字那格换成输入框；按钮组换成 保存/取消
   alias.replaceWith(input);
   actions.replaceChildren(saveBtn, cancelBtn);
   input.focus();
@@ -1635,6 +1689,91 @@ siteForm.addEventListener('submit', (e) => {
   })();
 });
 
+/* ==================== 二级导航栏（切换功能块，v4.2.1 第五轮）====================
+ *
+ * 用户要求：「将原本揉在一个页面中的『并行账号』『添加并行账号』『站点管理』
+ * 『常用页面』拆分出去，由二级导航栏控制功能块显示」。
+ *
+ * ★ 切面板**只改 DOM 类名，不重新渲染数据** —— 数据由 `refreshAll()` 那条循环统一维护，
+ *   与"看哪一块"无关。若在切换时顺手重渲染，就会多出第二条渲染路径，
+ *   而两条路径迟早不一致（这是本仓反复出现的形态）。
+ * ★ `hidden` 属性与 `.is-active` **同时**维护：前者给无障碍（读屏会跳过隐藏面板），
+ *   后者给样式。只留一个的话，另一个迟早被误当成"没用"而删掉。
+ */
+const TAB_NAMES = ['accounts', 'add', 'sites', 'favorites'] as const;
+type TabName = (typeof TAB_NAMES)[number];
+
+/** 面板元素：**逐个 `getElementById` 取**，而不是 `querySelector('.pane')` 扫一遍。
+ *
+ * ★ 这样写有两条实际好处（不是为了好看）：
+ *   ① 每个 `pane-*` 的 id 在 TS 里**有字面引用** ⇒ `verify-log-redaction` 的
+ *      "HTML 有 id、TS 零引用"那条判据不会把它们当成孤儿 id
+ *      （用模板串拼 id 的话判据看不见 —— 那会逼我去扩白名单，
+ *       而白名单一扩就变成"新增孤儿 id 的合法通道"，规则 26）。
+ *   ② 少了"页面上有几个 `.pane`"与"我知道有几个面板"这两份事实的漂移：
+ *      现在面板清单只有 `TAB_NAMES` 一处，取不到就是 `null`（能被看见）。
+ */
+const PANE_ELS: Record<TabName, HTMLElement | null> = {
+  accounts: document.getElementById('pane-accounts'),
+  add: document.getElementById('pane-add'),
+  sites: document.getElementById('pane-sites'),
+  favorites: document.getElementById('pane-favorites'),
+};
+
+function showTab(name: string, persist = true): void {
+  const target: TabName = (TAB_NAMES as readonly string[]).includes(name)
+    ? (name as TabName)
+    : 'accounts';
+  for (const t of Array.from(document.querySelectorAll<HTMLButtonElement>('.tabs .tab'))) {
+    const on = t.dataset.tab === target;
+    t.classList.toggle('is-active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  for (const n of TAB_NAMES) {
+    const pane = PANE_ELS[n];
+    const on = n === target;
+    pane?.classList.toggle('is-active', on);
+    if (pane) {
+      pane.hidden = !on;
+    }
+  }
+  if (persist) {
+    void chrome.storage.local.set({ [LOCAL_KEYS.parallelTab]: target });
+  }
+}
+
+/**
+ * 恢复上次选中的面板。
+ *
+ * ★ 必须**在首屏渲染前**调用一次：这一页每 3 秒 `refreshAll()` 一次，
+ *   若每次都从 `accounts` 开始，用户在"站点管理"里填到一半会被弹回第一块。
+ *   （`showTab` 默认 `persist=false` 的那个入口就是给"恢复"用的。）
+ */
+async function restoreTab(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(LOCAL_KEYS.parallelTab);
+    const name = stored[LOCAL_KEYS.parallelTab] as string | undefined;
+    if (name && (TAB_NAMES as readonly string[]).includes(name)) {
+      showTab(name, false);
+    }
+  } catch {
+    // 读不到就用 HTML 里的默认（第一块）—— 不值得为它报错
+  }
+}
+
+for (const t of Array.from(document.querySelectorAll<HTMLButtonElement>('.tabs .tab'))) {
+  t.addEventListener('click', () => showTab(t.dataset.tab ?? 'accounts'));
+}
+
+void restoreTab();
+
+/* 一级导航栏右侧的「登录」与遮罩上的「登录」：同一个动作（设备流授权）。
+   ★ 用 `click()` 转发现有按钮，避免把设备流启动逻辑复制成第二份 ——
+     `#auth-relogin` 已经接了 `startDeviceLogin`，这里只是替用户点它。 */
+for (const btn of [cloudLoginBtn, loginMaskBtn]) {
+  btn.addEventListener('click', () => authReloginBtn.click());
+}
+
 /* ==================== 云端身份菜单（v4.2.1）====================
  *
  * 用户要求：点页头那块已登录账号 → 弹「同步数据 / 退出账号」，
@@ -1806,7 +1945,13 @@ function renderAuthBar(): void {
     cloudAccountEl.append(av, name, caret);
   }
 
-  // ③ 说明文案：**只有云端一种形态**，不再分叉  //    （旧文案里"密码 AES-GCM 加密存放在本机"已随本地数据源废除 —— 留着就是说谎）
+  // ③ 未登录：一级导航栏右侧显示「登录」，并把**二级导航及以下**整体锁住
+  cloudLoginBtn.classList.toggle('hidden', cloudAuthorized);
+  tabbedEl.classList.toggle('is-locked', !cloudAuthorized);
+  loginMaskEl.classList.toggle('hidden', cloudAuthorized);
+
+  // ④ 说明文案：**只有云端一种形态**，不再分叉
+  //    （旧文案里"密码 AES-GCM 加密存放在本机"已随本地数据源废除 —— 留着就是说谎）
   parHintEl.textContent =
     '页签名即该账号所有标签页的标题；密码存放在云端账号库（服务端加密），本机不落明文。';
 }

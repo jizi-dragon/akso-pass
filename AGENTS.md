@@ -15,7 +15,7 @@
 > |---|---|
 > | ★ **规则的正文（判据 + 出处叙事）** | [docs/RULES.md](docs/RULES.md) |
 > | **隔离平面总表（权威口径）** | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) §Architecture |
-> | **踩过的坑（42 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | **踩过的坑（43 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 功能清单与使用说明（给人看的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
 > | 现状快照与安全边界 | [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) |
 > | 现场排障与诊断埋点怎么读 | [docs/DIAG-GUIDE.md](docs/DIAG-GUIDE.md) |
@@ -149,10 +149,13 @@ node tools/verify/verify-falsify-userdocs.mjs        # ↑ 的反证（**5/5**�
 #      "清单 == 源码里的 html 集合"（v4.2.0 加翻译面板时补上的）。
 node tools/verify/verify-load.mjs
 
-# CSS 变量卫生：静态、秒级、**不需要浏览器**
+# CSS 变量卫生 + 块注释配平：静态、秒级、**不需要浏览器**
 #   ★ 防的是"**引用了却解析不到**"：`var(--x)` 无 fallback 又无人定义 ⇒ **整条声明被丢弃**；
 #     `--x: var(--x)` 自引用 ⇒ 等于未定义。浏览器**都不报错**。
-node tools/verify/verify-css-vars.mjs                # **22 条**
+#   ★ 另含**块注释配平**（v4.2.1 加，见 PITFALLS #43）：替换"带注释开头的代码块"时
+#     若丢掉注释开头标记，紧跟其后的规则会被整个吞进注释里 ——
+#     CSS 少一条规则、TS 少一段注释，**都不报错**（`.hidden` 就是这么被吞过一次）。
+node tools/verify/verify-css-vars.mjs                # **34 条**
 
 # 品牌色一致性 + 不新增硬编码（静态、秒级）
 #   ★ 三处独立定义必须逐字等价；TS/JS 里品牌色硬编码**只减不增**（冻结基线 15）。
@@ -225,7 +228,7 @@ npm run verify -- --only jarhygiene
   与服务器端统一。
 - **每修一个"看起来正常但其实是坏的"缺陷，就把它的判据写进脚本注释或
   [`docs/PITFALLS.md`](docs/PITFALLS.md)。**
-  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **42 条**）——在此之前这类教训
+  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **43 条**）——在此之前这类教训
   只散在 `CHANGELOG.md` 里，而两者的分工不同：
   `CHANGELOG.md` 记"每次发布改了什么"（历史），
   `PITFALLS.md` 记"**哪些错会静默发生、怎么一眼认出来**"（可复用的判据）。

@@ -51,8 +51,12 @@
   min-height: 100vh;
 }
 
-/* ---- 品牌头 ---- */
-.head {
+/* ---- 一级导航栏（v4.2.1 第五轮：原 `.head` 更名并改为两区）----
+   `.topbar-left`  = 工具（导入/导出/诊断）+ 数据卡片，**左对齐**
+   `.topbar-right` = 身份（已登录账号 / 未登录时的「登录」），**右对齐**
+   ★ 用户第五轮要求 ③ 的原话：「这几项左对齐（显示在左边）；右侧显示已登录的
+     账号信息以及未登录时的登录按钮」。 */
+.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -60,14 +64,118 @@
   flex-wrap: wrap;
 }
 
-/* ★ v4.2.1：页头分两区（用户要求"把已登录账号的信息移到右边"）。
-   `.head-left` 是**身份**（帮助气泡 + 云端账号），`.head-right` 是**操作与统计**。
-   此前身份被夹在"帮助气泡"与"导出数据"之间 ⇒ 扫视时第一眼找不到"我现在是谁"。 */
-.head-left {
+.topbar-left,
+.topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
+}
+
+/* ---- 二级导航栏：切换功能块 ---- */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--sb-surface-2);
+  border: 1px solid var(--sb-border);
+  border-radius: 999px;
+  /* 窄屏横向滚动而不是换行：换行会让"一行标签"变成两行，与"二级导航栏"的心智不符 */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: none;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sb-text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.tab:hover {
+  color: var(--sb-text);
+}
+.tab.is-active {
+  background: var(--sb-surface);
+  color: var(--sb-brand);
+  box-shadow: 0 1px 3px rgba(23, 42, 84, 0.1);
+}
+
+/* ---- 面板容器 + 未登录遮罩 ---- */
+.tabbed {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* 遮罩相对它定位 ⇒ 定位上下文；`min-height` 保证未登录时锁区不至于只有一个标签高 */
+  position: relative;
+  min-height: 260px;
+}
+/* 一次只显示一个面板：`.pane` 默认不显示，当前那个由 `.is-active` 打开。
+   ★ 用 `display:none` 而不是只靠 `hidden` 属性：`hidden` 会被 `display:flex`
+     之类的规则覆盖，而这里的面板正是 flex 容器（`.block` 是 column flex）。 */
+.tabbed .pane {
+  display: none;
+}
+.tabbed .pane.is-active {
+  display: flex;
+}
+
+/* ★★ 未登录：**二级导航栏及以下**整体模糊 + 遮罩 + 提示（用户第五轮要求 ⑤）。
+ *
+ * ★ 一个必须绕开的层级陷阱：`filter` 作用在**整个子树**上 ——
+ *   如果把它加在 `.tabbed` 自己身上，遮罩里的提示文字与「登录」按钮
+ *   **也会被一起模糊**（那就成了"看不清提示"的做法）。
+ *   ⇒ 所以模糊只加在 `.tabs` 与 `.pane`（内容）上；`#login-mask` 是 `.tabbed`
+ *     的兄弟子元素，不受影响。
+ *   ★ 二级导航栏**必须一起模糊**：用户的原话是"二级导航栏及以下"。
+ *     第一版我只模糊了面板，标签仍然清晰可点 —— 与要求不符（已修）。
+ */
+.tabbed.is-locked .tabs,
+.tabbed.is-locked .pane {
+  filter: blur(3px);
+  opacity: 0.5;
+  /* 模糊之后仍可点会造成"看得见却点不动"的错觉 ⇒ 直接禁掉交互 */
+  pointer-events: none;
+  user-select: none;
+}
+.tabbed.is-locked::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(248, 250, 253, 0.5);
+  border-radius: var(--sb-radius);
+}
+.login-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+}
+/* `hidden` 要能盖过上面的 `display:flex` —— 本文件里 `.hidden` 定义在别处，
+   这里用 id 选择器提高优先级，避免"遮罩永远显示"。 */
+#login-mask.hidden {
+  display: none;
+}
+.login-mask-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--sb-text);
 }
 
 .brand {
@@ -109,12 +217,6 @@
   font-size: 12px;
   color: var(--sb-text-secondary);
   letter-spacing: 0.06em;
-}
-
-.head-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .stats {

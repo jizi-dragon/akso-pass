@@ -55,14 +55,32 @@
         <button id="auth-relogin" class="btn-ghost btn-sm" type="button">重新登录</button>
       </div>
 
-      <!-- ★★ v4.2.1 重排（用户要求"把已登录账号的信息移到右边"）：
-           改前 `#cloud-account` 夹在"帮助气泡"与"导出数据"之间 —— 它是**身份信息**，
-           却和工具按钮混在一排，扫视时第一眼找不到"我现在是谁"。
-           现在页头分两区：
-             · `.head-left`  —— 身份：帮助气泡 ＋ 云端账号（头像 + 名字 + 服务端地址）
-             · `.head-right` —— 操作与统计（导出/导入/诊断 ＋ 账号/在线/盒子），右对齐 -->
-      <header class="head">
-        <div class="head-left">
+      <!-- ★★ v4.2.1（用户第五轮要求 ③）两级导航栏
+           ─────────────────────────────────────────────────────────────
+           一级导航栏 `.topbar`：**工具与状况 + 身份**，一行放完
+             · 左（`.topbar-left`） ：导入数据 / 导出数据 / 导出诊断 ＋ 数据卡片（账号/在线/盒子）
+             · 右（`.topbar-right`）：已登录的账号（点开「同步数据 / 退出账号」）；未登录时是「登录」
+           二级导航栏 `.tabs`：**切换功能块**，把原先揉在一页里的四块拆开
+             · 并行账号 / 添加账号 / 站点管理 / 常用页面
+           ⇒ 一页只显示一块（`role="tabpanel"`），下面 `#pane-*` 四个面板。
+           ★ 原来这里是 `.head`（只有一行：身份与工具混排、四块内容全在流里）。
+             改标记时**没有动任何 id** —— TS 依赖的 58 个 id 一个不少（规则 20）。 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="head-actions">
+            <button id="data-import" class="btn-ghost btn-sm" type="button">导入数据</button>
+            <input id="data-import-file" type="file" accept="application/json,.json" class="hidden" />
+            <button id="data-export" class="btn-ghost btn-sm" type="button">导出数据</button>
+            <button id="export-diag" class="btn-ghost btn-sm" type="button" title="导出诊断包（排查问题时发给开发者）">导出诊断</button>
+          </div>
+          <div class="stats">
+            <span class="stat"><b id="stat-accounts">0</b><span>账号</span></span>
+            <span class="stat stat-online"><i class="pulse-dot"></i><b id="stat-online">0</b><span>在线</span></span>
+            <span class="stat"><b id="stat-boxes">1</b><span>盒子</span></span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
           <!-- 云端账号库说明：圆形 ? —— 点开是气泡（不是 alert），可点外部 / Esc 关闭 -->
           <div class="cloud-tools">
             <button id="cloud-help" class="cloud-help" type="button" aria-haspopup="dialog"
@@ -77,8 +95,7 @@
               <p><b>口令</b>：由服务端加密存放，本机不落明文。</p>
             </div>
           </div>
-          <!-- 已登录的云端账号。★ v4.2.1：**整块可点** —— 点开是
-               「同步数据 / 退出账号」（用户要求：在这块上弹选项，而不是只放在扩展弹窗里）。
+          <!-- 已登录的云端账号。**整块可点** —— 点开是「同步数据 / 退出账号」。
                `parallel.ts` 往 `#cloud-account` 里塞头像 + 名字。 -->
           <div class="cloud-id">
             <button id="cloud-account" class="cloud-account hidden" type="button"
@@ -92,28 +109,31 @@
               </button>
             </div>
           </div>
-        </div>
-
-        <div class="head-right">
-          <div class="head-actions">
-            <button id="data-export" class="btn-ghost btn-sm" type="button">导出数据</button>
-            <button id="data-import" class="btn-ghost btn-sm" type="button">导入数据</button>
-            <input id="data-import-file" type="file" accept="application/json,.json" class="hidden" />
-            <button id="export-diag" class="btn-ghost btn-sm" type="button" title="导出诊断包（排查问题时发给开发者）">导出诊断</button>
-          </div>
-          <div class="stats">
-            <span class="stat"><b id="stat-accounts">0</b><span>账号</span></span>
-            <span class="stat stat-online"><i class="pulse-dot"></i><b id="stat-online">0</b><span>在线</span></span>
-            <span class="stat"><b id="stat-boxes">1</b><span>盒子</span></span>
-          </div>
-          <!-- ★ v4.2.0：`#ver-chip` 移到左侧导航栏页脚（那里是"这一页是什么"
-               的位置），这里不再重复一个 id —— 两个同 id 元素会让
-               `getElementById` 只拿到第一个，而**第二个永远不更新**（静默）。 -->
+          <!-- ★ 未登录时的「登录」入口：**一级导航栏右侧**（原先在弹窗里 ——
+               用户第五轮要求 ①② 明确要去掉弹窗那个）。与 `#cloud-account` 互斥，
+               由 `renderAuthBar()` 切换。 -->
+          <button id="cloud-login" class="btn-primary btn-sm hidden" type="button">登录</button>
         </div>
       </header>
 
-      <!-- ============ 并行账号（盒子收纳 + 批量管理） ============ -->
-      <section class="card block">
+      <!-- ★ 二级导航栏**及以下**：未登录时整块加 `.is-locked`（模糊 + 遮罩 + 提示）。
+           ★★ 二级导航栏必须在 `.tabbed` **内部** —— 用户第五轮要求 ⑤ 的原话是
+              「二级导航栏**及以下**的内容做背景模糊以及遮罩」。第一版我把它放在了
+              外面，于是未登录时标签仍清晰可点，与要求不符。
+           遮罩（`#login-mask`）同样在内部并 `inset: 0`，所以它盖住的是"标签 + 面板"
+           这一整块区域，提示与「登录」按钮居中显示。 -->
+      <div id="tabbed" class="tabbed">
+
+      <!-- 二级导航栏：切换功能块（用户第五轮要求 ③） -->
+      <nav class="tabs" role="tablist" aria-label="账号中心功能块">
+        <button class="tab is-active" type="button" role="tab" data-tab="accounts" aria-selected="true">并行账号</button>
+        <button class="tab" type="button" role="tab" data-tab="add" aria-selected="false">添加账号</button>
+        <button class="tab" type="button" role="tab" data-tab="sites" aria-selected="false">站点管理</button>
+        <button class="tab" type="button" role="tab" data-tab="favorites" aria-selected="false">常用页面</button>
+      </nav>
+
+      <!-- ============ 面板 1：并行账号（盒子收纳 + 批量管理） ============ -->
+      <section class="card block pane is-active" id="pane-accounts" role="tabpanel" aria-label="并行账号">
         <div class="block-head row">
           <div>
             <h2>并行账号</h2>
@@ -136,14 +156,13 @@
         <ul id="browser-list" class="account-grid"></ul>
       </section>
 
-      <div class="bottom-grid">
-        <!-- ============ 添加并行账号（含批量导入） ============ -->
-        <section class="card block">
-          <div class="block-head">
-            <h2>添加并行账号</h2>
-          </div>
-          <p id="par-hint" class="desc">页签名即该账号所有标签页的标题；密码 AES-GCM 加密存放在本机。</p>
-          <form id="par-form" class="form">
+      <!-- ============ 面板 2：添加并行账号（含批量导入） ============ -->
+      <section class="card block pane" id="pane-add" role="tabpanel" aria-label="添加账号" hidden>
+        <div class="block-head">
+          <h2>添加并行账号</h2>
+        </div>
+        <p id="par-hint" class="desc">页签名即该账号所有标签页的标题；密码 AES-GCM 加密存放在本机。</p>
+        <form id="par-form" class="form">
             <div class="field-pair">
               <label class="field">
                 <span>站点</span>
@@ -184,42 +203,49 @@
               <button id="import-cancel" class="btn-ghost" type="button">收起</button>
             </div>
           </div>
-        </section>
+      </section>
 
-        <!-- ============ 站点管理（真实授权清单，可增可撤） ============ -->
-        <section class="card block">
-          <div class="block-head">
-            <h2>站点管理</h2>
-          </div>
-          <p class="desc">浏览器实际授权清单。只有授权过的站点才会改写鉴权头与隔离存储；移除后新导航不再生效。</p>
-          <form id="site-form" class="site-grid">
-            <!-- ★ v4.2.1：添加站点时就能填名称；**留空 ⇒ 自动用站点地址填充**
-                 （用户要求："未填写站点名称时，自动从站点地址中填充"）。
-                 顺序按"先地址、后名称"——地址是必需的身份，名称是可选别名。 -->
-            <input id="s-host" placeholder="站点地址，例如 example.com" autocomplete="off" />
-            <input id="s-name" placeholder="站点名称（留空则用地址）" autocomplete="off" maxlength="120" />
-            <button class="btn-ghost" type="submit">添加并授权</button>
-          </form>
-          <p class="hint">站点名称只影响显示；账号绑定的是<b>站点地址</b>。留空时自动用地址当名称。</p>
-          <ul id="site-list" class="plain site-list"></ul>
-        </section>
+      <!-- ============ 面板 3：站点管理（真实授权清单，可增可撤） ============ -->
+      <section class="card block pane" id="pane-sites" role="tabpanel" aria-label="站点管理" hidden>
+        <div class="block-head">
+          <h2>站点管理</h2>
+        </div>
+        <p class="desc">浏览器实际授权清单。只有授权过的站点才会改写鉴权头与隔离存储；移除后新导航不再生效。</p>
+        <form id="site-form" class="site-grid">
+          <!-- ★ v4.2.1：添加站点时就能填名称；**留空 ⇒ 自动用站点地址填充**
+               （用户要求："未填写站点名称时，自动从站点地址中填充"）。
+               顺序按"先地址、后名称"——地址是必需的身份，名称是可选别名。 -->
+          <input id="s-host" placeholder="站点地址，例如 example.com" autocomplete="off" />
+          <input id="s-name" placeholder="站点名称（留空则用地址）" autocomplete="off" maxlength="120" />
+          <button class="btn-ghost" type="submit">添加并授权</button>
+        </form>
+        <p class="hint">站点名称只影响显示；账号绑定的是<b>站点地址</b>。留空时自动用地址当名称。</p>
+        <ul id="site-list" class="plain site-list"></ul>
+      </section>
 
-        <!-- ============ 常用页面（书签轮盘 Alt+1 的数据源） ============ -->
-        <section class="card block">
-          <div class="block-head">
-            <h2>常用页面</h2>
-          </div>
-          <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就打开。每行一条：
-            <code>名称,路径</code>；路径可以是 <code>/admin/…</code>（相对当前站点）或完整网址。</p>
-          <textarea id="fav-text" rows="7" spellcheck="false"
-            placeholder="用户管理, /admin/user-mgmt/users/list&#10;工作流, /admin/config/workflow"></textarea>
-          <span class="btn-group">
-            <button id="fav-save" class="btn-primary" type="button">保存</button>
-            <button id="fav-reset" class="btn-ghost" type="button">恢复默认</button>
-            <span id="fav-tip" class="save-tip"></span>
-          </span>
-        </section>
+      <!-- ============ 面板 4：常用页面（书签轮盘 Alt+1 的数据源） ============ -->
+      <section class="card block pane" id="pane-favorites" role="tabpanel" aria-label="常用页面" hidden>
+        <div class="block-head">
+          <h2>常用页面</h2>
+        </div>
+        <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就打开。每行一条：
+          <code>名称,路径</code>；路径可以是 <code>/admin/…</code>（相对当前站点）或完整网址。</p>
+        <textarea id="fav-text" rows="7" spellcheck="false"
+          placeholder="用户管理, /admin/user-mgmt/users/list&#10;工作流, /admin/config/workflow"></textarea>
+        <span class="btn-group">
+          <button id="fav-save" class="btn-primary" type="button">保存</button>
+          <button id="fav-reset" class="btn-ghost" type="button">恢复默认</button>
+          <span id="fav-tip" class="save-tip"></span>
+        </span>
+      </section>
+
+      <!-- 未登录遮罩：二级导航及以下被 `.is-locked` 遮住时，这层负责显示提示与「登录」。
+           ★ 用独立元素而不是 `.tabbed::after` —— 伪元素里放不了按钮。 -->
+      <div id="login-mask" class="login-mask hidden">
+        <p class="login-mask-title">请登录账号后启用服务</p>
+        <button id="login-mask-btn" class="btn-primary" type="button">登录</button>
       </div>
+      </div><!-- /#tabbed -->
     </main>
 
     <!-- 移入盒子：选择弹窗（列出实际存在的盒子，可输入新盒子名） -->
@@ -267,9 +293,13 @@
       </div>
     </div>
 
-    <!-- 本地 → 云端：合并上传确认（自定义弹窗：confirm 加不了「不再提示」复选框） -->
-      </div>
-    </div>
+    <!-- ★★ 2026-10-12（第五轮）：这里原先留着两行**孤立的 `</div>`** 和一句注释
+         「本地 → 云端：合并上传确认（自定义弹窗…）」——
+         那个自定义弹窗早就换成了原生 `confirm`（见 `parallel.ts` 的 `dataImportBtn`），
+         弹窗的 `<div>` 被删掉了，**它的两个闭合标签却留了下来**。
+         ⇒ 多出来的闭合标签不会报错，只会让浏览器的解析树与人的预期错位
+           （多余的在 `<body>` 之后被丢弃，但"结构对不对"从此没人说得出）。
+         判据：`tmp/check-account-center-structure.mjs` 的栈式配平（它就是这么发现的）。 -->
 
     <script src="parallel.js"></script>
   </body>
