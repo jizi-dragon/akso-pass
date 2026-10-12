@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.2';
+export const EXT_VERSION = '4.2.3';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -28,6 +28,21 @@ export const LOCAL_KEYS = {
    * ★ 只存名字而不是索引：面板顺序将来可能调整，索引会指错。
    */
   parallelTab: 'ql:parallelTab',
+  /**
+   * ★ v4.2.3：**用户主动从站点列表里隐藏的 host**（与 `blockedHosts` **不同**）。
+   *
+   * | 名单 | 意思 | 后果 |
+   * |---|---|---|
+   * | `blockedHosts` | 有浏览器授权，但**在 Akso Pass 里停用** | 改头规则不对它生效（必须的：权限回收不掉） |
+   * | `hiddenHosts`  | **本来就没有浏览器授权**，用户不想再看到它 | 只是不显示；没有任何权限/规则动作 |
+   *
+   * ★ 为什么必须分开：合成一个的后果是"隐藏"一个从未授权的站点会**顺带把它停用** ——
+   *   而它从未生效过，停用是无意义的副作用；更糟的是将来它被重新授权时，
+   *   用户会因为它莫名其妙处于"已停用"而收到一个**看不懂的提示**。
+   *   这正是 `docs/PITFALLS.md` #30「接口摆在那里 ≠ 被接上了」的同族：
+   *   **两个不同的意图共用一个存储位，就会互相冒充。**
+   */
+  hiddenHosts: 'ql:hiddenHosts',
   /** 记忆的盒子清单（空盒子也保留；缺省「默认盒子」不入库） */
   boxList: 'ql:boxes',
   /** 默认盒子的自定义名称（未归盒账号的归宿；缺省「默认盒子」） */

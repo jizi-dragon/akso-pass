@@ -335,8 +335,10 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
      * （`ql:boxes`）**只会被加、不会被减** ⇒ 云端删掉/改名的盒子永远留着。
      * ★ 这条消息给 UI 一个**对账依据**；`result.data === null` 表示"没拿到"
      *   （离线），那时 UI 的约定是**一个字都不动**。
-     * ★ 走消息而不是让 UI 直接 import `cloud-store`：实测 `src/ui/**` 里
-     *   没有任何直接 import background 的先例，那层分工是清楚的（AGENTS §2）。 */
+     * ★ 走消息而不是让 UI 直接 import `cloud-store`：实测 `src/ui/` 目录下
+     *   没有任何直接 import background 的先例，那层分工是清楚的（AGENTS §2）。
+     *   ★ 这里刻意不写带通配的目录写法 —— 它含注释开始标记，会让
+     *     "块注释配平"判据误判（见 PITFALLS #43）。 */
     case 'par.boxes': {
       const r = await tryRun(() => fetchCloudBoxNames(true));
       return { kind: 'par.boxes', result: r };
@@ -933,6 +935,52 @@ chrome.windows.onRemoved.addListener((winId) => {
   if (winId === wheelWinId) {
     wheelWinId = null;
   }
+});
+
+/* ==================== ★★ 浏览器层授权的变化（v4.2.3 新增）====================
+ *
+ * ## 为什么需要（2026-10-12 用户实测的真实缺陷）
+ *
+ * 用户的流程是：**站点没有账号 ⇒ 站点管理里没有它 ⇒ 只能靠"快捷登录"时
+ * Chrome 自己弹的那个授权窗**。而那条路径**不经过扩展 UI 的 `permissions.request`**，
+ * 所以也不会发 `par.grantChanged` ⇒ `enforcement` 缓存里那个 `false` **永远留着**
+ * ⇒ 权限早就有了，卡片却一直显示「未授权 · 已暂停」。
+ *
+ * 实测证据（用户提供的控制台输出）：`getAll()` 里**确实有**
+ * 那个平台的 host 授权（形如"协议 + host + 路径通配"），而卡片仍显示未授权
+ * —— 那就是缓存没失效。
+ * ★ 这里刻意不把那串 origin 的字面量写出来：它的结尾正是注释结束标记，
+ *   会让本段注释提前结束、进而破坏整个文件（我在这上面栽过六次，见 PITFALLS #43）。
+ *
+ * ★ 清这个缓存原来只有两处：SW 冷启（`restore()` 里的 `enforcement.clear()`）
+ *   与 UI 主动发 `par.grantChanged`。**用户/浏览器那一侧的变化没有任何人监听** ——
+ *   这一类"只有自己人通知自己人"的失效模式，本仓记过（见 `docs/PITFALLS.md` #30
+ *   "接口摆在那里 ≠ 它被接上了"）。
+ *
+ * ## 为什么还必须 `restore()`
+ *
+ * 清缓存只让**显示**变对。而收回授权时，**已装上的 DNR 改头规则**仍留在会话里 ——
+ * 那意味着"没权限了却还在改写鉴权头"。`restore()` 是唯一会按 `isEnforceable`
+ * **重新门控**规则与 token/Cookie 快照的地方，所以这里必须调它。
+ *
+ * ★ 两个监听都必须有：`onRemoved` 漏了 ⇒ 收回授权后规则残留；
+ *   `onAdded` 漏了 ⇒ 就是用户这次报的"卡片说未授权"。
+ */
+function onBrowserPermissionsChanged(what: string): void {
+  log.info('浏览器层授权变化（%s）⇒ 清授权健康缓存并重新门控', what);
+  invalidateEnforcementCache();
+  // 重新门控 DNR 规则与 bindings 的 token/Cookie 快照（收回授权时这一步是必须的）
+  void parallelSession.restore().catch((e: unknown) => {
+    // 失败要留痕：否则"授权变了但规则没重装"是静默的
+    log.warn('授权变化后 restore() 失败：%s', e instanceof Error ? e.message : String(e));
+  });
+}
+
+chrome.permissions.onAdded.addListener((perms) => {
+  onBrowserPermissionsChanged(`added ${(perms.origins ?? []).join(',') || '(无 origins)'}`);
+});
+chrome.permissions.onRemoved.addListener((perms) => {
+  onBrowserPermissionsChanged(`removed ${(perms.origins ?? []).join(',') || '(无 origins)'}`);
 });
 
 async function toggleAccountWheel(): Promise<void> {

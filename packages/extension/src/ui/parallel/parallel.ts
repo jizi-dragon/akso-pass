@@ -1213,9 +1213,14 @@ async function loadSites(): Promise<void> {
   // 站点名从云端拉；拿不到（离线）时 `siteNames` 为 null，渲染回落成显示域名
   await refreshSiteNames();
 
+  // ★ v4.2.3：用户主动隐藏的 host（与 blockedHosts 是**两件事**，见 LOCAL_KEYS 注释）
+  const hiddenStored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
+  const hiddenHosts = (hiddenStored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? [];
+
   const sitesKey = JSON.stringify([
     grantedHosts,
     blockedHosts,
+    hiddenHosts,
     browserAccounts.map((a) => [a.id, a.tabName, a.box ?? '']),
     // ★ 名字也要进 key：它是渲染输入的一部分，不进 key 的话"改了名字但 hosts 没变"
     //   就**不会重渲染**（表现是"点了保存没反应"，而数据其实已经改好了）。
@@ -1223,7 +1228,7 @@ async function loadSites(): Promise<void> {
   ]);
   if (sitesKey !== lastSitesKey) {
     lastSitesKey = sitesKey;
-    renderSites(grantedHosts, blockedHosts);
+    renderSites(grantedHosts, blockedHosts, hiddenHosts);
     /* ★★ v4.2.2 修：**改名后"添加账号"的站点下拉必须跟着更新**。
      *
      * 缺陷形态（实测抓到，30/32）：改完名字后站点卡片更新了，而 `#p-host` 的选项
@@ -1271,16 +1276,20 @@ function siteTitleOf(host: string): { title: string; sub: string | null } {
   return { title, sub: title === host ? null : host };
 }
 
-function renderSites(hosts: string[], blocked: string[] = []): void {
+function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] = []): void {
+  const hiddenSet = new Set(hidden);
   siteListEl.innerHTML = '';
-  if (!hosts.length && !blocked.length) {
+  // ★ v4.2.3：隐藏的行要一起算进"有没有东西可显示" —— 否则全部隐藏之后
+  //   页面会是一片**空白**（连"尚无授权站点"的提示都没有），用户只会以为界面坏了。
+  const visible = [...hosts, ...blocked].filter((h) => !hiddenSet.has(h));
+  if (!visible.length) {
     const li = document.createElement('li');
     li.className = 'empty';
     const ico = document.createElement('div');
     ico.className = 'empty-ico';
     ico.textContent = '🛡️';
     const tip = document.createElement('div');
-    tip.textContent = '尚无授权站点。用上方表单输入 host 添加并授权。';
+    tip.textContent = '尚无授权站点。用上方表单输入站点地址，点「添加并授权」即可。';
     li.append(ico, tip);
     siteListEl.appendChild(li);
     return;
@@ -1292,7 +1301,24 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
       continue;
     }
     seen.add(host);
-    const isBlocked = !hosts.includes(host) || blocked.includes(host);
+    // ★ v4.2.3：用户主动隐藏的行直接跳过（它本来就没有授权、也没有规则动作）
+    if (hiddenSet.has(host)) {
+      continue;
+    }
+    /* ★★ v4.2.3：把"不生效"的**两种原因分开**（用户 2026-10-12 报"卡片显示未授权
+     * 已暂停，但浏览器其实已授权"）。原来是合成一句 `isBlocked`，于是：
+     *   · 用户在浏览器里授权了 → 卡片仍可能说"未授权"（进过停用名单，或缓存没失效）
+     *   · 用户看不出**该点哪个按钮**才能好
+     * ⇒ 现在拆成互斥状态，各自给一个能解决问题的动作：
+     *   `paused`     —— 进过停用名单（手动删除过 / Chrome 拒收过）⇒ 动作「恢复使用」
+     *   `needsGrant` —— 不在停用名单，但浏览器层就是没授权 ⇒ 动作「授权」
+     *   正常         —— 什么都不显示，动作是「更改名称 / 删除」
+     */
+    const inBlockedList = blocked.includes(host);
+    const hasGrant = hosts.includes(host);
+    const paused = inBlockedList;
+    const needsGrant = !inBlockedList && !hasGrant;
+    const isBlocked = paused || needsGrant;
     const n = countAccountsFor(host);
     // ★ 卡片里名称与域名各占一行 ⇒ 这里只要名称（`siteTitleOf` 的 `sub` 已不再需要）
     const { title } = siteTitleOf(host);
@@ -1309,7 +1335,7 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
       li.classList.add('is-blocked');
     }
 
-    // ① 名称（+ 停用标记）
+    // ① 名称（+ 状态标记）—— ★ 徽标必须区分原因，否则用户不知道该点哪个按钮
     const head = document.createElement('div');
     head.className = 'site-card-head';
     const alias = document.createElement('div');
@@ -1320,7 +1346,10 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     if (isBlocked) {
       const off = document.createElement('span');
       off.className = 'site-card-off';
-      off.textContent = '已暂停';
+      off.textContent = paused ? '已停用' : '缺授权';
+      off.title = paused
+        ? '这个站点在 Akso Pass 里被停用过（改头规则不对它生效）⇒ 点右侧「恢复使用」'
+        : '浏览器还没有给这个站点授权 ⇒ 点右侧「授权」，然后在弹出的窗里点允许';
       head.appendChild(off);
     }
 
@@ -1335,7 +1364,8 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     const num = document.createElement('b');
     num.textContent = String(n);
     const unit = document.createElement('span');
-    unit.textContent = isBlocked ? '个账号 · 改头已暂停' : '个账号';
+    // ★ 措辞要指名**原因**：原来一律写"改头已暂停"，而"缺授权"其实是"从未生效"
+    unit.textContent = paused ? '个账号 · 已停用' : needsGrant ? '个账号 · 待授权' : '个账号';
     count.append(num, unit);
     if (isBlocked) {
       count.classList.add('muted');
@@ -1343,6 +1373,37 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
 
     const actions = document.createElement('div');
     actions.className = 'site-actions';
+
+    /* ★★ v4.2.3：**"缺授权"时给一个真正能授权的按钮**。
+     *
+     * 用户报的循环依赖：站点没账号 ⇒ 站点管理里看不到能点的授权入口 ⇒
+     * 只能等"快捷登录"时 Chrome 自己弹窗。而一旦那次弹窗被忽略/被拒，
+     * 就**再也回不到授权**了（卡片只说"未授权"，不给入口）。
+     *
+     * ★ 这里仍然在**用户手势里最先发起** `permissions.request`（AGENTS §2）——
+     *   它排在 `unblockHost` 之前，因为后者是异步的，会把手势耗掉。
+     */
+    if (needsGrant) {
+      const grantBtn = document.createElement('button');
+      grantBtn.className = 'btn-primary btn-sm';
+      grantBtn.type = 'button';
+      grantBtn.textContent = '授权';
+      grantBtn.title = `让浏览器把 ${host} 授权给本扩展（改头规则与隔离才会对它生效）`;
+      grantBtn.addEventListener('click', () => {
+        // ★ 授权请求必须**第一件事**就发（晚一步手势失效）
+        void chrome.permissions
+          .request({ origins: [patternOfHost(host)] })
+          .then(async (okc) => {
+            if (!okc) {
+              alert(`未完成授权：${host}\n\n（在弹出的窗里点「允许」才会生效）`);
+              return;
+            }
+            await send({ kind: 'par.grantChanged' });
+            await refreshAll();
+          });
+      });
+      actions.appendChild(grantBtn);
+    }
 
     if (!isBlocked) {
       const renameBtn = document.createElement('button');
@@ -1368,6 +1429,30 @@ function renderSites(hosts: string[], blocked: string[] = []): void {
     }
 
     const actionBtn = document.createElement('button');
+    /* ★ 三个状态各给一个**说到做到**的按钮（v4.2.3）：
+     *   paused     → 「恢复使用」（解除本地停用）
+     *   needsGrant → 「不再显示」（★ 不能写"恢复使用" —— 它**没有**被停用，
+     *                 点"恢复使用"什么也不会发生，那是我第一版留下的错）
+     *   正常       → 「删除」（撤销授权 + 停用）
+     */
+    if (needsGrant) {
+      actionBtn.className = 'btn-ghost btn-sm';
+      actionBtn.textContent = '不再显示';
+      actionBtn.title = '只是把这一行从列表里去掉（它本来就没有浏览器授权，改头规则从未对它生效）';
+      actionBtn.addEventListener('click', () => {
+        if (!confirm(`把「${title}」从站点列表里去掉？\n\n`
+          + '· 它本来就没有浏览器授权，所以不会有任何权限变化\n'
+          + '· 云端账号库里的记录不受影响（重新授权后它会再出现）')) {
+          return;
+        }
+        void hideHost(host);
+      });
+      actions.appendChild(actionBtn);
+      li.append(head, domain, count, actions);
+      siteListEl.appendChild(li);
+      continue;
+    }
+
     actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
     // ★ 第五轮（要求 ④）按钮文案统一成「删除」。但**动作仍然是撤销浏览器授权**，
     //   不是删云端记录 —— 所以确认框必须把这个区别说清，否则"删除"会让用户以为
@@ -1547,23 +1632,54 @@ async function revokeHost(displayHost: string): Promise<void> {
     }
   }
 
-  // 校验真实残留；仍有覆盖（含通配）→ 记入本地停用名单，保证「移除」在功能上必然生效
-  const leftover = ((await chrome.permissions.getAll()).origins ?? []).filter(
-    (o) => originToHost(o) === displayHost || o.includes('*://*/*'),
-  );
-  const stillCovers = leftover.length > 0;
+  /* ★★ v4.2.3 修（2026-10-12 用户实测"删除站点时弹框"）：**残留判定不能拿
+   * 扩展自己声明的通配项来算**。
+   *
+   * 缺陷形态：原判据是"host 归属相等 **或** origin 里含通配"，
+   * 而那个通配**正是 manifest 里可选 host 权限的声明本身** ——
+   * 它会**恒定出现**在 `getAll().origins` 里（`originToHost` 对它是 null，
+   * 所以前半永远匹配不上，后半却总是为真）。
+   * ⇒ `stillCovers` **恒真** ⇒ **删任何站点都判"未能回收"并弹框**。
+   *
+   * ⇒ 现在只问一件事：**这个 host 是否仍被某个真实授权覆盖**。
+   *   独占的通配项与它的大写别名都跳过 —— 它们不是"这个站点的授权"。
+   *   ★ 但"被通配覆盖着"这件事本身要**如实告知**（下面单独判），因为它意味着
+   *     删了这个站点，鉴权改写对它**仍然生效**（本仓 isEnforceable 有"更宽泛的
+   *     通配授权也算可用"的分支，见 `parallel-session.ts`）。那是另一件事，
+   *     不能和"回收失败"混成一句话。
+   *   ★★ 本段注释里**不能**写出那两个标记的字面量 —— 这是我第六次踩它，
+   *     而这次连累 `tsc` 报了 10 个错（判据本身第一版还漏掉了，见 PITFALLS #43）。
+   */
+  const allOrigins = (await chrome.permissions.getAll()).origins ?? [];
+  const hostOrigins = allOrigins.filter((o) => originToHost(o) === displayHost);
+  const broadGrant = allOrigins.find((o) => o === '<all_urls>' || o === '*://*/*');
+  const stillCovers = hostOrigins.length > 0;
 
   const blockedStored = await chrome.storage.local.get(LOCAL_KEYS.blockedHosts);
   const blocked = new Set<string>((blockedStored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
 
-  if (stillCovers) {
+  // ★ 只要"这个 host 的授权没能回收"，就必须进停用名单 —— 无论原因是
+  //   Chrome 拒绝（`errors` 非空）还是它压根不在自己的授权里（被通配覆盖着）。
+  //   停用名单是**唯一**能让"删掉它"在功能上真正生效的机制（`isEnforceable` 先看它）。
+  if (stillCovers || broadGrant) {
     blocked.add(displayHost);
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
-    alert(
-      `「${displayHost}」已在 Akso Pass 中停用（改头规则立即失效）。\n\n` +
-        `浏览器底层授权未能回收：\n${errors.join('\n') || '(无明细)'}\n\n` +
-        `如需彻底回收浏览器层权限：chrome://extensions → 详情 → 网站访问权限 → 手动收窄。`,
-    );
+    if (stillCovers) {
+      alert(
+        `「${displayHost}」的浏览器授权**没能回收**，已在 Akso Pass 中停用（改头规则不再对它生效）。\n\n`
+          + `浏览器给出的原因：\n${errors.join('\n') || '(无明细)'}\n\n`
+          + `要彻底回收权限，只能手动改：chrome://extensions → 本扩展 → 详情 →`
+          + `「网站访问权限」→ 改成「点击扩展程序时」。\n`
+          + `★ 这一步只有你能做 —— 代码无法回收用户手动授予的权限。`,
+      );
+    } else {
+      alert(
+        `「${displayHost}」已在 Akso Pass 中停用（改头规则不再对它生效）。\n\n`
+          + `注意：本扩展当前还持有**宽泛授权**（${broadGrant}），`
+          + `所以浏览器层的权限没有、也无法针对单个站点回收。\n`
+          + `建议在 chrome://extensions → 本扩展 → 详情 →「网站访问权限」里收窄到具体站点。`,
+      );
+    }
   } else if (blocked.has(displayHost)) {
     blocked.delete(displayHost);
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
@@ -1581,6 +1697,24 @@ async function unblockHost(host: string): Promise<void> {
   await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
   await send({ kind: 'par.grantChanged' });
   await refreshAll();
+}
+
+/**
+ * ★ v4.2.3：「不再显示」一个**本来就没有浏览器授权**的站点。
+ *
+ * ★ 与 `unblockHost` 的分工（两者的语义完全不同，存储键也不同）：
+ *   · `unblockHost`  —— 解除"停用"（那是有权限但被我们主动停用）
+ *   · `hideHost`     —— 只是不显示（它从没有过权限，没有任何规则动作）
+ *   ⇒ **只能动 `hiddenHosts`，绝不能顺手写 `blockedHosts`** ——
+ *     那会给一个从未生效的站点留下"已停用"的假状态（见 `LOCAL_KEYS.hiddenHosts` 注释）。
+ */
+async function hideHost(host: string): Promise<void> {
+  const stored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
+  const hidden = new Set<string>((stored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? []);
+  hidden.add(host);
+  await chrome.storage.local.set({ [LOCAL_KEYS.hiddenHosts]: Array.from(hidden).sort() });
+  lastSitesKey = ''; // 强制重渲染（hosts 没变，但这一行要消失）
+  await loadSites();
 }
 
 /* ==================== 下拉填充（防闪烁：选项未变化不重建） ==================== */

@@ -34,9 +34,11 @@ export interface ParallelStore {
    * 站点清单（host ↔ 用户自定义名称）。v4.2.1 新增，给「站点管理」显示名字用。
    *
    * ★ 为什么它必须经过这一层而不是 UI 直接问云端：本仓的 UI **从不直接
-   *   `fetch` 云端**（`ui/**` 里零 `cloudRequest`）—— 授权、token、离线回落
+   *   fetch 云端**（`src/ui/` 下零 `cloudRequest`）—— 授权、token、离线回落
    *   全在 background。UI 破例直连会绕过这三样，而且**失败形态是静默的**
    *   （UI 里一个 `catch {}` 就看不出来了）。
+   *   ★ 注意这里写的是 `src/ui/` 而不是带通配的写法 —— 后者含注释开始标记，
+   *     会让"块注释配平"判据（`verify-css-vars.mjs`）**误判**（见 PITFALLS #43）。
    */
   listSites(force?: boolean): Promise<{ host: string; name: string; displayName: string }[]>;
   /** 给站点改自定义名称（只改 name，不动 baseUrl —— 后者是 host 的唯一来源） */

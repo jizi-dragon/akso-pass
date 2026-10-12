@@ -357,5 +357,116 @@ console.log('\n=== F. UI 通信层不再把 `undefined` 交给调用点（曾经
   }
 }
 
+/* ==================== G. 浏览器层授权变化必须被监听（v4.2.3）====================
+ *
+ * ## 治的缺陷（用户 2026-10-12 实测）
+ *
+ * 用户的流程是「站点没有账号 ⇒ 站点管理里没有它 ⇒ 只能靠快捷登录时 Chrome 自己弹的
+ * 授权窗」。而那条路径**不经过扩展 UI 的 `permissions.request`**，所以也不发
+ * `par.grantChanged` ⇒ `enforcement` 缓存里那个 `false` **永远留着**
+ * ⇒ 权限早就有了，卡片却一直显示「未授权 · 已暂停」。
+ *
+ * 用户给的控制台输出证实了这一点：`getAll()` 里**确实有**该 host 的授权，
+ * 而卡片仍显示未授权。
+ *
+ * ## 为什么必须两条判据都有
+ *
+ * · `onAdded` 漏了 ⇒ 就是用户报的"卡片说未授权"
+ * · `onRemoved` 漏了 ⇒ 收回授权后**DNR 改头规则残留**（"没权限了却还在改写鉴权头"）
+ *
+ * ## 为什么"接了监听"还不够，还要验 `restore()`
+ *
+ * 清缓存只让**显示**变对。规则与 token/Cookie 快照的重新门控只发生在
+ * `restore()` 里 ⇒ 只接监听不调 `restore()` 是**半个修复**，而它看起来完全正常。
+ */
+console.log('\n=== G. 浏览器层授权变化必须被监听 + 重新门控（v4.2.3）===');
+{
+  const sw = readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'background', 'service-worker.ts'), 'utf8');
+  const swCode = stripComments(sw);
+
+  for (const ev of ['onAdded', 'onRemoved']) {
+    if (!new RegExp(`chrome\\.permissions\\.${ev}\\.addListener`).test(swCode)) {
+      fail(`没有监听 \`chrome.permissions.${ev}\` —— `
+        + (ev === 'onAdded'
+          ? '用户在浏览器里新授权时，`enforcement` 缓存不会失效 ⇒ 卡片一直显示「未授权·已暂停」（用户实测报的就是它）'
+          : '收回授权后不重算 ⇒ **DNR 改头规则残留**：没权限了却还在改写鉴权头'));
+    } else {
+      ok(`监听了 \`chrome.permissions.${ev}\``);
+    }
+  }
+
+  // 监听体里必须既清缓存、又重新门控
+  const handler = functionBody(swCode, 'function onBrowserPermissionsChanged(');
+  if (!handler) {
+    fail('找不到 `onBrowserPermissionsChanged()` —— 两条监听应该共用它（锚点漂了？）');
+  } else {
+    if (!/invalidateEnforcementCache\(\)/.test(handler)) {
+      fail('授权变化时没有 `invalidateEnforcementCache()` ⇒ 缓存不失效，卡片状态不会变');
+    } else {
+      ok('授权变化时清了授权健康缓存');
+    }
+    if (!/parallelSession\.restore\(\)/.test(handler)) {
+      fail('授权变化时没有 `parallelSession.restore()` ⇒ **规则与 token/Cookie 快照没重新门控**，'
+        + '收回授权后改头规则会残留（只清缓存是"半个修复"，而它看起来完全正常）');
+    } else {
+      ok('授权变化时重新门控（restore）');
+    }
+    // ★ 失败必须留痕：否则"授权变了但规则没重装"是静默的（规则 29）
+    if (!/\blog\.(warn|error)\(/.test(handler)) {
+      fail('`restore()` 失败时没有留痕 ⇒ "授权变了但规则没重装"是静默的');
+    } else {
+      ok('`restore()` 失败有留痕');
+    }
+  }
+}
+
+/* ==================== H. 授权残留判定不能被"自己的声明"弄真（v4.2.3）====================
+ *
+ * ## 治的缺陷
+ *
+ * `revokeHost` 原来这样算"还有没有残留覆盖"：
+ *   host 归属相等 **或** origin 里含通配项
+ * 而那个通配项**正是 manifest 里 `optional_host_permissions` 的声明本身** ——
+ * 它**恒定出现**在 `getAll().origins` 里 ⇒ 判据**恒真**
+ * ⇒ **删任何站点都判"未能回收"并弹框**（用户实测报的第二个现象）。
+ *
+ * ## 这条判据的形状
+ *
+ * 它不能是"字符串里有没有某个词"—— 那种断言极易假绿（`docs/PITFALLS.md` #35 记过一次）。
+ * 这里断言的是**结构**：判据表达式里不得出现"包含通配"这种恒真形态，
+ * 必须是"这个 host 的 origin 是否还在"。
+ */
+console.log('\n=== H. 授权残留判定不得被扩展自己的通配声明弄真（v4.2.3）===');
+{
+  const par = readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'ui', 'parallel', 'parallel.ts'), 'utf8');
+  const parCode = stripComments(par);
+  const revoke = functionBody(parCode, 'async function revokeHost(');
+  if (!revoke) {
+    fail('找不到 `revokeHost()` 的函数体（锚点漂了？）');
+  } else {
+    // ★ 恒真形态：用 `includes(<通配>)` 之类的"包含"判定来算残留
+    if (/\.includes\(\s*['"`]\*:\/\/\*\/\*['"`]\s*\)/.test(revoke)
+      || /\.some\([^)]*includes\(/.test(revoke)) {
+      fail('残留判定里出现了"包含通配"的写法 ⇒ `getAll().origins` 里那条**声明本身**会让它恒真，'
+        + '于是**删任何站点都弹"未能回收"**（用户实测报的就是它）');
+    } else {
+      ok('残留判定不是"包含通配"的恒真形态');
+    }
+    // 必须真的按 host 归属去比
+    if (!/originToHost\(/.test(revoke)) {
+      fail('残留判定没有用 `originToHost()` 按 host 归属比对 ⇒ 无法区分"这个站点的授权"与"全局通配"');
+    } else {
+      ok('残留判定按 host 归属比对');
+    }
+    // ★ 宽泛授权要**如实告知**（它是另一件事），不能和"回收失败"混成一句
+    if (!/<all_urls>/.test(revoke)) {
+      fail('没有识别 `<all_urls>`（用户手动选中"在所有网站上"会得到它）⇒ '
+        + '用户会看到"回收失败"却不知道真正的原因是那条宽泛授权');
+    } else {
+      ok('识别并单独说明宽泛授权（`<all_urls>`）');
+    }
+  }
+}
+
 console.log(`\n${bad === 0 ? 'RESULT: OK' : `RESULT: ${bad} 处不符`}`);
 process.exit(bad === 0 ? 0 : 1);

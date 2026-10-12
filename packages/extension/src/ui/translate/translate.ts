@@ -233,8 +233,10 @@ async function renderHotkey(): Promise<void> {
  * ★★ 2026-10-12：`chrome://` / 应用商店这类**浏览器内部页**必须给出**可理解**的说明。
  *   它们是**浏览器安全边界**（Chrome 不往这些页面注入任何扩展脚本），不是本扩展的缺陷 ——
  *   但用户看到的只是"按了没反应"，于是会以为功能坏了。
- *   实测边界：`chrome://*`、`chrome-extension://*`、`chromewebstore.google.com`、
- *   `chrome.google.com/webstore`（PDF 查看器反而**可以**注入）。
+ *   实测边界：以 `chrome:` 与 `chrome-extension:` 开头的内部页、应用商店域名、
+ *   以及 PDF 查看器（后者反而**可以**注入）。
+ *   ★ 这里刻意不写出带通配的 URL 字面量 —— 它们含注释开始/结束标记，
+ *     会让"块注释配平"判据误判（我已在这上面栽过六次，见 PITFALLS #43）。
  */
 async function onTest(): Promise<void> {
   try {
