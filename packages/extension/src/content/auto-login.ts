@@ -110,16 +110,44 @@ function findSubmit(): HTMLButtonElement | null {
 /** 顶层：填用户名 + 密码（iframe）+ 勾选协议；自愈式提交（v3.10.7 节奏门控）。
  *  提交五重门控：①字段齐备（任一填充失败绝不点击——密码 iframe 未就绪时空密码提交
  *  即「密码错误」报错的根因）；②提交前回读凭据与 DOM 值一致（受控组件状态落地）；
- *  ③按钮可用；④用户未接管（trusted 键入凭据框 / trusted 点击按钮都算接管）；
- *  ⑤服务端未连续拒绝（点击后观察期出现 antd 风格错误提示 → 容忍一次重填重试，
- *  再错即停止让位——盲目重试会与用户点击竞争并可能触发验证码/锁定）。
+ *  ③按钮可用；④用户未接管；⑤服务端未连续拒绝（点击后观察期出现 antd 风格错误提示 →
+ *  容忍一次重填重试，再错即停止让位——盲目重试会与用户点击竞争并可能触发验证码/锁定）。
  *  节奏：MutationObserver + iframe load 即时触发 attempt（密码框挂载即填，压缩
- *  用户手动点击撞上未填充状态的窗口），800ms 轮询兜底。 */
+ *  用户手动点击撞上未填充状态的窗口），800ms 轮询兜底。
+ *
+ *  ★★ v4.1.4：「试次」的记账口径修正（PITFALLS #39）——**只有点击真正送达才消耗试次**。
+ *  此前 `attempts++` 发生在**调度**点击时，而点击还能在那 500ms 后被齐备/回读中止
+ *  （`click-aborted`）。于是被中止的轮次**白吃一次试次**，还会因为 `lastClickAt` 也被
+ *  提前设置而**白开一个 3.5s 观察窗**：4 次被中止的轮次就直接停手
+ *  （当时的 reason 字面量是 max-attempts，已随记账口径改名），
+ *  而扩展**一次都没点过**；在那 3.5s 窗口里更没有任何一次重填（`attempt()` 在观察窗
+ *  分支直接 return），所以密码框会长时间停在空态。
+ *  ⇒ 现在 `posts` 的含义是**已送达的点击**，与「服务端收到了几次」一一对应；
+ *    防无限循环由 `deadline`（30s 硬界）与 `errorSeen` 承担，**不依赖这个上限**。
+ *
+ *  ★ v4.1.4 第二项：用户「点了按钮」与用户「改了凭据」**分开处置**。
+ *  此前两者都置 `takenOver` ⇒ 用户在填充完成前手点一下按钮，自动流程就**永久停手**，
+ *  于是密码没填、表单校验报错，而用户之后怎么点都没有补充动作。
+ *  现在：改凭据 ⇒ 立即停手且**绝不覆盖用户输入**；点按钮 ⇒ 扩展**让位不抢**，
+ *  但仍观察服务端反馈并把结果记进取证（不含口令）。
+ *
+ *  ★ 诚实边界：**"空密码提交"的确切成因尚未实证**。本文件里回读与点击是**同一次
+ *  同步执行**（见下方 500ms 回调），两者之间没有可插入的窗口 —— 用 mock 平台构造
+ *  "读通过、POST 时值已失效"的场景**试过两种构造都失败**（详见
+ *  `tmp/verify-authorace.mjs` 顶部说明）。本轮修的是**可复现的那一半**：中止轮次吃掉
+ *  试次、以及观察窗期间无人重填。真机上的空密码提交仍需一份 `ql:forensics` 诊断包
+ *  才能定位（见 `docs/FEASIBILITY-SSO-QUICKLOGIN.md` §7.1）。 */
 function runTopFrameFlow(): void {
   const deadline = Date.now() + 30_000;
-  let attempts = 0;
+  /** ★ 已**送达**的点击次数（= 服务端实际收到几次提交），不是调度次数 */
+  let posts = 0;
   let lastClickAt = 0;
+  /** 用户改写了凭据字段（trusted 键入/清空）—— 硬让位 */
   let userTouched = false;
+  /** 用户点了按钮 —— 让位但不抢；仍观察服务端反馈 */
+  let userClicked = false;
+  /** 防重入：点击回调挂起期间（500ms 窗口）不再调度第二次点击 */
+  let clickPending = false;
   let absentStreak = 0;
   let errorSeen = 0; // 提交后观察期内的服务端拒绝次数（错误提示出现）
   let errorFlagged = false; // 本次点击观察期是否已标记过错误（防重复计数）
@@ -135,8 +163,13 @@ function runTopFrameFlow(): void {
     if (timer !== undefined) {
       window.clearInterval(timer);
     }
-    report('stand-down', { reason, attempts, errorSeen });
+    report('stand-down', { reason, posts, userClicked, errorSeen });
   };
+
+  /** 硬让位判定（改凭据）：不记 stand-down —— 那是**交付成功**，不是失败。
+   *  ★ 判据：报 `stand-down` 的每条路径都必须是「扩展没能完成登录」；
+   *    用户自己接管成功时若也报，统计上就无法区分"失败"与"用户接手"。 */
+  const takenOver = (): boolean => userTouched;
 
   /** 用户已改写字段值（trusted 键入或手动清空）= 接管；预期值非空才可比对 */
   const detectUserEdit = (el: HTMLInputElement | null, expected: string): void => {
@@ -158,15 +191,19 @@ function runTopFrameFlow(): void {
     { capture: true },
   );
 
-  // 用户点击任何按钮 = 接管意图：自动流程立即停止（自动点击自身的 click 事件
-  // isTrusted=false 不会触发；勾选协议同理由 checkAgreement 内部处理）
+  // 用户点击按钮 = **让位但不抢**：自动流程不再追加点击（不覆盖用户的动作），
+  // 但仍继续观察服务端反馈，并把「用户是否点过」记进取证（自动点击自身的 click
+  // 事件 isTrusted=false 不会触发；勾选协议同理由 checkAgreement 内部处理）。
+  // ★ v4.1.4：此前这里直接 `userTouched = true` ⇒ 立即停手。而用户在填充完成前
+  //   手点一下（哪怕只是因为"看起来已经填好了"）就会让扩展永久退出，
+  //   之后密码没填、校验报错、用户再点也无效 —— 这正是"登不上"的一半成因。
   window.addEventListener(
     'click',
     (e) => {
       const t = e.target as HTMLElement | null;
       if (e.isTrusted && t?.closest?.('button')) {
-        userTouched = true;
-        log.debug('user clicks a button, stand down');
+        userClicked = true;
+        log.debug('user clicks a button, extend stands down from clicking');
       }
     },
     { capture: true },
@@ -204,7 +241,7 @@ function runTopFrameFlow(): void {
   timer = window.setInterval(attempt, 800);
 
   function attempt(): void {
-    if (userTouched) {
+    if (takenOver()) {
       stop('user-takeover');
       return;
     }
@@ -216,19 +253,24 @@ function runTopFrameFlow(): void {
       stop('deadline');
       return;
     }
-    if (attempts >= 4) {
-      stop('max-attempts');
+    if (posts >= 4) {
+      stop('max-posts');
       return;
     }
     if (errorSeen >= 2) {
       stop('server-rejected-twice');
       return;
     }
+    // 防重入：上一次点击仍在 500ms 回调里挂起 → 不调度第二次
+    if (clickPending) {
+      return;
+    }
     const submit = findSubmit();
     if (!submit) {
-      // 登录成功跳转后按钮消失；点击过至少一次即认为流程已交付
-      if (attempts > 0 && ++absentStreak >= 2) {
-        report('submit-gone', { attempts });
+      // 登录成功跳转后按钮消失。★ v4.1.4：**用户点击也算「已交付」**——
+      // 此前只认 `posts > 0`，于是"用户自己点成功了"会被当成"还没交付"而空跑到 30s。
+      if ((posts > 0 || userClicked) && ++absentStreak >= 2) {
+        report('submit-gone', { posts, userClicked });
         stop('submit-gone');
       }
       return;
@@ -240,18 +282,18 @@ function runTopFrameFlow(): void {
         document.querySelector<HTMLInputElement>('input[type="text"]'),
       credentials.username,
     );
-    if (userTouched) {
+    if (takenOver()) {
       stop('user-takeover');
       return;
     }
     const now = Date.now();
     if (lastClickAt) {
+      // 观察期：检测服务端拒绝反馈（错误提示出现）
       if (now - lastClickAt < 3500) {
-        // 观察期：检测服务端拒绝反馈（错误提示出现）
         if (!errorFlagged && countErrors() > errorsAtLastClick) {
           errorFlagged = true;
           errorSeen++;
-          report('rejected', { errorSeen, attempts });
+          report('rejected', { errorSeen, posts, userClicked });
           log.debug('submit rejected by server', { errorSeen });
           if (errorSeen >= 2) {
             stop('server-rejected-twice');
@@ -272,28 +314,42 @@ function runTopFrameFlow(): void {
       report('fill-state', { ok: fillOk });
     }
     if (!fillOk) {
-      return;
+      return; // ★ 未消耗试次：本轮什么都没交付出去
     }
-    attempts++;
-    lastClickAt = now;
-    errorsAtLastClick = countErrors();
+    clickPending = true;
     window.setTimeout(() => {
-      if (userTouched) {
-        return; // 点击落地前用户已接管
+      clickPending = false;
+      if (takenOver()) {
+        return; // 点击落地前用户已接管（改写了凭据）
       }
+      // ★★ 点击落地前重新确认「三件事实」同时成立——不靠时序猜，靠当场读 DOM。
+      //   读-点之间仍有极小窗口，但它不再是"4 次机会都被白吃"那种放大态。
       if (!fillAll()) {
-        report('click-aborted', { attempts, reason: 'fields-reset' });
-        return; // 点击落地前字段被重渲染清掉/移除 → 放弃本轮，等下轮重填后再点
+        report('click-aborted', { posts, reason: 'fields-reset' });
+        return; // 字段被重渲染清掉/移除 → 放弃本轮，**不消耗试次**，等下轮重填
       }
       const btn = findSubmit();
-      // 提交前回读：受控组件的 DOM 值必须与凭证一致（状态未落地则推迟）
-      const u = document.querySelector<HTMLInputElement>('input[placeholder="请输入用户名"]') ||
+      const u =
+        document.querySelector<HTMLInputElement>('input[placeholder="请输入用户名"]') ||
         document.querySelector<HTMLInputElement>('input[type="text"]');
       if (!btn || !u || u.value !== credentials!.username || readPasswordValue() !== credentials!.password) {
-        report('click-aborted', { attempts, reason: 'readback-mismatch' });
+        report('click-aborted', { posts, reason: 'readback-mismatch' });
+        return; // 受控组件的 DOM 值未与凭据一致 → 放弃本轮，**不消耗试次**
+      }
+      if (userClicked) {
+        stop('user-takeover'); // 用户在挂起窗口内点了按钮 → 让位
         return;
       }
-      report('click', { attempts, btnText: (btn.textContent || '').trim().slice(0, 12) });
+      if ((btn as HTMLButtonElement).disabled) {
+        report('click-aborted', { posts, reason: 'button-disabled' });
+        return; // 按钮此刻不可用（校验未过）→ 放弃本轮，**不消耗试次**
+      }
+      // ★ 记账点：只有走到这里才是"一次真正送达的提交"
+      posts++;
+      lastClickAt = Date.now();
+      errorFlagged = false;
+      errorsAtLastClick = countErrors();
+      report('click', { posts, btnText: (btn.textContent || '').trim().slice(0, 12) });
       btn.click();
     }, 500);
   }
