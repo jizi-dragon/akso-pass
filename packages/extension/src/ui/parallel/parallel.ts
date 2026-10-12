@@ -1345,11 +1345,28 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
    *
    * ⇒ 数据源补齐为三个：有授权的 + 被停用的 + **有云端站点记录或本地账号引用的**。
    */
+  /* ★★ v4.2.6（用户 2026-10-12 的反馈，纠正了我上一版的方向）：
+   *
+   * 用户要的是**删除**，不是"取消授权"这个动作本身。原话：
+   *   「例如站点 tonbridge-config.aksoegmp.com，假设我有一个账号用的是该站点，我也授权了
+   *     该站点，现在我把那个账号删除了，但是该站点仍然在授权列表里面，这就很不合理。」
+   *
+   * ★ 为什么"删了账号它还在"是**必然**的（不是 bug）：站点列表由三个来源并集而来，
+   *   而**浏览器授权**是其中最强的那个 —— 账号删了、云端记录删了，只要授权还在，它就在。
+   *   ⇒ 所以"删除站点"必须把**这一行的所有来源都去掉**，用户才会觉得它真的没了。
+   *
+   * ★ 用户同时点出的边界：「也存在个别情况，当第一次添加该站点时，是没有创建账号的」
+   *   ⇒ 删除**不能**依赖"这个站点有几个账号"来决定做不做 —— 零账号的站点
+   *     同样必须能删（"授权了但还没建账号"是正常状态，不是异常）。
+   *
+   * ★ 这里把用户主动删除的 host 从 `referenced` 里排除：否则一个**被云端记录引用**的
+   *   站点被删掉之后，下一轮刷新又会从 `siteNames` 冒出来（"删不掉"的第二种成因）。
+   */
   const referenced = new Set<string>(
     [
       ...Object.keys(siteNames ?? {}),
       ...browserAccounts.map((a) => a.siteHost).filter(Boolean),
-    ].filter((h) => !isCloudHost(h)),
+    ].filter((h) => !isCloudHost(h) && !hiddenSet.has(h)),
   );
   const allHosts = [...new Set([...hosts, ...blocked, ...referenced])];
 
@@ -1475,6 +1492,8 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
               alert(`未完成授权：${host}\n\n（在弹出的窗里点「允许」才会生效）`);
               return;
             }
+            // ★ 授权成功 = 用户明确表示"我要用它" ⇒ 解封（否则删过就永远回不来）
+            await unhideHost(host);
             await send({ kind: 'par.grantChanged' });
             await refreshAll();
           });
@@ -1506,20 +1525,33 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     }
 
     const actionBtn = document.createElement('button');
-    /* ★ 三个状态各给一个**说到做到**的按钮（v4.2.3）：
-     *   paused     → 「恢复使用」（解除本地停用）
-     *   needsGrant → 「不再显示」（★ 不能写"恢复使用" —— 它**没有**被停用，
-     *                 点"恢复使用"什么也不会发生，那是我第一版留下的错）
-     *   正常       → 「删除」（撤销授权 + 停用）
+    /* ★★★ v4.2.6：**统一点是"这一行会不会消失"，不是"调了哪个 API"。**
+     *
+     * 用户 2026-10-12 纠正了我上一版的方向（原话）：
+     *   「你的方向有偏差，我要的不是取消授权，而是删除……我删除了那个账号，但是该站点仍然
+     *     在授权列表里面，这就很不合理。当然，也存在个别情况，当第一次添加该站点时，
+     *     是没有创建账号的，需要注意这种特殊情况。」
+     *
+     * ⇒ 所以现在**所有**状态下的删除都保证"这一行消失"：
+     *   `needsGrant`（没有授权）      → 落"已删除"标记，行消失
+     *   `paused`（有授权但被停用）    → 解除停用 + 撤销授权 + 落标记，行消失
+     *   正常（有授权）                → 撤销授权 + 落标记，行消失
+     * ★ 而"撤销授权失败"（Chrome 拒收）时**不能假装删掉了** —— 那种情况进停用名单并
+     *   如实告知（`revokeHost` 里那两条分支），因为"它还在改写鉴权头"是事实，必须说。
+     *
+     * ★ 用户点出的边界情况（"第一次添加该站点时没有创建账号"）在这里被**天然覆盖**：
+     *   删除**不看**账号数量 —— 零账号的站点走的是同一条路径。
+     *   （反过来，`needsGrant` 那一态本来就多半是"零账号 + 被云端记录引用"。）
      */
     if (needsGrant) {
       actionBtn.className = 'btn-ghost btn-sm';
-      actionBtn.textContent = '不再显示';
-      actionBtn.title = '只是把这一行从列表里去掉（它本来就没有浏览器授权，改头规则从未对它生效）';
+      actionBtn.textContent = '删除';
+      actionBtn.title = '把这一行从站点管理里去掉（它本来就没有浏览器授权，所以不会有权限变化）';
       actionBtn.addEventListener('click', () => {
-        if (!confirm(`把「${title}」从站点列表里去掉？\n\n`
-          + '· 它本来就没有浏览器授权，所以不会有任何权限变化\n'
-          + '· 云端账号库里的记录不受影响（重新授权后它会再出现）')) {
+        if (!confirm(`删除站点「${title}」？\n\n`
+          + `· 它本来就没有浏览器授权，所以浏览器权限不会有任何变化\n`
+          + `· 这一行会从站点管理里消失\n`
+          + '· 云端账号库里的站点与账号**不受影响**')) {
           return;
         }
         void hideHost(host);
@@ -1531,20 +1563,16 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     }
 
     actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
-    /* ★★ v4.2.4：文案从「删除」改回「**取消授权**」—— 用户 2026-10-12 的反馈原话：
-     *   "点击删除后，仅仅是显示取消授权。"
-     *   那句"仅仅是"点出了真问题：**按钮承诺了"删除"，做到的却是"取消授权"**，
-     *   于是用户期待列表里少一行、而实际只是它变成"已停用"—— 承诺与效果不一致。
-     *   ★ 这不是改文案就完了：**它是这个动作唯一诚实的名字**。站点记录在云端，
-     *     扩展**删不掉**它（删掉就意味着要动云端数据，而那是另一个动作、有另一个后果）；
-     *     扩展能做的只有"撤销浏览器授权 + 本地停用改头"。
-     *   ⇒ 按钮说实话，确认框再把"云端不受影响"讲清楚。
-     *   ★ 而"我就是不想再看到这一行"这个诉求由「不再显示」（`needsGrant` 分支）承接。
+    /* ★ 文案回到「删除」（v4.2.6）—— 因为现在它**真的会删掉这一行**。
+     *   v4.2.4 我把它改成「取消授权」是因为当时它只能做到那一步；现在
+     *   `revokeHost` 结尾会落"已删除"标记 ⇒ 承诺与效果重新一致。
+     *   ★ 而 `paused` 那一态仍然是「恢复使用」—— 那是另一个动作（解除停用），
+     *     把它和"删除"混在一个按钮上会让用户没法表达"我要恢复"。
      */
-    actionBtn.textContent = isBlocked ? '恢复使用' : '取消授权';
+    actionBtn.textContent = isBlocked ? '恢复使用' : '删除';
     actionBtn.title = isBlocked
       ? '解除本地停用（改头规则对它重新生效）'
-      : `撤销浏览器对 ${host} 的授权，并在 Akso Pass 里停用它的鉴权改写（云端记录不受影响）`;
+      : `删除这个站点：撤销浏览器授权 + 从站点管理里去掉（云端记录不受影响）`;
     actionBtn.addEventListener('click', () => {
       if (isBlocked) {
         void unblockHost(host);
@@ -1553,8 +1581,9 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
       if (
         !confirm(
           `删除站点「${title}」？\n\n`
-            + `· 将撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
-            + '· 云端账号库里的站点与账号**不受影响**（重新授权即可恢复）\n'
+            + `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
+            + '· 这一行会从站点管理里消失（以后要用，重新授权即可）\n'
+            + '· 云端账号库里的站点与账号**不受影响**\n'
             + '· 浏览器内已打开页签的登录态不受影响',
         )
       ) {
@@ -1772,6 +1801,18 @@ async function revokeHost(displayHost: string): Promise<void> {
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
   }
 
+  /* ★★ v4.2.6：**授权回收成功也要落"已删除"标记** —— 否则这一行会再冒出来。
+   *
+   * 站点列表有三个来源：有授权的 + 被停用的 + **被云端站点记录或本地账号引用的**。
+   * 只把授权删掉的话，第三条来源仍然成立 ⇒ **下一轮刷新它又回来了**，
+   * 而用户看到的是"删了没用"（这是"删不掉"的第二种成因，与权限回收失败不同）。
+   *
+   * ★ 这也让"删掉账号之后顺手删站点"这件事**在数据上也干净**：
+   *   云端那条站点记录（`siteNames` 的来源）我们**不动**（它是账号库的权威数据，
+   *   删它会影响别的设备），但本机不再显示它。
+   */
+  await hideHost(displayHost);
+
   await send({ kind: 'par.grantChanged' });
   await refreshAll();
 }
@@ -1787,13 +1828,21 @@ async function unblockHost(host: string): Promise<void> {
 }
 
 /**
- * ★ v4.2.3：「不再显示」一个**本来就没有浏览器授权**的站点。
+ * ★ v4.2.3：「删除 / 不再显示」一个站点的**最后一件事**：把它从列表里去掉。
  *
  * ★ 与 `unblockHost` 的分工（两者的语义完全不同，存储键也不同）：
  *   · `unblockHost`  —— 解除"停用"（那是有权限但被我们主动停用）
- *   · `hideHost`     —— 只是不显示（它从没有过权限，没有任何规则动作）
+ *   · `hideHost`     —— 只是不显示（不再出现在站点管理里）
  *   ⇒ **只能动 `hiddenHosts`，绝不能顺手写 `blockedHosts`** ——
  *     那会给一个从未生效的站点留下"已停用"的假状态（见 `LOCAL_KEYS.hiddenHosts` 注释）。
+ *
+ * ★★ v4.2.6：**去掉了我一度想加的 `silent` 参数**。理由值得记下来：
+ *   我当时的想法是"`revokeHost` 调它时不该再弹窗"，于是加了个 `silent` ——
+ *   但写完之后发现**没有任何地方会读它**（`revokeHost` 那条路径本来就不弹窗，
+ *   它只在**撤销失败**时弹，而那与这个函数无关）。
+ *   ⇒ 一个"存了但没人读"的参数正是本仓记过的那类假接口（`docs/PITFALLS.md` #30：
+ *     "接口摆在那里 ≠ 它被接上了"）。**没用的参数比没有参数更坏** ——
+ *     它会让下一个读代码的人以为存在一条静默通路。
  */
 async function hideHost(host: string): Promise<void> {
   const stored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
@@ -1802,6 +1851,34 @@ async function hideHost(host: string): Promise<void> {
   await chrome.storage.local.set({ [LOCAL_KEYS.hiddenHosts]: Array.from(hidden).sort() });
   lastSitesKey = ''; // 强制重渲染（hosts 没变，但这一行要消失）
   await loadSites();
+}
+
+/**
+ * ★★ v4.2.6：**撤销"已删除"标记** —— 没有它，"删除"就是一个单向陷阱。
+ *
+ * ## 缺陷形态（我在写 v4.2.6 时自查发现的）
+ *
+ * `hiddenHosts` **只加不减**（`hideHost` 只 `add`），而 `renderSites` 会跳过名单里的 host。
+ * ⇒ 用户删掉一个站点之后，**即使重新授权，它也永远不会再出现** ——
+ *   而"授权成功"是用户能表达"我要用它"的**最明确**信号。
+ *   ★ 用户点出的那个边界情况（"第一次添加该站点时，是没有创建账号的"）正走这条路：
+ *     先授权、后建账号 —— 如果先删过一次，这条路就被自己堵死了。
+ *
+ * ## 判据
+ *
+ * **凡"授权成功"的地方都必须解封**（两处：站点管理表单提交、卡片上的「授权」按钮）。
+ * 反过来：**只有"用户显式删除"才写这个名单** —— 别的地方一处都不该碰它。
+ * `tmp/verify-delete-site.mjs` 的 F 组断言"删掉 → 重新添加 → 它能回来"。
+ */
+async function unhideHost(host: string): Promise<void> {
+  const stored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
+  const hidden = new Set<string>((stored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? []);
+  if (!hidden.has(host)) {
+    return; // 不在名单里就一个字节都不写（稳态下 `ql:hiddenHosts` 的写入次数应为 0）
+  }
+  hidden.delete(host);
+  await chrome.storage.local.set({ [LOCAL_KEYS.hiddenHosts]: Array.from(hidden).sort() });
+  lastSitesKey = '';
 }
 
 /* ==================== 下拉填充（防闪烁：选项未变化不重建） ==================== */
@@ -1893,6 +1970,8 @@ siteForm.addEventListener('submit', (e) => {
       alert(`未完成授权：${host}`);
       return;
     }
+    // ★ v4.2.6：授权成功 ⇒ 解封（否则"删过这个站点"会让它永远加不回来）
+    await unhideHost(host);
     // 授权成功后再把名称落到云端。**失败不阻断**：授权已经生效，
     // 名只是显示信息，为它回滚一次成功的授权是本末倒置。
     try {
