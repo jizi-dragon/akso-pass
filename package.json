@@ -1,6 +1,6 @@
 {
   "name": "akso-pass",
-  "version": "4.2.8",
+  "version": "4.2.9",
   "private": true,
   "description": "Akso Pass：纯浏览器多账号并行（七平面隔离 + 账号轮盘）",
   "type": "module",

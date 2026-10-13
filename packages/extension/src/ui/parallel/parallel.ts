@@ -1198,12 +1198,44 @@ function patternOfHost(host: string): string {
  *   `isCloudHost` 一律返回 false ⇒ **过滤静默失效**，云端域名又回到列表里。
  *   判据：`tmp/verify-twotier.mjs` 的 A/B 组会断言云端 host 不出现在站点卡片与下拉里。
  */
+/**
+ * 剥掉 host 里的端口（`a.com:8443` → `a.com`）。
+ *
+ * ★ 为什么不 import `background/core/tab-rules.ts` 里那个 `hostNoPortOf`：
+ *   本仓的分层是 **`ui/` 下不 import background**（AGENTS §2、`parallel-store.ts` 的注释），
+ *   而那是**有意的** —— 破了它，UI 就会绕过消息层直接摸到后台实现。
+ *   ⇒ 四行的纯函数在这里重写一份，比破分层划算。
+ *   ★ 这里刻意不写带通配的目录字面量 —— 它含注释开始标记（PITFALLS #43）。
+ * ★ 判据：`verify-twotier.mjs` 的 B7b 组（云端 host 不得出现在站点卡片 / 站点下拉里），
+ *   它用的正是"云端带端口、授权不带端口"这个真实形态。
+ */
+function hostNoPort(host: string): string {
+  const i = host.indexOf(':');
+  return (i >= 0 ? host.slice(0, i) : host).trim().toLowerCase();
+}
+
+/**
+ * ★★ v4.2.9 修（用户实测"站点管理中仍然在显示云端域名"）：**比较必须剥掉端口**。
+ *
+ * 缺陷形态：云端地址带端口（`https://<host>:8443`），而 Chrome 给这个站点的授权模式
+ * **不带端口**（Chrome 的 host 权限模式里没有端口）：
+ *   · `new URL(cloudBaseUrl).host` ⇒ `<host>:8443`    ← 带端口
+ *   · `originToHost(<那条授权模式>)` ⇒ `<host>`        ← 不带
+ * ⇒ 两边**永不相等** ⇒ 这个函数**永远返回 false** ⇒ 云端域名照旧出现在站点管理里。
+ *
+ * ★ 这就是本仓那个"`originToHost` 会保留端口、而 DNR 的 `requestDomains` 不含端口"的
+ *   同一个坑（`tab-rules.ts` 的 `hostNoPortOf` 注释写着它）——
+ *   我上一版写这个函数时只想着"比对 host 而不是整串 origin"，**漏了端口这一维**。
+ *
+ * ★★ 本段注释里**不要**写出那两种带通配的字面量：它们的结尾正好是注释结束标记，
+ *   会让整个注释提前结束（PITFALLS #43 —— 我在这一轮里又犯了三次，都由判据当场抓住）。
+ */
 function isCloudHost(host: string): boolean {
   if (!cloudBaseUrl) {
     return false; // 还没拿到云端地址（未登录/离线）⇒ 什么都不排除
   }
   try {
-    return new URL(cloudBaseUrl).host.toLowerCase() === host.trim().toLowerCase();
+    return hostNoPort(new URL(cloudBaseUrl).host) === hostNoPort(host);
   } catch {
     return false; // baseUrl 形状异常时**不排除**（宁可多显示一行，也不要漏掉真实站点）
   }
@@ -1692,7 +1724,22 @@ function beginRename(
       return;
     }
     settled = true;
-    void loadSites(); // 复用既有入口重渲染（名字没变时它也会把编辑态还原）
+    /* ★★★ v4.2.9 修（用户实测"点击保存和取消都没有任何反馈，怀疑功能失效"）：
+     *
+     * 缺陷形态：这里原来只 `void loadSites()` —— 而**取消**时名字没有变化
+     * ⇒ `sitesKey` 与 `lastSitesKey` **完全相同** ⇒ `renderSites` **根本不执行**
+     * ⇒ 输入框与「保存 / 取消」**永远留在卡片上**，用户看到的就是"点了没反应"。
+     *
+     * ★ 对照：**保存**那条路径是对的（`renameSiteRow` 里有 `lastSitesKey = ''`），
+     *   所以**只有"取消"是坏的** —— 而这正是用户截图里的状态（两个按钮都还在）。
+     *   ⇒ 两条路径必须**用同一个机制**退出编辑态，否则迟早只有一条是对的。
+     *
+     * ★ 为什么不改成"直接删掉输入框、把按钮换回来"：那会多出**第二条渲染路径**，
+     *   而"两条路径迟早不一致"是本仓反复出现的形态（见二级导航那段注释）。
+     *   让缓存键失效走的是**唯一的渲染路径**。
+     */
+    lastSitesKey = '';
+    void loadSites();
   };
   const commit = async (): Promise<void> => {
     if (settled) {
@@ -2050,20 +2097,68 @@ siteForm.addEventListener('submit', (e) => {
      *   ⇒ 所以现在**先发请求、再 await**（`request` 返回 promise，同步发起即可保住手势），
      *     并且下面**实查一次 `contains()`** 来确认授权真的生效，而不是只信返回值。
      */
-    const grantedPromise = chrome.permissions
-      .request({ origins: [patternOfHost(host)] })
+    /* ★★★ v4.2.9（用户两次实测"根本没弹窗"）：**已被更宽授权覆盖时不要请求**。
+     *
+     * 现象：v4.2.7 把手势问题修掉之后**仍然不弹窗**。⇒ 说明拦路的不是手势，而是
+     * **Chrome 认为这个 host 已经拿到了**：内容脚本声明了 `matches: ["<all_urls>"]`，
+     * 于是每个站点都落在授权范围内 ⇒ 请求一个"已被覆盖"的 host 时 Chrome
+     * **不弹窗、直接 resolve**，而那个具体 origin **不会**出现在 `getAll().origins` 里。
+     *
+     * ★ 这与用户在 `chrome://extensions` 看到的一致：站点访问是「在特定网站上」，
+     *   而列表里只有那几条**扩展显式申请过**的 origin。
+     *   ★ 也与 PITFALLS #44 的实验一致：`<all_urls>` 派生自内容脚本的 matches。
+     *
+     * ⇒ 先 `contains()` 探一次：
+     *    · 已覆盖 ⇒ **不请求**，直接当作已授权往下走（"手动添加站点后它就能用"这个
+     *      诉求在两种情况下都成立，而不是只在弹窗那条路径上成立）；
+     *    · 未覆盖 ⇒ 才发请求（此时 Chrome 会弹窗）。
+     */
+    const before = await chrome.permissions
+      .contains({ origins: [patternOfHost(host)] })
       .catch(() => false);
 
-    const ok = await grantedPromise;
+    let ok = before;
+    if (before) {
+      log.info('站点 %s 已被更宽的授权覆盖（无需再请求浏览器授权）', host);
+    } else {
+      const grantedPromise = chrome.permissions
+        .request({ origins: [patternOfHost(host)] })
+        .catch(() => false);
+      ok = await grantedPromise;
+    }
+
     if (!ok) {
-      alert(`未完成授权：${host}\n\n（浏览器没有弹出授权窗，或你在窗里点了拒绝）`);
+      /* ★ 走到这里 = Chrome 既没覆盖、也没给弹窗（或用户拒了）。
+       *   ⇒ 给一条**能真正做完**的路：打开本扩展的设置页 + 把要填的模式复制到剪贴板。
+       *     用户实测过"在扩展管理页手动移除"那条路是通的 ⇒ "手动添加"同样通。 */
+      const pat = patternOfHost(host);
+      let copied = true;
+      try {
+        await navigator.clipboard.writeText(pat);
+      } catch {
+        copied = false; // 剪贴板不可用不算失败，下面照样把模式打在框里让用户手抄
+      }
+      if (
+        confirm(
+          `浏览器没有给出「${host}」的授权窗。\n\n`
+            + '可以手动加：在接下来的扩展设置页里找到「网站访问权限」→'
+            + '「在特定网站上」→「添加新网页」，粘贴这个模式：\n\n'
+            + `    ${pat}\n\n`
+            + (copied ? '★ 已经帮你复制到剪贴板。\n\n' : '（剪贴板不可用，请手动复制上面这行）\n\n')
+            + '现在打开扩展设置页吗？',
+        )
+      ) {
+        // `chrome://extensions/?id=…` 直接打开本扩展的详情页（那个开关就在那里）
+        await chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }).catch(() => undefined);
+      }
       return;
     }
-    // ★ 只信返回值不够：实查一次（这条在用户报"没弹窗"时是唯一能分辨真假的判据）
+    /* ★ 只信返回值不够，再实查一次。但**覆盖式授权**（`<all_urls>`）不会让具体 origin
+     * 出现在 `getAll()` 里 —— 那不是错误，也**不该弹框**拦住用户（他什么也做不了）。
+     * ⇒ 只留痕。 */
     const really = await chrome.permissions.contains({ origins: [patternOfHost(host)] }).catch(() => false);
     if (!really) {
-      alert(`授权没有生效：${host}\n\n请在 chrome://extensions 里把「网站访问权限」设为「在特定网站上」后重试。`);
-      return;
+      log.warn('站点 %s 的授权未落到具体 origin（多半被更宽的授权覆盖着）：授权实际可用', host);
     }
     if (parsed.scheme) {
       await writeSchemeHint(host, parsed.scheme);

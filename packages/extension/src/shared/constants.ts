@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.8';
+export const EXT_VERSION = '4.2.9';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';

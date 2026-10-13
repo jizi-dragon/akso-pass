@@ -550,6 +550,25 @@ export type CloudDeleteSiteResult =
   | { kind: 'missing' }
   | { kind: 'offline'; reason: string };
 
+/* ★★ v4.2.9：**这里不需要"剥端口"那种宽容匹配** —— 我一度加了它，随后自己删掉了。
+ *
+ * 经过（值得记，因为它是我这一轮的一个误判）：
+ *   我怀疑"云端记录的 host 带端口、而 UI 从 Chrome 权限清单拿到的 host 不带端口"
+ *   ⇒ 精确匹配失败 ⇒ 不发 DELETE。**实测不成立**：
+ *     · `hostOfUrl('https://ported.example:9443')` ⇒ `ported.example:9443`（保留端口）
+ *     · 而**站点列表的键也来自同一个 `hostOfUrl`** ⇒ 云端记录与 UI 传下来的 host
+ *       **本来就是同一个字符串**（都带端口）⇒ 精确匹配成立。
+ *     · `granted.example` 那条同理（两边都不带端口）。
+ *
+ * ★ 为什么删掉而不是留着"以防万一"：加了它之后**没有任何判据能变红**
+ *   （反证过：把回落删掉，H3 照样绿）⇒ 那是一段**永远不被走到**的代码。
+ *   本仓对这类东西的态度见 `docs/PITFALLS.md` #30（"接口摆在那里 ≠ 它被接上了"）：
+ *   **不做无判据的防御**，否则读代码的人会以为存在一种它其实防不住的形态。
+ *
+ * ★ 那用户报的"删除站点时云端不删"到底为什么？是**另一件事**（v4.2.7/v4.2.9 各修一半）：
+ *   ① `needsGrant` 那一态只 `hideHost` 就 `continue`，**根本走不到删云端的代码**（判据 E3 抓到）；
+ *   ② 站点列表把**云端自己**那条记录也算了进来（`isCloudHost` 漏了端口这一维）。
+ */
 async function deleteSiteOnCloud(host: string): Promise<CloudDeleteSiteResult> {
   const wanted = host.trim().toLowerCase();
   let id: string | undefined;
