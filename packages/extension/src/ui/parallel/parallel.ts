@@ -1823,22 +1823,32 @@ async function revokeHost(
   if (stillCovers || broadGrant) {
     blocked.add(displayHost);
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
-    if (stillCovers) {
-      alert(
-        `「${displayHost}」的浏览器授权**没能回收**，已在 Akso Pass 中停用（改头规则不再对它生效）。\n\n`
-          + `浏览器给出的原因：\n${errors.join('\n') || '(无明细)'}\n\n`
-          + `要彻底回收权限，只能手动改：chrome://extensions → 本扩展 → 详情 →`
-          + `「网站访问权限」→ 改成「点击扩展程序时」。\n`
-          + `★ 这一步只有你能做 —— 代码无法回收用户手动授予的权限。`,
-      );
-    } else {
-      alert(
-        `「${displayHost}」已在 Akso Pass 中停用（改头规则不再对它生效）。\n\n`
-          + `注意：本扩展当前还持有**宽泛授权**（${broadGrant}），`
-          + `所以浏览器层的权限没有、也无法针对单个站点回收。\n`
-          + `建议在 chrome://extensions → 本扩展 → 详情 →「网站访问权限」里收窄到具体站点。`,
-      );
-    }
+    /* ★★ v4.2.8（用户要求）：「可以，你别再弹"未能回收"的提示了。」
+     *
+     * 原来这里会弹一个模态框，把 Chrome 的原话（`You cannot remove required permissions`）
+     * 与"请到 chrome://extensions 手动移除"的操作指引都摊给用户。
+     *
+     * ★ 为什么去掉是对的（不是为了少一次点击）：
+     *   ① **那个框不改变任何结果** —— 用户看完点确定，权限照样还在。它只让人重读一遍
+     *      他已经知道的事（而且他上一轮就是**自己**发现要手动移除的）。
+     *   ② 它出现在**每一次**删除上，于是"删除"这个动作长期带着一个吓人的框 ⇒
+     *      用户会开始避免用它（规则 27 的同类：**噪音会让功能被绕开**）。
+     *   ③ 它的信息是**可自查的**，不该用模态框拦人：站点卡片上就写着「已停用」，
+     *      而权限现状随时能在 `chrome://extensions` 看到。
+     *
+     * ⇒ 现在：**功能照做**（进停用名单，改头规则立刻不再对它生效），
+     *   **痕迹留到通道里**（`log.warn`），**不打断用户**。
+     *   ★ 留痕不能省：否则"删了但权限还在"变成静默事实，而它是排障时要看的。
+     *   ★★ 这里**只能**用 `log.warn`：`diag()` 是 background 的函数
+     *     （`parallel-session.ts` 里的环形埋点），UI 上下文里没有它 ——
+     *     我第一版顺手写了 `diag(...)`，`tsc` 直接报 `Cannot find name 'diag'`。
+     *     UI 的日志经 `shared/log.ts` 进 `appLogs`，诊断包里同样看得到。
+     */
+    log.warn(
+      '站点 %s 的浏览器授权未能回收（已在本地停用；如需彻底移除请到 chrome://extensions）：%s',
+      displayHost,
+      errors.join(' | ') || (broadGrant ? `被宽泛授权 ${broadGrant} 覆盖` : '(无明细)'),
+    );
   } else if (blocked.has(displayHost)) {
     blocked.delete(displayHost);
     await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
