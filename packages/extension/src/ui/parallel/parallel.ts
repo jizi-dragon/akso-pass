@@ -1645,23 +1645,47 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
        *   后果不同，那就必须让用户在**点之前**看到差别（这正是前几轮反复栽的那类：
        *   承诺与效果不一致）。
        */
+      /* ★★★ v4.2.10（用户补的那条不变式）：
+       *   「一定要确保，账号中心中涉及的站点，一定要在站点管理中存在。」
+       *
+       * 缺陷形态（我上一版造的洞）：有账号时我**不删云端记录**，但仍然 `hideHost(host)`
+       * ⇒ 那一行从站点管理里**消失**，而账号中心还引用着它
+       * ⇒ **破坏了用户要的那条不变式**：账号引用的站点在站点管理里看不到，
+       *   于是用户既看不到它，也无法在界面上理解"为什么账号还在"。
+       *
+       * ⇒ 有账号时**什么都不做**（不撤销授权、不隐藏、不删云端）：
+       *   那一行留在原地，站点管理继续满足"账号引用的站点都在这里"。
+       *   ★ 这也让「删除」的语义在两种情况下都诚实：
+       *     零账号 ⇒ **真的删掉**（本机 + 云端）；
+       *     有账号 ⇒ **拒绝**，并说清要先删账号（而不是留下"半删"状态）。
+       */
       const hasAccounts = n > 0;
-      const lines = hasAccounts
-        ? [
-            `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效`,
-            '· 这一行会从站点管理里消失（以后要用，重新授权即可）',
-            `· **云端那条站点记录保留** —— 它下面还有 ${n} 个账号；`,
-            '  要连云端一起删，请先删掉这些账号（云端删站点会连带删账号）',
-          ]
-        : [
-            `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效`,
-            '· 这一行会从站点管理里消失（以后要用，重新授权即可）',
-            '· **云端那条站点记录也会一起删掉**（云端同站点下没有账号）',
-          ];
-      if (!confirm(`删除站点「${title}」？\n\n${lines.join('\n')}\n· 浏览器内已打开页签的登录态不受影响`)) {
+      if (hasAccounts) {
+        const go = confirm(
+          `「${title}」下面还有 ${n} 个账号，**不能删除**。\n\n`
+            + '原因：账号绑定在站点上，站点是它们的归属；先删站点会让那些账号失去归属。\n'
+            + '（云端删站点会**连带删掉**它下面的所有账号，那是不可恢复的。）\n\n'
+            + `要删除这个站点，请先到「并行账号」里删掉这 ${n} 个账号，再回来删站点。\n`
+            + '★ 站点这一行会**留在原处** —— 账号引用的站点必须在站点管理里看得到。\n\n'
+            + '现在去「并行账号」吗？',
+        );
+        if (go) {
+          showTab('accounts');
+        }
         return;
       }
-      void revokeHost(host, { deleteCloudRecord: !hasAccounts });
+      if (
+        !confirm(
+          `删除站点「${title}」？\n\n`
+            + `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
+            + '· 这一行会从站点管理里消失（以后要用，重新授权即可）\n'
+            + '· **云端那条站点记录也会一起删掉**（云端同站点下没有账号）\n'
+            + '· 浏览器内已打开页签的登录态不受影响',
+        )
+      ) {
+        return;
+      }
+      void revokeHost(host);
     });
     actions.appendChild(actionBtn);
 
@@ -1814,15 +1838,18 @@ async function renameSiteRow(
 }
 
 /**
- * 移除某 host 的全部授权（尽力而为）+ 本地停用兜底。
- * Chrome 的 permissions.remove 只能回收「可选授权」，且模式串必须与授予时一致；
+ * 移除某 host 的全部授权（尽力而为）+ 本地停用兜底 + **删掉云端那条站点记录**。
+ *
+ * Chrome 的 `permissions.remove` 只能回收「可选授权」，且模式串必须与授予时一致；
  * 若浏览器拒绝（required 权限 / 站点访问模式限制），则把该 host 写入本地停用名单，
  * 后台不再对其安装任何改头规则 —— 效果等价于功能层撤销，且不与 Chrome 的内部状态搏斗。
+ *
+ * ★★ v4.2.10：**去掉了 `opts.deleteCloudRecord` 参数**。它曾经取过两种值
+ *   （"有账号 ⇒ 留着云端记录"），而现在**有账号根本不会走到这里**（调用点先拦住）。
+ *   一个只有一个取值的可选参数是**假的灵活性** —— 读代码的人会以为存在另一条路径，
+ *   于是可能据此写出错的推断（本仓对"没人读的参数"有明确态度，见 PITFALLS #30）。
  */
-async function revokeHost(
-  displayHost: string,
-  opts: { deleteCloudRecord?: boolean } = {},
-): Promise<void> {
+async function revokeHost(displayHost: string): Promise<void> {
   const all = await chrome.permissions.getAll();
   const raws = (all.origins ?? []).filter((o) => originToHost(o) === displayHost);
   const errors: string[] = [];
@@ -1911,14 +1938,14 @@ async function revokeHost(
 
   /* ★★ v4.2.7：**云端那条站点记录**（用户要求「删除站点时云端也要删」）。
    *
-   * ★ 只在调用方说"这个站点没有账号"时才做 —— 服务端 `DELETE /api/sites/{id}`
-   *   会**级联删掉账号**，所以那个判断在调用点（那里才知道账号数）。
+   * ★★ v4.2.10：这里**不再有条件** —— 调用点已经保证"走到这里就说明这个站点没有账号"
+   *   （有账号会被拦在前面，且那一行**不会**被隐藏）。所以无条件删云端是对的。
    * ★ 结果**如实告知**，三种情况对用户的意思完全不同：
    *     `deleted` —— 云端也干净了（服务端还会回报级联删了几个账号，一并说出来）
    *     `missing` —— 云端本来就没有这条记录（可能是从没同步过）⇒ 也算干净
    *     `offline` —— **本机删了、云端还在** ⇒ 必须说，否则换台电脑它又出现
    */
-  if (opts.deleteCloudRecord) {
+  {
     try {
       const res = await send({ kind: 'par.deleteSite', host: displayHost });
       const r = res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
