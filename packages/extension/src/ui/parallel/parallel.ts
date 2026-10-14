@@ -1,4 +1,4 @@
-import type { ParallelAccount, ParallelAccountStatus } from '../../shared/types';
+import type { ParallelAccount, ParallelAccountStatus, ParBox } from '../../shared/types';
 import type {
   CloudDevicePoll,
   DataBackup,
@@ -52,6 +52,13 @@ const pUsername = document.getElementById('p-username') as HTMLInputElement;
 const pPassword = document.getElementById('p-password') as HTMLInputElement;
 
 const boxChipsEl = document.getElementById('box-chips') as HTMLDivElement;
+/* ★ 2026-10-13：「盒子管理」面板（与网页控制台同一套职能）。四个引用都在这里取，
+ *   取不到就是 null（`verify-log-redaction` 有一条"HTML 有 id、TS 零引用"的判据，
+ *   所以新加的 id **必须**在 TS 里有字面引用 —— 这也是它存在的意义）。 */
+const boxForm = document.getElementById('box-form') as HTMLFormElement;
+const bNameInput = document.getElementById('b-name') as HTMLInputElement;
+const bSiteSelect = document.getElementById('b-site') as HTMLSelectElement;
+const boxListEl = document.getElementById('box-list') as HTMLUListElement;
 const batchToggle = document.getElementById('batch-toggle') as HTMLButtonElement;
 const batchBar = document.getElementById('batch-bar') as HTMLDivElement;
 const selCount = document.getElementById('sel-count') as HTMLElement;
@@ -170,6 +177,9 @@ let lastSitesKey = '';
 let lastChipsKey = '';
 let lastHostOptions = '';
 let lastBoxOptions = '';
+/* ★ 2026-10-13：盒子管理台账与它的站点下拉（同一套"没变就别重建"的路子） */
+let lastLedgerKey = '';
+let lastBoxSiteKey = '';
 
 function setStat(id: string, value: string | number): void {
   const el = document.getElementById(id);
@@ -400,7 +410,24 @@ function renderBrowserAccounts(): void {
 
 /* ==================== 盒子 ==================== */
 
+/**
+ * 本地缓存的**禁用名单**（`ql:disabledBoxes`）。
+ *
+ * ★★ 2026-10-13 口径变更：它**不再是"用户的本地偏好"**，而是
+ *   **云端 `box.disabled` 的离线副本** —— 每次成功拉到 `/api/boxes` 时被覆盖
+ *   （见 `reconcileBoxesWithCloud`）。
+ *   ★ 为什么要写回 storage 而不是只留在内存：轮盘那两处
+ *     （`ui/wheel/wheel.ts` 与 `content/wheel-overlay.ts`）**各自直读 storage**，
+ *     它们不经过 background。把云端状态写进这三个键 = 那两处**一行都不用改**
+ *     就跟着变成云端口径（它们本来就是"离线也要能用"的实现）。
+ */
 let disabledBoxes: string[] = [];
+
+/**
+ * 云端的**盒子详情**（名字 → `ParBox`），只作渲染依据。
+ * ★ 离线时它是空的 ⇒ 渲染回落成"只画名字"（而不是把没有的字段显示成 0 / 空）。
+ */
+let boxDetail = new Map<string, ParBox>();
 
 async function loadBoxes(): Promise<void> {
   const stored = await chrome.storage.local.get([LOCAL_KEYS.boxList, LOCAL_KEYS.defaultBox, LOCAL_KEYS.disabledBoxes]);
@@ -418,7 +445,7 @@ async function loadBoxes(): Promise<void> {
 }
 
 /**
- * 用**云端的**盒子名单剪掉本地记住的多余项。
+ * 用**云端的**盒子名单剪掉本地记住的多余项，并把云端的权威状态写回缓存。
  *
  * ## 三条不能省的约束（每一条都对应一种"看起来正常但是坏的"）
  *
@@ -429,6 +456,17 @@ async function loadBoxes(): Promise<void> {
  *    暂时不在云端名单里。剪掉它，用户会看到**自己的账号挂在一个不存在的盒子上**。
  * 3. **只在真的变了时才写盘**：否则每次 `loadBoxes()` 都写一次 `chrome.storage.local`，
  *    而它在每次渲染里都会跑。
+ *
+ * ## ★★ 2026-10-13：这里同时是"**云端为权威**"的落地点
+ *
+ * 云端答复里除了名字还有 `disabled` / `autoDisabled` / 默认盒名 / 站点关联。
+ * 本函数把它们**写回那三个本地键**（`ql:defaultBox` / `ql:disabledBoxes` / `ql:boxes`），
+ * 于是：
+ *   · 面板里的灰态、轮盘跳过的页、`boxOf()` 的回落 —— 全部跟着云端走；
+ *   · 轮盘那两处**直读 storage 的独立实现**（小窗 + 页内浮层）一行都不用改；
+ *   · 用户**不能再**在本地"改默认盒名"或"改禁用态"——那两个动作现在都打到云端。
+ * ★ `boxDetail` 只活在内存里：离线时它为空，渲染回落成"只画名字"，
+ *   而不是把取不到的字段显示成 0 / 空串（那会被读成"这个盒子真的没有账号"）。
  */
 async function reconcileBoxesWithCloud(): Promise<void> {
   // ★ 类型来自 `shared/messages.ts`（本仓规则：协议单一定义，调用点不就地 cast）。
@@ -440,22 +478,51 @@ async function reconcileBoxesWithCloud(): Promise<void> {
   //   （离线不许剪、账号在用的不许剪），而它们跑起来要云端授权 ⇒ 不抽出来就
   //   永远验不到（本脚本的第一版正是因此只能 SKIP）。
   //   ★ 云端没答复时 `cloudNames` 传空数组，纯函数会**原样返回**。
+  const cloudNames = truth?.boxes.map((b) => b.name) ?? [];
   const out = reconcileBoxes({
     remembered: boxes.filter((b) => b !== defaultBox),
     fromAccounts: browserAccounts.map((a) => boxOf(a)),
-    cloudNames: truth?.names ?? [],
+    cloudNames,
     defaultBox,
   });
-  if (!out.changed) return;
 
-  boxes = out.boxes;
-  setStat('stat-boxes', boxes.length);
-  // ★ 只把"记住的"那一份写回：默认盒由 `ql:defaultBox` 表达，
-  //   账号在用的名字由账号数据自己表达 —— 别让它们互相污染。
-  const used = new Set(browserAccounts.map((a) => boxOf(a)));
-  await chrome.storage.local.set({
-    [LOCAL_KEYS.boxList]: boxes.filter((b) => b !== defaultBox && !used.has(b)),
-  });
+  const patch: Record<string, unknown> = {};
+
+  if (truth) {
+    boxDetail = new Map(truth.boxes.map((b) => [b.name, b]));
+
+    // ① 默认盒名 = **云端权威**（用户不能再改它：服务端把默认盒名做成了常量）
+    //    ★ 本地那个键从此只是缓存 —— 用户以前在本地改过的名字会在这时被纠回来，
+    //      而那个旧名字会作为"云端没有、账号也没用"的记住项被下面的对账剪掉。
+    const cloudDefault = truth.default.trim();
+    if (cloudDefault && cloudDefault !== defaultBox) {
+      defaultBox = cloudDefault;
+      patch[LOCAL_KEYS.defaultBox] = cloudDefault;
+    }
+
+    // ② 禁用态 = **云端权威**。★ 服务端的 `disabled` **已经含**了
+    //    "默认盒且为空"的派生态（`autoDisabled`）⇒ 不要再叠加本地派生，
+    //    否则会出现"服务端说启用、扩展判禁用"这第三套口径。
+    const cloudDisabled = truth.boxes.filter((b) => b.disabled).map((b) => b.name).sort();
+    const localDisabled = [...disabledBoxes].sort();
+    if (cloudDisabled.join('\u0000') !== localDisabled.join('\u0000')) {
+      disabledBoxes = cloudDisabled;
+      patch[LOCAL_KEYS.disabledBoxes] = cloudDisabled;
+    }
+  }
+
+  if (out.changed) {
+    boxes = out.boxes;
+    setStat('stat-boxes', boxes.length);
+    // ★ 只把"记住的"那一份写回：默认盒由 `ql:defaultBox` 表达，
+    //   账号在用的名字由账号数据自己表达 —— 别让它们互相污染。
+    const used = new Set(browserAccounts.map((a) => boxOf(a)));
+    patch[LOCAL_KEYS.boxList] = boxes.filter((b) => b !== defaultBox && !used.has(b));
+  }
+
+  if (Object.keys(patch).length) {
+    await chrome.storage.local.set(patch);
+  }
 }
 
 async function saveBoxes(): Promise<void> {
@@ -466,9 +533,21 @@ async function saveDisabled(): Promise<void> {
   await chrome.storage.local.set({ [LOCAL_KEYS.disabledBoxes]: disabledBoxes });
 }
 
-/** 盒子禁用态：手动禁用名单命中，或空默认盒自动禁用（轮盘不出现） */
+/**
+ * 盒子禁用态 = **云端那份名单**（`ql:disabledBoxes` 只是它的离线副本）。
+ *
+ * ★★ 2026-10-13 改口径：改前这里是 `本地名单 ∪ "默认盒且为空"` 的**本地派生**，
+ *   于是同一个事实有三个来源（云端 `disabled` / 本地名单 / 本地派生），
+ *   结果就是"在网页上禁用的盒子，扩展轮盘照旧会切到它"。
+ *   ⇒ 现在只读**一个**来源。**服务端的 `disabled` 已经把"默认盒且为空"折进去了**
+ *     （`box_public()` 的 `auto_off`），所以那条派生在这里是多余的 ——
+ *     留着它反而会出现"服务端说启用、扩展判禁用"的第三套口径。
+ *   ★ 离线时读到的是**上一次成功同步的云端状态**（那三个键由
+ *     `reconcileBoxesWithCloud` 写回）—— 这也正是轮盘那两处直读 storage 的实现
+ *     不用改一个字就能跟着变的原因。
+ */
 function isBoxDisabled(name: string): boolean {
-  return disabledBoxes.includes(name) || (name === defaultBox && !browserAccounts.some((a) => boxOf(a) === name));
+  return disabledBoxes.includes(name);
 }
 
 function renderBoxChips(): void {
@@ -509,43 +588,20 @@ function renderBoxChips(): void {
     n.className = 'chip-n';
     n.textContent = String(countOf(name));
     chip.append(label, n);
-    const rename = document.createElement('span');
-    rename.className = 'chip-act';
-    rename.textContent = '✎';
-    rename.addEventListener('click', (e) => {
-      e.stopPropagation();
-      void renameBoxFlow(name);
-    });
-    const toggle = document.createElement('span');
-    toggle.className = 'chip-act';
-    toggle.textContent = off ? '▶' : '⏸';
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      void toggleBoxFlow(name);
-    });
-    if (name === defaultBox) {
-      rename.title = '修改默认盒子名称（未归盒账号的归宿）';
-      chip.title = off
-        ? '默认盒子：当前为空，已自动禁用（轮盘不显示）'
-        : '默认盒子：未归盒账号的归宿，可重命名，不可删除';
-      chip.append(rename, toggle);
-      toggle.title = off ? '默认盒为空时自动禁用' : '默认盒为空时自动禁用（当前有账号）';
-      if (off) {
-        toggle.style.display = 'none';
-      }
-    } else {
-      rename.title = '重命名盒子（盒内账号随迁）';
-      toggle.title = off ? '启用盒子（恢复轮盘切换）' : '禁用盒子（轮盘跳过切换）';
-      const remove = document.createElement('span');
-      remove.className = 'chip-act chip-act-del';
-      remove.textContent = '✕';
-      remove.title = '删除盒子（可选：盒内账号一并删除或归入默认盒子）';
-      remove.addEventListener('click', (e) => {
-        e.stopPropagation();
-        void removeBoxFlow(name);
-      });
-      chip.append(rename, toggle, remove);
-    }
+    /* ★★★ 2026-10-13（用户要求，与网页控制台同步）：
+     *   这一排芯片**只做筛选**（点一下 = 只看这个盒子）。
+     *   改名 / 禁用 / 删除 三个行内操作与「＋ 新建盒子」**全部撤掉**，
+     *   它们搬进了「盒子管理」面板（`renderBoxLedger`）。
+     *
+     * ★ 为什么"禁用/启用"必须搬而不是删：它当时**只有芯片这一个入口**，
+     *   直接删等于让 `box.disabled` 在界面上再也碰不到 ——
+     *   而它还在影响轮盘翻页与网页控制台的显示。
+     *   判据见 `tools/verify/verify-boxmgmt.mjs` 的 R1/R2/R4。 */
+    const d = boxDetail.get(name);
+    chip.title = d
+      ? [name, d.isDefault ? '默认盒子' : '', off ? '已禁用（轮盘跳过）' : '', d.siteName ? `关联站点：${d.siteName}` : '']
+        .filter(Boolean).join(' · ')
+      : name;
     chip.addEventListener('click', () => {
       currentBox = name;
       lastListKey = '';
@@ -554,79 +610,307 @@ function renderBoxChips(): void {
     });
     boxChipsEl.append(chip);
   }
-
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'chip chip-add';
-  add.textContent = '＋ 新建盒子';
-  add.addEventListener('click', () => void createBox());
-  boxChipsEl.append(add);
 }
 
-async function createBox(): Promise<void> {
-  const name = prompt('新盒子名称（账号按盒子收纳，轮盘按盒子翻页）', '');
-  const trimmed = name?.trim();
-  if (!trimmed) {
+/* ==================== 盒子管理台账（2026-10-13） ==================== */
+
+/**
+ * ★★★ 新建盒子：**打到云端**，可顺带关联一个站点。
+ *
+ * ## 为什么这是一个真修复（而不是"把按钮挪个地方"）
+ *
+ * 改前 UI 上的「＋ 新建盒子」是**纯本地**的：`boxes.push(name)` + 写 `ql:boxes`。
+ * 而自 2026-10-12 起**云端名单是权威**（`reconcileBoxesWithCloud` 会剪掉
+ * "云端没有、账号也没用"的记住项）⇒ 那个盒子在下一次 `loadBoxes()` 就被剪掉：
+ * **建好了，然后自己消失**，而两边都不报错。
+ *
+ * ⇒ 现在走 `par.createBox`（→ `POST /api/boxes`），并且**先建盒、再关联站点**：
+ *   两步分开是因为它们的失败语义不同 —— 盒子建成了而关联失败时，
+ *   必须**如实说出来**（用户会以为盒子没建成、再点一次 ⇒ 建出两个）。
+ */
+async function createBoxFromForm(): Promise<void> {
+  const name = bNameInput.value.trim();
+  if (!name) {
+    alert('请填盒子名称。');
+    bNameInput.focus();
     return;
   }
-  if (boxes.includes(trimmed)) {
-    alert(`盒子「${trimmed}」已存在。`);
+  const res = await send({ kind: 'par.createBox', name });
+  if (!(res.kind === 'par.createBox' && res.result.ok)) {
+    alert(`新建失败：${res.kind === 'par.createBox' && !res.result.ok ? res.result.error : '无响应'}`);
     return;
   }
-  boxes.push(trimmed);
-  await saveBoxes();
+  const created = res.result.data.name;
+  bNameInput.value = '';
+  const siteId = bSiteSelect.value;
+  if (siteId) {
+    const bind = await send({ kind: 'par.bindBoxSite', name: created, siteId });
+    if (!(bind.kind === 'par.bindBoxSite' && bind.result.ok)) {
+      const why = bind.kind === 'par.bindBoxSite' && !bind.result.ok ? bind.result.error : '无响应';
+      alert(`盒子「${created}」已创建，但关联站点失败：${why}`);
+    }
+  }
   lastChipsKey = '';
   lastBoxOptions = '';
-  renderBoxChips();
-  fillBoxOptions();
+  await refreshAll();
 }
 
-/** 盒子重命名：普通盒 = 账号随迁（目标名已存在则并入）；默认盒 = 仅改显示名（未归盒账号语义不变） */
-/** 禁用/启用盒子：禁用后轮盘跳过该盒（盒内账号不受影响，管理页照常可用） */
+/**
+ * 渲染「盒子管理」台账：一行一个盒子。
+ *
+ * ★ 三件事都在**服务端算好**的字段上分叉，前端**不自己判** `name === defaultBox`
+ *   （判据只该有一处；两处迟早不一致 —— 这是 2026-10-13 那批改动的原话）：
+ *   · `deletable` / `renameable` / `bindable` —— 决定给不给入口
+ *     （默认盒三个都是 false ⇒ 只显示一个「固定」标记）；
+ *   · `disabled` —— 按钮文案是「禁用」还是「启用」；
+ *   · `siteId` / `siteName` —— 关联站点那一格。
+ *
+ * ★ 离线（`boxDetail` 为空）时**只画名字 + 账号数**，不画任何操作按钮：
+ *   操作都要打到云端，离线时它们必然失败 —— 给一个"点了报错"的按钮
+ *   与网页控制台那条纪律相反（宁可没有按钮）。
+ */
+function renderBoxLedger(): void {
+  const key = JSON.stringify([
+    boxes,
+    [...boxDetail.entries()].map(([k, v]) => [k, v.disabled, v.siteId, v.siteName, v.count, v.isDefault]),
+    disabledBoxes,
+  ]);
+  if (key === lastLedgerKey) {
+    return;
+  }
+  lastLedgerKey = key;
+  boxListEl.innerHTML = '';
+
+  if (!boxes.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '还没有盒子。';
+    boxListEl.append(li);
+    return;
+  }
+
+  for (const name of boxes) {
+    const d = boxDetail.get(name);
+    const off = isBoxDisabled(name);
+    const li = document.createElement('li');
+    li.className = 'site-card';
+    li.dataset.box = name;
+
+    const head = document.createElement('div');
+    head.className = 'site-card-head';
+    const alias = document.createElement('div');
+    alias.className = 'site-card-name';
+    alias.textContent = name;
+    head.append(alias);
+    if (d?.isDefault) {
+      const tag = document.createElement('span');
+      tag.className = 'site-card-off';
+      tag.textContent = '默认';
+      tag.title = '默认盒子：未归盒账号的归宿。它不能改名、不能删除、不能禁用，也不参与站点关联。';
+      head.append(tag);
+    }
+    if (off) {
+      const tag = document.createElement('span');
+      tag.className = 'site-card-off';
+      tag.textContent = d?.autoDisabled ? '自动禁用' : '已禁用';
+      tag.title = d?.autoDisabled
+        ? '默认盒为空时自动跳过（轮盘不显示这一页）'
+        : '轮盘跳过这个盒子（盒内账号不受影响）';
+      head.append(tag);
+    }
+
+    // 关联站点那一格：三种形态，判据只来自服务端的 `bindable` / `siteId`
+    const domain = document.createElement('div');
+    domain.className = 'site-card-domain';
+    domain.textContent = d
+      ? (d.siteId ? `关联站点：${d.siteName || d.siteId}` : (d.bindable ? '未关联站点' : '不参与站点关联'))
+      : '（离线：站点信息未同步）';
+
+    const count = document.createElement('div');
+    count.className = 'site-card-count';
+    const n = document.createElement('b');
+    n.textContent = String(d ? d.count : browserAccounts.filter((a) => boxOf(a) === name).length);
+    const unit = document.createElement('span');
+    unit.textContent = '个账号';
+    count.append(n, unit);
+
+    const actions = document.createElement('div');
+    actions.className = 'site-actions';
+    if (!d) {
+      // 离线：一个按钮都不给（见本函数注释最后一段）
+      const hint = document.createElement('span');
+      hint.className = 'muted';
+      hint.textContent = '离线';
+      actions.append(hint);
+    } else if (d.isDefault) {
+      const fixed = document.createElement('span');
+      fixed.className = 'muted';
+      fixed.textContent = '固定';
+      fixed.title = '默认盒不能改名 / 删除 / 禁用，也不参与站点关联';
+      actions.append(fixed);
+    } else {
+      if (d.renameable) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-ghost btn-sm';
+        btn.type = 'button';
+        btn.textContent = '改名';
+        btn.addEventListener('click', () => void renameBoxFlow(name));
+        actions.append(btn);
+      }
+      {
+        const btn = document.createElement('button');
+        btn.className = 'btn-ghost btn-sm';
+        btn.type = 'button';
+        btn.textContent = off ? '启用' : '禁用';
+        btn.title = off ? '恢复轮盘切换' : '轮盘跳过这个盒子';
+        btn.addEventListener('click', () => void toggleBoxFlow(name));
+        actions.append(btn);
+      }
+      if (d.bindable) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-ghost btn-sm';
+        btn.type = 'button';
+        btn.textContent = d.siteId ? '改绑' : '关联站点';
+        btn.title = '把这个盒子关联到一个站点（一个盒子只绑一个）';
+        btn.addEventListener('click', () => void bindSitePrompt(name));
+        actions.append(btn);
+        if (d.siteId) {
+          const un = document.createElement('button');
+          un.className = 'btn-ghost btn-sm';
+          un.type = 'button';
+          un.textContent = '解除关联';
+          un.addEventListener('click', () => void bindBoxSiteFlow(name, ''));
+          actions.append(un);
+        }
+      }
+      if (d.deletable) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-danger btn-sm';
+        btn.type = 'button';
+        btn.textContent = '删除';
+        btn.addEventListener('click', () => void removeBoxFlow(name));
+        actions.append(btn);
+      }
+    }
+
+    li.append(head, domain, count, actions);
+    boxListEl.append(li);
+  }
+}
+
+/** 「关联站点」：把站点清单编号让用户选（与「移入盒子」弹窗同一套路子，避免新做一个弹窗） */
+function bindSitePrompt(name: string): void {
+  const usable = cloudSites;
+  if (!usable.length) {
+    alert('还没有可关联的站点 —— 先在「站点管理」里添加并授权一个站点。');
+    return;
+  }
+  const lines = usable.map((s, i) => `${i + 1}. ${s.displayName}（${s.host}）`).join('\n');
+  const cur = boxDetail.get(name)?.siteId ?? '';
+  const ans = prompt(
+    `把盒子「${name}」关联到哪个站点？输入序号：\n\n${lines}`,
+    cur ? String(Math.max(1, usable.findIndex((s) => s.id === cur) + 1)) : '',
+  );
+  if (ans === null) {
+    return;
+  }
+  const idx = Number.parseInt(ans.trim(), 10);
+  if (!Number.isInteger(idx) || idx < 1 || idx > usable.length) {
+    alert('序号不在范围内。');
+    return;
+  }
+  void bindBoxSiteFlow(name, usable[idx - 1].id);
+}
+
+/**
+ * 新建盒子表单里那个站点下拉（"不关联" + 每个可关联的站点）。
+ *
+ * ★ 站点来源是**云端站点表**（`cloudSites`，含 `id`）而不是浏览器授权清单 ——
+ *   服务端按 **id** 认站点（`POST /api/boxes/bind-site` 收 `siteId`）。
+ */
+function fillBoxSiteOptions(): void {
+  const usable = cloudSites;
+  const key = usable.map((s) => `${s.id}:${s.displayName}`).join('|');
+  if (key === lastBoxSiteKey) {
+    return;
+  }
+  lastBoxSiteKey = key;
+  const keep = bSiteSelect.value;
+  bSiteSelect.innerHTML = '';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '不关联站点';
+  bSiteSelect.append(none);
+  for (const s of usable) {
+    const op = document.createElement('option');
+    op.value = s.id;
+    op.textContent = s.displayName;
+    bSiteSelect.append(op);
+  }
+  if (keep && usable.some((s) => s.id === keep)) {
+    bSiteSelect.value = keep;
+  }
+}
+
+/**
+ * 禁用 / 启用盒子：**打到云端**（服务端是权威），然后从云端重拉一遍。
+ *
+ * ★★ 2026-10-13 改口径：改前这个函数**纯本地**（只翻转 `ql:disabledBoxes`），
+ *   而云端 `box.disabled` 从不读也不写 ⇒ 同一个事实两个来源：
+ *   在网页上禁用的盒子，扩展轮盘照旧会切到它；反之亦然。
+ *   ⇒ 现在它调 `POST /api/boxes/toggle`，**离线时会失败并报出来** ——
+ *     这是刻意的：一个"离线也能改"的开关会让用户以为改成功了，
+ *     而云端并不知道（下次同步就被覆盖回去，看起来像"改了没生效"）。
+ * ★ 默认盒不给切换（服务端 400，`cloud-store` 里也先拦了一次）——
+ *   它只随"是否为空"自动禁用。
+ * ★ 不再自己改内存里的 `disabledBoxes`：`refreshAll()` → `reconcileBoxesWithCloud()`
+ *   会按云端结果重建它。少一处写、就少一处会漂的真相。
+ */
 async function toggleBoxFlow(name: string): Promise<void> {
-  if (name === defaultBox) {
-    return; // 默认盒只随「是否为空」自动禁用
+  const res = await send({ kind: 'par.toggleBox', name });
+  if (!(res.kind === 'par.toggleBox' && res.result.ok)) {
+    alert(`切换失败：${res.kind === 'par.toggleBox' && !res.result.ok ? res.result.error : '无响应'}`);
+    return;
   }
-  if (disabledBoxes.includes(name)) {
-    disabledBoxes = disabledBoxes.filter((b) => b !== name);
-  } else {
-    disabledBoxes.push(name);
-  }
-  await saveDisabled();
   lastChipsKey = '';
+  lastBoxOptions = '';
   lastListKey = '';
   await refreshAll();
 }
 
-async function renameBoxFlow(from: string): Promise<void> {
-  const isDefault = from === defaultBox;
-  const input = prompt(
-    isDefault
-      ? `修改默认盒子名称（当前「${from}」）。未归盒账号将显示在新名称下。`
-      : `重命名盒子「${from}」（盒内账号随迁）`,
-    from,
-  );
-  const to = input?.trim();
-  if (!to || to === from) {
+/**
+ * 关联 / 解除关联站点（服务端 2026-10-13 新增的能力）。
+ *
+ * `siteId` 传空串 = 解除关联。默认盒不参与（`bindable === false`，UI 不给入口）。
+ */
+async function bindBoxSiteFlow(name: string, siteId: string): Promise<void> {
+  const res = await send({ kind: 'par.bindBoxSite', name, siteId });
+  if (!(res.kind === 'par.bindBoxSite' && res.result.ok)) {
+    alert(`关联失败：${res.kind === 'par.bindBoxSite' && !res.result.ok ? res.result.error : '无响应'}`);
     return;
   }
-  if (isDefault) {
-    if (boxes.includes(to)) {
-      alert(`盒子「${to}」已存在，默认盒子不能与其它盒子重名。`);
-      return;
-    }
-    defaultBox = to;
-    await chrome.storage.local.set({ [LOCAL_KEYS.defaultBox]: to });
-    boxes = boxes.map((b) => (b === from ? to : b));
-    disabledBoxes = disabledBoxes.map((b) => (b === from ? to : b));
-    await saveDisabled();
-    if (currentBox === from) {
-      currentBox = to;
-    }
-    lastChipsKey = '';
-    lastBoxOptions = '';
-    lastListKey = '';
-    await refreshAll();
+  await refreshAll();
+}
+
+async function renameBoxFlow(from: string): Promise<void> {
+  /* ★★ 2026-10-13：**默认盒不能改名**（服务端从今天起对它回 400）。
+   *
+   * 改前这里有一条 `isDefault` 分支：**纯本地**把 `ql:defaultBox` 改掉。
+   * 那条路的坏处比"失败"更隐蔽 —— 它**看起来成功了**（界面上的名字变了），
+   * 而服务端的默认盒名仍是常量「默认盒子」⇒ 上传/下载两个方向的翻译口径
+   * （`uploadBoxName` / `toAccount`：名字等于默认盒名 ⇒ 翻译成空串）
+   * 从此对不上，账号会被归到一个**字面量同名的新盒**里。
+   *
+   * ⇒ 入口在台账里按 `renameable` 关掉（默认盒不给 ✎），这里再拦一层，
+   *   保证任何调用路径都拿到一句能读懂的话。
+   */
+  if (from === defaultBox || boxDetail.get(from)?.isDefault) {
+    alert('默认盒子不能改名 —— 它是固定的默认盒（只能往里面放账号）。');
+    return;
+  }
+  const input = prompt(`重命名盒子「${from}」（盒内账号随迁）`, from);
+  const to = input?.trim();
+  if (!to || to === from) {
     return;
   }
   if (boxes.includes(to) && !confirm(`盒子「${to}」已存在，将把「${from}」中的账号并入其中。继续？`)) {
@@ -637,10 +921,11 @@ async function renameBoxFlow(from: string): Promise<void> {
     alert(`重命名失败：${res.kind === 'par.renameBox' && !res.result.ok ? res.result.error : '无响应'}`);
     return;
   }
-  boxes = [...new Set(boxes.map((b) => (b === from ? to : b)))];
-  disabledBoxes = disabledBoxes.map((b) => (b === from ? to : b));
-  await saveBoxes();
-  await saveDisabled();
+  /* ★★ 2026-10-13：这里**不再自己改 `boxes` / `disabledBoxes` / 写 storage**。
+   *   理由与 `toggleBoxFlow` 同：改名是**云端**的动作，而本地那几份只是缓存 ——
+   *   自己再改一遍等于把"同一事实两处声明"重新引进来（而且改名可能**触发合并**，
+   *   本地那份算出来的结果与服务端不一定一样）。
+   *   ⇒ 交给 `refreshAll()` → `reconcileBoxesWithCloud()` 按云端结果重建。 */
   if (currentBox === from) {
     currentBox = to;
   }
@@ -1328,25 +1613,33 @@ async function loadSites(): Promise<void> {
  */
 let siteNames: Record<string, { name: string; displayName: string }> | null = null;
 
+/**
+ * 云端站点**全量**（含 `id`）—— 专门给盒子的「关联站点」用。
+ * ★ 为什么不复用 `siteNames`：那份按 **host** 索引、而且**丢掉了 id**，
+ *   而服务端认站点用的是 `siteId`（`POST /api/boxes/bind-site` 收 `siteId`）。
+ *   往 `siteNames` 里塞 id 会让"站点管理"那一栏的每一行都多带一个它不用的字段，
+ *   而多带的字段迟早会被顺手用上（那处就成了新的耦合点）。
+ */
+let cloudSites: { id: string; host: string; name: string; displayName: string }[] = [];
+
 async function refreshSiteNames(): Promise<boolean> {
   try {
     const res = await send({ kind: 'par.sites' });
     if (res.kind === 'par.sites' && res.result.ok) {
       const rows = res.result.data;
+      // ★ 云端自己那条站点记录也过滤掉（v4.2.4）：它永远删不掉，
+      //   也不该出现在"可关联的站点"下拉里。
+      const usable = (rows ?? []).filter((r) => !isCloudHost(r.host));
+      cloudSites = usable.map((r) => ({ id: r.id, host: r.host, name: r.name, displayName: r.displayName }));
       siteNames = rows
-        ? Object.fromEntries(
-            rows
-              // ★ v4.2.4：云端自己那条站点记录也过滤掉 —— 否则"缺授权"判定会
-              //   因为云端 host 有权限而算错，且它的名字会泄漏到站点下拉里
-              .filter((r) => !isCloudHost(r.host))
-              .map((r) => [r.host, { name: r.name, displayName: r.displayName }]),
-          )
+        ? Object.fromEntries(usable.map((r) => [r.host, { name: r.name, displayName: r.displayName }]))
         : null;
       return siteNames !== null;
     }
   } catch {
     // 消息层失败按"没拿到"处理（与离线同一条路）
   }
+  cloudSites = [];
   siteNames = null;
   return false;
 }
@@ -2099,6 +2392,15 @@ async function fillBoxOptions(): Promise<void> {
 
 /* ==================== 站点授权表单 ==================== */
 
+/* ★★ 2026-10-13（用户要求）：盒子管理面板的新建表单。
+ *   与站点表单同一形状（`submit` + `preventDefault`），但有一条实质差别：
+ *   **它打到云端**（`par.createBox`）—— 纯本地建盒会被对账剪掉，
+ *   表现是"建好了，然后自己消失"（见 `createBoxFromForm` 的注释）。 */
+boxForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  void createBoxFromForm();
+});
+
 siteForm.addEventListener('submit', (e) => {
   e.preventDefault();
   // v3.10.9：支持粘贴完整 URL——scheme 解析存 hint（账号创建时采用），host 用于授权
@@ -2220,7 +2522,7 @@ siteForm.addEventListener('submit', (e) => {
  * ★ `hidden` 属性与 `.is-active` **同时**维护：前者给无障碍（读屏会跳过隐藏面板），
  *   后者给样式。只留一个的话，另一个迟早被误当成"没用"而删掉。
  */
-const TAB_NAMES = ['accounts', 'add', 'sites', 'favorites'] as const;
+const TAB_NAMES = ['accounts', 'add', 'sites', 'boxes', 'favorites'] as const;
 type TabName = (typeof TAB_NAMES)[number];
 
 /** 面板元素：**逐个 `getElementById` 取**，而不是 `querySelector('.pane')` 扫一遍。
@@ -2237,6 +2539,7 @@ const PANE_ELS: Record<TabName, HTMLElement | null> = {
   accounts: document.getElementById('pane-accounts'),
   add: document.getElementById('pane-add'),
   sites: document.getElementById('pane-sites'),
+  boxes: document.getElementById('pane-boxes'),
   favorites: document.getElementById('pane-favorites'),
 };
 
@@ -2924,6 +3227,8 @@ async function refreshAll(): Promise<void> {
   await loadBrowserAccounts();
   await loadSites();
   renderBoxChips();
+  renderBoxLedger();
+  fillBoxSiteOptions();
   await fillSiteOptions();
   await fillBoxOptions();
   syncBatchBar();

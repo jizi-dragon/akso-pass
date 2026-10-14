@@ -137,7 +137,7 @@ import {
 import { getOfflineStatus, parallelStore } from './core/parallel-store';
 import {
   CLOUD_DEFAULT_BASE_URL,
-  fetchCloudBoxNames,
+  fetchCloudBoxes,
   getCloudAuth,
   invalidateCloudCache,
   setCloudAuth,
@@ -338,9 +338,13 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
      * ★ 走消息而不是让 UI 直接 import `cloud-store`：实测 `src/ui/` 目录下
      *   没有任何直接 import background 的先例，那层分工是清楚的（AGENTS §2）。
      *   ★ 这里刻意不写带通配的目录写法 —— 它含注释开始标记，会让
-     *     "块注释配平"判据误判（见 PITFALLS #43）。 */
+     *     "块注释配平"判据误判（见 PITFALLS #43）。
+     * ★★ 2026-10-13：载荷从"只有盒名"升级为**盒子对象数组**
+     *   （`ParBox`：含 `disabled` / `count` / `deletable` / `renameable` /
+     *   `bindable` / `siteId` / `siteName`）。只给名字装不下这些，
+     *   而 UI 需要它们画灰态、决定给不给按钮 —— 见 `ParBox` 的注释。 */
     case 'par.boxes': {
-      const r = await tryRun(() => fetchCloudBoxNames(true));
+      const r = await tryRun(() => fetchCloudBoxes(true));
       return { kind: 'par.boxes', result: r };
     }
     /* ---- 站点的**自定义名称**（v4.2.1）----
@@ -423,6 +427,24 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       const r = await tryRun(async () => ({ moved: await parallelStore.clearBox(req.name) }));
       return { kind: 'par.deleteBox', result: r };
     }
+    /* ---- 盒子的三个写动作（2026-10-13，见 `messages.ts` 里各自的注释）----
+     * ★ 三条都是**打到云端**的：盒子名单 / 禁用态 / 站点关联的权威都在服务端，
+     *   本地那三个键（`ql:boxes` / `ql:defaultBox` / `ql:disabledBoxes`）
+     *   从此只是**离线缓存**（由 UI 在成功拉取后写回）。
+     * ★ `tryRun` 会把服务端的 400/409 变成 `result.ok === false` 的可读错误 ——
+     *   而"默认盒不能改名/禁用"这类**本地也能判**的，cloud-store 里已经先拦了一次。 */
+    case 'par.createBox': {
+      const r = await tryRun(() => parallelStore.createBox(req.name));
+      return { kind: 'par.createBox', result: r };
+    }
+    case 'par.toggleBox': {
+      const r = await tryRun(() => parallelStore.toggleBox(req.name));
+      return { kind: 'par.toggleBox', result: r };
+    }
+    case 'par.bindBoxSite': {
+      const r = await tryRun(() => parallelStore.bindBoxSite(req.name, req.siteId));
+      return { kind: 'par.bindBoxSite', result: r };
+    }
     case 'par.update': {
       const r = await tryRun(async () => {
         const account = await parallelStore.updateTabName(req.id, req.patch.tabName ?? '');
@@ -451,6 +473,12 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
           version: 1 as const,
           exportedAt: new Date().toISOString(),
           sites: grants.map((g) => g.host),
+          /* ★★ 2026-10-13 口径变更：这三个键**不再代表"用户的偏好"**，
+           *   而是**云端状态的离线缓存**（云端的 `box.disabled` / 默认盒名是权威）。
+           *   ⇒ 仍然导出（老备份能原样读回、离线首次启动也有东西可用），
+           *     但要清楚：**下一次成功拉到 `/api/boxes` 时它会按云端覆盖**。
+           *   ★ 所以"导入备份"不能用来把盒子的禁用态改回去 —— 那只是本机缓存。
+           *     判据见 `tools/verify/verify-boxsync.mjs` 的第 ⑥ 组。 */
           boxes: {
             default: (stored[LOCAL_KEYS.defaultBox] as string | undefined)?.trim() || undefined,
             remembered: (stored[LOCAL_KEYS.boxList] as string[] | undefined) ?? [],

@@ -129,6 +129,12 @@
         <button class="tab is-active" type="button" role="tab" data-tab="accounts" aria-selected="true">并行账号</button>
         <button class="tab" type="button" role="tab" data-tab="add" aria-selected="false">添加账号</button>
         <button class="tab" type="button" role="tab" data-tab="sites" aria-selected="false">站点管理</button>
+        <!-- ★★★ 2026-10-13（用户要求）：与网页控制台同步 —— 「盒子管理」单独一个面板。
+             用户原话：「在账号处，就可以不需要编辑，更名和删除的功能了」
+             ⇒ 芯片那一排**只做筛选**，盒子的增删改/禁用/关联站点全部收进这里。
+             ★ 它同时补上了一个**功能缺口**：「禁用/启用」此前只有芯片那一个入口，
+               把芯片的行内操作去掉而不搬过来，等于让 `box.disabled` 在界面上消失。 -->
+        <button class="tab" type="button" role="tab" data-tab="boxes" aria-selected="false">盒子管理</button>
         <button class="tab" type="button" role="tab" data-tab="favorites" aria-selected="false">常用页面</button>
       </nav>
 
@@ -223,7 +229,24 @@
         <ul id="site-list" class="plain site-list"></ul>
       </section>
 
-      <!-- ============ 面板 4：常用页面（书签轮盘 Alt+1 的数据源） ============ -->
+      <!-- ============ 面板 4：盒子管理（2026-10-13，与网页控制台同一套职能） ============ -->
+      <section class="card block pane" id="pane-boxes" role="tabpanel" aria-label="盒子管理" hidden>
+        <div class="block-head">
+          <h2>盒子管理</h2>
+        </div>
+        <p class="desc">盒子用来把账号分组，轮盘按盒子翻页。每个盒子可以<b>关联一个站点</b>；
+          <b>默认盒子</b>是兜底盒 —— 它不能改名、不能删除、不能禁用，也不参与站点关联。</p>
+        <form id="box-form" class="site-grid">
+          <!-- ★ 顺序与站点那栏一致：先必需的身份（名字），再可选的关系（站点）。 -->
+          <input id="b-name" placeholder="盒子名称" autocomplete="off" maxlength="60" />
+          <select id="b-site" title="可选：新建时就把这个盒子关联到一个站点"></select>
+          <button class="btn-ghost" type="submit">新建盒子</button>
+        </form>
+        <p class="hint">盒子的名字、禁用态与站点关联都以<b>云端</b>为准；离线时显示的是上一次同步到的状态。</p>
+        <ul id="box-list" class="plain site-list"></ul>
+      </section>
+
+      <!-- ============ 面板 5：常用页面（书签轮盘 Alt+1 的数据源） ============ -->
       <section class="card block pane" id="pane-favorites" role="tabpanel" aria-label="常用页面" hidden>
         <div class="block-head">
           <h2>常用页面</h2>

@@ -46,6 +46,42 @@ export interface ParallelAccountStatus {
   enforcementOff?: boolean;
 }
 
+/**
+ * ★★ 云端权威的盒子（2026-10-13）。
+ *
+ * 服务端 `GET /api/boxes` 从 2026-10-12/13 起给出这一整套字段。**改前扩展只读 4 个**
+ * （`name` / `isDefault` / `disabled` / `count`），而且后三个读了就丢 ——
+ * 于是"网页上禁用了一个盒子，扩展轮盘照旧会切到它"这类**两边口径不一致**全都无从发现。
+ *
+ * ★ 为什么这份形状放在 `shared/`：它是 **SW ⇄ UI 的协议载荷**（`par.boxes`），
+ *   而本仓规则是"协议单一定义、调用点不就地写对象字面量"。
+ *
+ * ★★ 三个 `*able` 由**服务端算好**（默认盒三个都是 `false`）。
+ *   UI **不要**自己判 `name === defaultBox` —— 判据只该有一处，
+ *   而"同一事实两处判断，迟早不一致"正是本仓反复记过的那一类。
+ */
+export interface ParBox {
+  name: string;
+  isDefault: boolean;
+  /** 用户手动禁用。★ 云端口径：它**已经含**了 `autoDisabled` 那一半。 */
+  disabled: boolean;
+  /**
+   * 派生态：默认盒且盒内没有账号。
+   * ★ 只用来**解释**为什么禁用（文案），**不要**拿它自己算禁用 ——
+   *   那会和 `disabled` 叠加成第三套口径。
+   */
+  autoDisabled: boolean;
+  /** 盒内账号数（未归盒的账号计入默认盒）。 */
+  count: number;
+  renameable: boolean;
+  deletable: boolean;
+  bindable: boolean;
+  /** 关联站点（空串 = 未关联）。默认盒**永远**是空串。 */
+  siteId: string;
+  /** 站点名（给人看）。站点被删之后，服务端会把它清成空串。 */
+  siteName: string;
+}
+
 /** ISOLATED 桥 → background 的上行载荷 */
 export type BridgeUpPayload =
   | { op: 'hello'; url: string }

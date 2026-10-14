@@ -37,6 +37,28 @@ const ctx = await chromium.launchPersistentContext(profile, {
 const page = await ctx.newPage();
 await page.goto(`chrome-extension://${extId}/ui/parallel/parallel.html`);
 await page.waitForTimeout(800);
+
+/* ★★ 2026-10-13：**会话闸门**。
+ *
+ * 本脚本整篇都建立在"能造账号"之上，而它用的是 `par.create`（打到云端）。
+ * v3.18（2026-10-09）废除本地数据源之后，**没有云端会话时那些 create 全部失败**
+ * ⇒ 脚本会一路走到 `wheelSnap()` 才崩（`document.querySelector('.sector-svg')` 为 null，
+ * 因为一个账号都没有）。
+ *
+ * ★ 为什么必须显式说清楚：那次崩溃**看起来像"这次改动弄坏了它"** ——
+ *   而它与改动无关。本仓反复记的那条"归因错误比失败更贵"说的就是这个形状。
+ * ⇒ 现在没会话时**明确 SKIP 并退出 0**，而不是给一个看不懂的 TypeError。
+ *   （`verify-boxmgmt` / `verify-defbox` 已经重写成"结构段永远跑"的双段式，
+ *     本脚本没有不依赖会话的部分，所以整篇 SKIP。）
+ */
+const cloudState = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'cloud.state' }).catch(() => null));
+if (!(cloudState?.result?.ok && cloudState.result.data?.authorized)) {
+  console.log('SKIP v310 需要云端会话（本脚本靠 par.create 造账号，而账号现在只存在于云端）');
+  console.log('     先在管理页点「重新登录」，再跑本脚本。');
+  await ctx.close();
+  process.exit(0);
+}
+
 const diag = () => page.evaluate(() => chrome.runtime.sendMessage({ kind: 'ql.diag' }));
 const bindingsOf = async () => (await diag())?.result?.data?.parallel?.bindings ?? [];
 const listAccounts = async () => (await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.list' })))?.result?.data ?? [];

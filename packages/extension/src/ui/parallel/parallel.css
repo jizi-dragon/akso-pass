@@ -56,34 +56,14 @@
   background: rgba(255, 255, 255, 0.22);
   color: #fff;
 }
-.chip-add {
-  border-style: dashed;
-  color: var(--sb-text-secondary);
-}
-/* ---- 盒子管理（重命名/删除，悬停浮现） ---- */
-.chip .chip-act {
-  display: none;
-  margin-left: -1px;
-  padding: 1px 4px;
-  border-radius: 6px;
-  font-size: 10.5px;
-  line-height: 1.2;
-  opacity: 0.8;
-}
-.chip:hover .chip-act,
-.chip.active .chip-act {
-  display: inline-block;
-}
-.chip .chip-act:hover {
-  opacity: 1;
-  background: rgba(30, 111, 255, 0.16);
-}
-.chip.active .chip-act:hover {
-  background: rgba(255, 255, 255, 0.26);
-}
-.chip .chip-act.chip-act-del:hover {
-  background: rgba(220, 38, 38, 0.2);
-}
+/* ★★ 2026-10-13（用户要求，与网页控制台同步）：
+   这里原先有 `.chip-add`（虚线边框的「＋ 新建盒子」）与一组 `.chip-act`
+   （悬停浮现的 改名 / 禁用 / 删除 三个行内图标）—— **两组都已删除**：
+   账号页那排芯片现在**只做筛选**，盒子的增删改/禁用/关联站点
+   全部搬进了「盒子管理」面板（`#pane-boxes`，用 `.site-card` + `.site-actions` 那套）。
+   ★ 为什么 CSS 也要跟着删：留着它就是**死样式** —— 与网页控制台那边
+     `test_no_dead_css_classes` 要抓的是同一类东西（"定义了但没人用"），
+     而它比死代码更坏：下一个读代码的人会以为那个功能还在。 */
 .chip.chip-off > span:first-child {
   text-decoration: line-through;
 }

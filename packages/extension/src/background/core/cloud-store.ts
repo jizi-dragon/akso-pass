@@ -1,5 +1,5 @@
 import { LOCAL_KEYS, SESSION_COLORS } from '../../shared/constants';
-import type { ParallelAccount } from '../../shared/types';
+import type { ParallelAccount, ParBox } from '../../shared/types';
 import { isOfflineError, OfflineError } from './offline';
 // v4.2.1：站点显示名从地址推导（用户要求：未填名称时从地址截取，如 tonbridge-config）
 import { deriveSiteNameFromHost } from '../../shared/snake-case';
@@ -313,16 +313,18 @@ interface CloudSite {
   displayName: string;
 }
 
-interface CloudBox {
-  name: string;
-  isDefault: boolean;
-  disabled: boolean;
-  count: number;
-}
+/*
+ * ★ 2026-10-13：这里原先有一个**本地的** `CloudBox` 接口（只有 4 个字段：
+ *   `name` / `isDefault` / `disabled` / `count`）。它现在**删掉了** ——
+ *   盒子形状只有一个来源：`shared/types.ts` 的 `ParBox`（也就是 `par.boxes` 的协议载荷）。
+ *   ★ 两处各写一份形状的后果是"改了一处、另一处不报错"：
+ *   服务端 2026-10-13 加了 `deletable` / `renameable` / `bindable` / `siteId` / `siteName`，
+ *   而扩展这边**连字段都没有** ⇒ UI 只能自己另造一套口径（本地禁用名单就是这么来的）。
+ */
 
 let accountCache: { at: number; rows: Record<string, unknown>[] } | null = null;
 let siteCache: { at: number; rows: CloudSite[] } | null = null;
-let boxCache: { at: number; rows: CloudBox[]; default: string } | null = null;
+let boxCache: { at: number; rows: ParBox[]; default: string } | null = null;
 
 /** 写操作后调用：下一次读一律重拉（时间线以服务端为准，不做本地推测） */
 export function invalidateCloudCache(): void {
@@ -367,18 +369,33 @@ async function loadSites(force = false): Promise<CloudSite[]> {
   return rows;
 }
 
-async function loadBoxes(force = false): Promise<{ rows: CloudBox[]; default: string }> {
+async function loadBoxes(force = false): Promise<{ rows: ParBox[]; default: string }> {
   if (!force && boxCache && Date.now() - boxCache.at < META_TTL_MS) {
     return boxCache;
   }
   const data = asRecord(await cloudRequest<unknown>('/api/boxes'));
+  /*
+   * ★★ 2026-10-13：**服务端算了什么就照抄什么**，一个字段都别再丢。
+   *
+   * 改前这里只映射 `name` / `isDefault` / `disabled` / `count`，而 `disabled`
+   * 与 `count` 在被 `fetchCloudBoxNames()` 拍平成 `names[]` 之后就没人再读了。
+   * 三个 `*able` 是服务端的判定（默认盒三个都 false）——
+   * UI 拿它决定"给不给入口"，**不要**自己判 `name === defaultBox`：
+   * 判据只该有一处，而"能点但一定失败"的按钮比没有按钮更糟。
+   */
   const rows = pickArray(data, 'boxes').map((raw) => {
     const rec = asRecord(raw);
     return {
       name: str(rec.name),
       isDefault: rec.isDefault === true,
       disabled: rec.disabled === true,
+      autoDisabled: rec.autoDisabled === true,
       count: num(rec.count) ?? 0,
+      renameable: rec.renameable !== false,
+      deletable: rec.deletable !== false,
+      bindable: rec.bindable !== false,
+      siteId: str(rec.siteId),
+      siteName: str(rec.siteName),
     };
   });
   const def = str(data.default) || rows.find((b) => b.isDefault)?.name || '';
@@ -387,23 +404,101 @@ async function loadBoxes(force = false): Promise<{ rows: CloudBox[]; default: st
 }
 
 /**
- * ★★ 2026-10-12：**权威盒子名单**（云端那一份）。
+ * ★★ 2026-10-12 建立、2026-10-13 升级：**权威盒子名单**（云端那一份）。
  *
  * 用户报"盒子的数据没有做好同步"：实测**扩展 5 个盒子、云端 2 个**，两边都不报错。
  * 扩展侧的根因是 `parallel.ts` 的盒子列表把"**本地记住的**"取了并集，
  * 而那份名单（`ql:boxes`）**只会被加、不会被减** ⇒ 云端删掉/改名的盒子永远留着。
  *
- * ⇒ 这里把"云端那一份"单独导出，让 UI 侧能在**云可用时**对账（剪掉多余的）。
- *   ★ 调用方必须容错：**拿不到就什么也别动**（离线时本地那份是唯一的真相）。
- *   ★ `force` 默认 false：走 `META_TTL_MS` 缓存，别为一次渲染多打一次网络。
+ * ★ 2026-10-13：返回值从 `{names: string[]}` 换成 `{boxes: ParBox[]}` ——
+ *   只给名字已经装不下禁用态 / 站点关联 / 三个 `*able`，而 UI 要靠它们画灰态、
+ *   决定给不给按钮。**剪枝仍然按名字**（对账规则在 `shared/box-reconcile.ts`，没变）。
+ *
+ * ★ 调用方必须容错：**拿不到就什么也别动**（离线时本地那份是唯一的真相）。
+ * ★ `force` 默认 false：走 `META_TTL_MS` 缓存，别为一次渲染多打一次网络。
  */
-export async function fetchCloudBoxNames(force = false): Promise<{ names: string[]; default: string } | null> {
+export async function fetchCloudBoxes(force = false): Promise<{ boxes: ParBox[]; default: string } | null> {
   try {
     const { rows, default: def } = await loadBoxes(force);
-    return { names: rows.map((b) => b.name).filter(Boolean), default: def };
+    return { boxes: rows.filter((b) => Boolean(b.name)), default: def };
   } catch {
     return null;   // ★ 不抛：这是"对账用的参考数据"，取不到不该让任何调用点炸
   }
+}
+
+/* ==================== 盒子的三个写动作（2026-10-13 新增） ==================== */
+
+/**
+ * 新建盒子（**打到云端**）。
+ *
+ * ★★ 这条通路此前根本不存在，而 UI 上的「＋ 新建盒子」是**纯本地**的
+ *   （`boxes.push(name)` + 写 `ql:boxes`）。自 2026-10-12 起云端名单是权威，
+ *   对账会把"云端没有、账号也没用"的名字**剪掉** ⇒ 用户看到的是
+ *   "盒子建好了，过一会儿自己没了"，而两边都不报错。
+ *
+ * ★ 服务端对重名回 409 —— 这里把它转成**可读的中文**，
+ *   因为 prompt 之后弹一句 `HTTP 409` 用户无从处置。
+ */
+async function createBoxOnCloud(name: string): Promise<{ name: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error('盒子名不能为空');
+  }
+  const existing = await loadBoxes(true);
+  if (existing.rows.some((b) => b.name === trimmed)) {
+    throw new Error(`盒子「${trimmed}」已存在`);
+  }
+  const res = asRecord(
+    await cloudRequest<unknown>('/api/boxes', { method: 'POST', body: { name: trimmed } }),
+  );
+  invalidateCloudCache();
+  return { name: str(res.name) || trimmed };
+}
+
+/**
+ * 禁用 / 启用盒子（**服务端权威**）。
+ *
+ * ★★ 改前这个动作是**纯本地**的（只写 `ql:disabledBoxes`）—— 于是同一个事实有两个来源：
+ *   在网页上禁用的盒子，扩展的轮盘照旧会切到它；在扩展里禁用的，网页不知道。
+ * ★ 服务端对默认盒回 **400**（它只随"是否为空"自动禁用）⇒ 这里先在本地拦，
+ *   给一句能读懂的话，而不是把 400 原文抛给用户。
+ */
+async function toggleBoxOnCloud(name: string): Promise<{ disabled: boolean }> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error('盒子名为空');
+  }
+  const { rows, default: def } = await loadBoxes(true);
+  const box = rows.find((b) => b.name === trimmed);
+  if (box?.isDefault || trimmed === def) {
+    throw new Error('默认盒子不能手动禁用 —— 它只在自己为空时自动跳过');
+  }
+  const res = asRecord(
+    await cloudRequest<unknown>('/api/boxes/toggle', { method: 'POST', body: { name: trimmed } }),
+  );
+  invalidateCloudCache();
+  return { disabled: res.disabled === true };
+}
+
+/**
+ * 把盒子关联到站点（`siteId` 传空串 = 解除关联）。服务端 2026-10-13 新增的能力。
+ *
+ * ★ 传别的用户的 `siteId` 服务端回 **404**（不区分"不存在"与"不是你的"）——
+ *   与 `own_site` 同口径，这里原样透出即可（它不是用户能自己修的那种错）。
+ */
+async function bindBoxSiteOnCloud(name: string, siteId: string): Promise<{ siteId: string; changed: boolean }> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error('盒子名为空');
+  }
+  const res = asRecord(
+    await cloudRequest<unknown>('/api/boxes/bind-site', {
+      method: 'POST',
+      body: { name: trimmed, siteId: (siteId || '').trim() },
+    }),
+  );
+  invalidateCloudCache();
+  return { siteId: str(res.siteId), changed: res.changed === true };
 }
 
 /** 默认盒名（上传时要把等于它的 box 名翻译回空串） */
@@ -482,10 +577,15 @@ async function patchAccount(id: string, patch: Record<string, unknown>): Promise
  *
  * ★ `name` 为空时由调用方回落到 host 显示（服务端建的站点 `name` 默认就是 host，
  *   但用户清空过名字的情况也要能显示）。
+ *
+ * ★★ 2026-10-13：多带一个 **`id`**。盒子的「关联站点」要拿它当 `siteId` 去
+ *   `POST /api/boxes/bind-site` —— 服务端按 **id** 认站点，而 UI 平时只认 host
+ *   （`siteId` 是库里的主键，`host` 是从 `base_url` 抽出来的）。加字段是兼容的：
+ *   两个既有消费方（站点管理栏、导入）只读 `host`/`name`。
  */
-async function loadSiteNames(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+async function loadSiteNames(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
   const sites = await loadSites(force);
-  return sites.map((s) => ({ host: s.host, name: s.name, displayName: s.displayName }));
+  return sites.map((s) => ({ id: s.id, host: s.host, name: s.name, displayName: s.displayName }));
 }
 
 /**
@@ -725,6 +825,21 @@ export const cloudStore = {
     if (!fromName) {
       throw new Error('源盒子名为空');
     }
+    /*
+     * ★★ 2026-10-13：**默认盒不能改名**，先在本地拦。
+     *
+     * 服务端从 2026-10-13 起对 `source` 为空/等于默认盒名的请求回 **400**
+     * （默认盒的名字是常量「默认盒子」，"改它"这件事在语义上已不存在）。
+     * 而扩展的芯片上**仍然给默认盒画了 ✎** ⇒ 用户点下去必然失败。
+     * ⇒ 两道：(a) UI 侧按 `renameable` 不给入口（见 parallel.ts）；
+     *          (b) 这里再拦一次，保证**任何**调用路径都拿到一句能读懂的话，
+     *              而不是 `HTTP 400`×或一次静默的空操作。
+     * ★ 为什么不只做 (a)：UI 不是唯一调用方（导入、脚本、以后的新界面）。
+     */
+    const { rows, default: def } = await loadBoxes(true);
+    if (fromName === def || rows.find((b) => b.name === fromName)?.isDefault) {
+      throw new Error('默认盒子不能改名 —— 它是固定的默认盒（只能往里面放账号）');
+    }
     if (fromName === toName) {
       return 0;
     }
@@ -751,8 +866,8 @@ export const cloudStore = {
     return clearBoxImpl(trimmed);
   },
 
-  /** 站点清单（host ↔ 用户自定义名称），见 `loadSiteNames` 的说明 */
-  async listSites(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+  /** 站点清单（host ↔ 用户自定义名称），见 `loadSiteNames` 的说明（★ 2026-10-13 起含 `id`） */
+  async listSites(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
     return loadSiteNames(force);
   },
 
@@ -790,6 +905,23 @@ export const cloudStore = {
   async delete(id: string): Promise<void> {
     await cloudRequest(`/api/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
     invalidateCloudCache();
+  },
+
+  /* ---------------- 盒子的三个写动作（2026-10-13 新增，见各自的函数注释） ---------------- */
+
+  /** 新建盒子（打到云端 —— 纯本地建会被对账剪掉，见 `createBoxOnCloud`） */
+  async createBox(name: string): Promise<{ name: string }> {
+    return createBoxOnCloud(name);
+  },
+
+  /** 禁用/启用（服务端权威；默认盒由服务端 400 拒绝，这里先拦） */
+  async toggleBox(name: string): Promise<{ disabled: boolean }> {
+    return toggleBoxOnCloud(name);
+  },
+
+  /** 关联/解除关联站点（`siteId` 空串 = 解除） */
+  async bindBoxSite(name: string, siteId: string): Promise<{ siteId: string; changed: boolean }> {
+    return bindBoxSiteOnCloud(name, siteId);
   },
 };
 

@@ -40,7 +40,7 @@ export interface ParallelStore {
    *   ★ 注意这里写的是 `src/ui/` 而不是带通配的写法 —— 后者含注释开始标记，
    *     会让"块注释配平"判据（`verify-css-vars.mjs`）**误判**（见 PITFALLS #43）。
    */
-  listSites(force?: boolean): Promise<{ host: string; name: string; displayName: string }[]>;
+  listSites(force?: boolean): Promise<{ id: string; host: string; name: string; displayName: string }[]>;
   /** 给站点改自定义名称（只改 name，不动 baseUrl —— 后者是 host 的唯一来源） */
   renameSite(host: string, name: string): Promise<void>;
   /** 添加站点时落名：站点不存在就建（与 `renameSite` 的差别是"容忍不存在"） */
@@ -53,6 +53,20 @@ export interface ParallelStore {
    *   这三件事对用户的意思完全不同，不能压成一个布尔。
    */
   deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }>;
+  /* ---------------- 盒子的三个写动作（2026-10-13 新增） ----------------
+   *
+   * ★★ 为什么这三个必须经过这一层，而不是让 UI 自己拼请求：
+   *   ① 本仓的 UI **从不直接 fetch 云端**（`src/ui/` 下零 `cloudRequest`）；
+   *   ② 服务端对默认盒的改名/禁用是 **400 拒绝**的 —— 拦截与"人话错误"要在一处；
+   *   ③ 「新建盒子」此前根本不是"写动作"（只写本地），
+   *      而它必须变成写动作：云端名单是权威，纯本地建会被对账剪掉。
+   */
+  /** 新建盒子（**打到云端**；重名时抛可读错误） */
+  createBox(name: string): Promise<{ name: string }>;
+  /** 禁用/启用（**服务端权威**；返回切换后的状态） */
+  toggleBox(name: string): Promise<{ disabled: boolean }>;
+  /** 关联/解除关联站点（`siteId` 空串 = 解除；`changed=false` 表示本来就一样） */
+  bindBoxSite(name: string, siteId: string): Promise<{ siteId: string; changed: boolean }>;
 }
 
 /**
@@ -243,7 +257,7 @@ export const parallelStore: ParallelStore = {
    *   ⇒ 直接让 `OfflineError` 抛出去，由 UI 显示"离线"而不是显示一个**半空的名字**。
    *   ★ 这条判断是有意的：宁可不显示，也不要显示"名字为空 = 看起来没设过"。
    */
-  listSites(force = false): Promise<{ host: string; name: string; displayName: string }[]> {
+  listSites(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
     return cloudStore.listSites(force);
   },
 
@@ -257,6 +271,20 @@ export const parallelStore: ParallelStore = {
 
   deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }> {
     return cloudStore.deleteSite(host);
+  },
+
+  /* ---------------- 盒子的三个写动作（2026-10-13）：纯转发，语义在 cloud-store ---------------- */
+
+  createBox(name: string): Promise<{ name: string }> {
+    return cloudStore.createBox(name);
+  },
+
+  toggleBox(name: string): Promise<{ disabled: boolean }> {
+    return cloudStore.toggleBox(name);
+  },
+
+  bindBoxSite(name: string, siteId: string): Promise<{ siteId: string; changed: boolean }> {
+    return cloudStore.bindBoxSite(name, siteId);
   },
 
 

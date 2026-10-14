@@ -1,5 +1,5 @@
 import type { LogRecord } from './log';
-import type { ParallelAccount, ParallelAccountStatus } from './types';
+import type { ParallelAccount, ParallelAccountStatus, ParBox } from './types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -66,6 +66,30 @@ export type RuntimeRequest =
   | { kind: 'par.moveBox'; id: string; box: string }
   | { kind: 'par.renameBox'; from: string; to: string }
   | { kind: 'par.deleteBox'; name: string }
+  /**
+   * ★★★ 2026-10-13：**新建盒子**。
+   *
+   * 这条 kind 此前**不存在** —— 而 UI 上的「＋ 新建盒子」只往本地 `ql:boxes` 里
+   * `push` 一个名字（`ui/parallel/parallel.ts` 的 `createBox()`）。
+   * 自 2026-10-12 起**云端名单是权威**（对账会剪掉本地多出来的名字）
+   * ⇒ 那个盒子在下一次 `loadBoxes()` 就被剪掉：**建好了，然后自己消失**，
+   * 而两边都不报错。判据见 `tools/verify/verify-boxsync.mjs` 的第 ⑤ 组。
+   */
+  | { kind: 'par.createBox'; name: string }
+  /**
+   * ★★★ 2026-10-13：**禁用 / 启用盒子**（服务端是权威）。
+   *
+   * 改前这个动作**纯本地**（只写 `ql:disabledBoxes`），云端 `box.disabled`
+   * 从不读也不写 ⇒ 同一个事实两个来源：在网页上禁用的盒子，扩展轮盘照旧会切到它。
+   */
+  | { kind: 'par.toggleBox'; name: string }
+  /**
+   * ★★★ 2026-10-13：**盒子关联站点**（服务端 2026-10-13 新增的能力）。
+   *
+   * `siteId` 传空串 = 解除关联。默认盒不参与绑定（服务端 400）——
+   * 调用方应当**先看 `bindable`**，别让用户点到一个一定失败的按钮。
+   */
+  | { kind: 'par.bindBoxSite'; name: string; siteId: string }
   | { kind: 'par.delete'; id: string }
   | { kind: 'par.open'; id: string; forceNewTab?: boolean }
   | { kind: 'par.grantChanged' }
@@ -156,9 +180,19 @@ export type RuntimeResponse =
    * `savedAt` / `ageMs` 让界面能说准"这是多久前的副本"，
    * 而不是含糊的"可能是旧的"（`account-cache.ts` 的设计意图）。 */
   | { kind: 'par.offline'; result: Result<{ offline: boolean; savedAt?: number; ageMs?: number; revision?: number }> }
-  | { kind: 'par.boxes'; result: Result<{ names: string[]; default: string } | null> }
-  /* `null` = 没拿到（离线）⇒ UI 保持原样，不要把"没拿到"渲染成"名字为空" */
-  | { kind: 'par.sites'; result: Result<{ host: string; name: string; displayName: string }[] | null> }
+  /**
+   * ★★ 2026-10-13：载荷从"只有盒名"升级为**盒子对象数组**。
+   *
+   * 改前是 `{names: string[], default: string}` —— 只装得下名字，
+   * 于是 `disabled` / `count` / `deletable` / `renameable` / `bindable` /
+   * `siteId` / `siteName` 这些服务端**已经算好**的字段全在中途被丢掉
+   * ⇒ UI 只能自己另造一套口径（本地 `ql:disabledBoxes`），两边迟早不一致。
+   */
+  | { kind: 'par.boxes'; result: Result<{ boxes: ParBox[]; default: string } | null> }
+  /* `null` = 没拿到（离线）⇒ UI 保持原样，不要把"没拿到"渲染成"名字为空"。
+   * ★ 2026-10-13 起多带一个 `id`：盒子的"关联站点"要拿它当 `siteId` 去绑定
+   *   （服务端按 `siteId` 认站点，而 UI 平时只认 host）。加字段是兼容的。 */
+  | { kind: 'par.sites'; result: Result<{ id: string; host: string; name: string; displayName: string }[] | null> }
   | { kind: 'par.renameSite'; result: Result<{ host: string; name: string; displayName: string }> }
   | { kind: 'par.upsertSite'; result: Result<{ host: string; name: string; displayName: string }> }
   /** ★ v4.2.7：三态 —— `deleted`（含级联删了几个账号）/ `missing` / `offline` */
@@ -169,6 +203,12 @@ export type RuntimeResponse =
   | { kind: 'par.moveBox'; result: Result<ParallelAccount> }
   | { kind: 'par.renameBox'; result: Result<{ moved: number }> }
   | { kind: 'par.deleteBox'; result: Result<{ moved: number }> }
+  /** ★ 2026-10-13：新建盒子（打到云端，见上行那条 kind 的注释） */
+  | { kind: 'par.createBox'; result: Result<{ name: string }> }
+  /** ★ 2026-10-13：禁用/启用（服务端权威）。`disabled` 是**切换后**的状态 */
+  | { kind: 'par.toggleBox'; result: Result<{ disabled: boolean }> }
+  /** ★ 2026-10-13：关联/解除关联站点。`siteId` 是**生效后**的值（可能被服务端归一） */
+  | { kind: 'par.bindBoxSite'; result: Result<{ siteId: string; changed: boolean }> }
   | { kind: 'par.delete'; result: Result<void> }
   | { kind: 'par.open'; result: Result<{ tabId: number; reused: boolean }> }
   | { kind: 'par.grantChanged'; result: Result<boolean> }
