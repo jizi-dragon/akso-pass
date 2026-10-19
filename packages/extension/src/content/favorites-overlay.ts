@@ -4,12 +4,12 @@
  * 需求来自同事「阿克索配置助手 v2.1.0」评审的 D1。与状态轮盘同一套外壳：
  * background 对当前活动标签页 `executeScript` 注入；再次注入 = 关闭（幂等开关）。
  *
- * 交互：悬停预演「将打开「名称」」→ 点击后由 background 导航；
- *       若当前页已绑定账号且同源，则在**当前页签内跳转**（只是路由变化），
- *       否则新开页签。数字键 1-9/0 快选；Esc / 点遮罩关闭。
+ * 交互：悬停预演「将打开「名称」」→ 点击后**在新标签页打开**（2026-10-20 用户明确要求，
+ *       不再覆盖当前页）。`window.open` 带上 opener，新页签由后台收编成同一账号。
+ *       数字键 1-9/0 快选；Esc / 点遮罩关闭。
  *
  * 数据：书签清单由 background 统一归一化（`favorites.list`），浮层不自己读 storage；
- *       打开动作也走 background（内容脚本拿不到 `chrome.tabs`，这是同事实现里踩过的坑）。
+ *       只有"弹窗被拦"时才把打开动作交给 background 兜底。
  */
 import type { FavoriteItem } from '../shared/messages';
 import { buildFavoritesWheel } from '../ui/wheel/favorites-core';
@@ -123,78 +123,61 @@ async function mount(): Promise<void> {
   WIN.__QL_FAV_CLEANUP__ = close;
 
   /**
-   * ★★★ 2026-10-20（用户实测"仍然新开页签并停在登录页"）：
-   * **同源书签在当前页签内做平台路由切换**，不经过 background、不新开页签。
+   * ★★★ 2026-10-20（用户要求变更）：
+   * **常用页面一律在新页签打开，不覆盖原页面。**
    *
-   * 为什么必须这样：
-   *   1. 不新建页签 —— 从源头上不存在"新页签 + 共享 jar"这条路；
-   *   2. 不再依赖 `boundAccountOf(sender.tab.id)`。上一版靠后台绑定表判断"我是哪个账号"，
-   *      而用户实测该判断没有命中（可能 SW 还是旧版本、或该页签绑定表里没有记录），
-   *      于是走了 `tabs.create` 的兜底 ⇒ 新页签 + 共享 jar 被会话卫生清空 ⇒ 登录页。
-   *   3. 当前页签本来就是账号 A 的页面；同页签换路由，账号 A 的登录态天然还在。
+   * 新页签用 `window.open(...)` 而不是 `chrome.tabs.create`：
+   * 前者会带上 `openerTabId`，后台 `parallelSession.adoptFromOpener` 会把新页签
+   * 收编成来源页签的账号 —— 这是平台自己 `window.open` / `target=_blank`
+   * 已有的继承链路。
    *
-   * ★ 相对路径用 `location.origin` 拼；绝对 URL 只有**同源**才走这里，
-   *   跨站书签仍交给 background 开普通新页签（不把账号上下文套到别的站点上）。
+   * ★ 必须在**用户手势的同步路径里**调用 `window.open`，晚一步就会被弹窗拦截。
+   *   需要异步解析地址时，先同步开 `about:blank`，解析完再 `location.replace`。
    */
-  function sameOriginTarget(path: string, baseOrigin: string): string | null {
+  function absoluteTarget(path: string, baseOrigin: string): string | null {
     const raw = path.trim();
-    if (!raw || !baseOrigin) {
+    if (!raw) {
       return null;
     }
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
       try {
-        const u = new URL(raw);
-        return u.origin === baseOrigin ? u.href : null;
+        return new URL(raw).href;
       } catch {
         return null;
       }
     }
-    return baseOrigin + (raw.startsWith('/') ? raw : `/${raw}`);
+    return baseOrigin ? baseOrigin + (raw.startsWith('/') ? raw : `/${raw}`) : null;
   }
 
   /**
-   * ★★★ 2026-10-20（用户实测"仍不会刷新数据"）：
-   * 上一版用 `location.assign` 是**整页重载**，不是平台自己的路由切换。
-   * 平台是 React Router 的 SPA，整页重载会走"冷启动"路径（数据可能从缓存恢复、
-   * 不会像菜单点击那样触发目标页的挂载/请求）。
-   *
-   * ⇒ 同源书签改用 **History API + popstate**：
-   *   `history.pushState` 换地址后派发 `popstate`，平台路由会像点击菜单一样
-   *   挂载目标页组件并重新取数。**不刷新文档**，账号 A 的内存态也保留。
-   *
-   * ★ 不是所有同源 URL 都是 SPA 路由（例如静态文件）。所以这里装一个短暂的
-   *   MutationObserver：路由真的渲染了（或路由自己重定向了）就结束；
-   *   900ms 内页面毫无反应 ⇒ 退回 `location.assign` 整页打开。
+   * 平台自己的菜单链接里通常带着完整 query（`?bid=…`）。
+   * 只返回**带 query** 的同 pathname 链接 —— 没有 query 的直接用书签路径即可，
+   * 剩下的交给 `favorites.resolve` 去平台菜单接口里找完整地址。
    */
-  function spaNavigate(url: string): void {
-    const target = new URL(url);
-    if (target.origin !== location.origin) {
-      window.location.assign(url);
-      return;
-    }
-    const root = document.querySelector('#root') ?? document.body;
-    let mutated = false;
-    const obs = new MutationObserver(() => {
-      mutated = true;
-    });
-    obs.observe(root, { childList: true, subtree: true, characterData: true });
+  function findMenuHref(path: string): string {
+    let want = '';
     try {
-      history.pushState({}, '', url);
-      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+      want = new URL(path, location.origin).pathname.replace(/\/+$/, '');
     } catch {
-      obs.disconnect();
-      window.location.assign(url);
-      return;
+      return '';
     }
-    window.setTimeout(() => {
-      obs.disconnect();
-      // 路由接管后可能停在新地址（DOM 已变），也可能自行重定向（地址已变）。
-      // 两者都算成功；只有"地址还是目标、DOM 一动不动"才退回整页打开。
-      if (mutated || window.location.href !== url) {
-        return;
+    for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))) {
+      try {
+        const u = new URL(a.href, location.href);
+        if (u.origin !== location.origin) {
+          continue;
+        }
+        if (u.pathname.replace(/\/+$/, '') !== want) {
+          continue;
+        }
+        if (u.search) {
+          return u.href;
+        }
+      } catch {
+        // 忽略坏链接
       }
-      window.location.assign(url);
-    }, 900);
+    }
+    return '';
   }
 
   async function open(item: FavoriteItem): Promise<void> {
@@ -203,31 +186,81 @@ async function mount(): Promise<void> {
     }
     busy = true;
     showToast(`正在打开「${item.name}」…`, 'info');
-    // 基准域名：优先当前页 origin（书签里的相对路径就拼在它上面）
     const baseOrigin = /^https?:$/.test(location.protocol) ? location.origin : '';
-    const localUrl = sameOriginTarget(item.path, baseOrigin);
-    if (localUrl) {
-      /* ★ 同源 ⇒ **当前页签内做平台路由切换**（用户要求："仅仅只是浏览器地址路由发生了改变"）。
-       *   先让提示上屏，再导航。★ 这次**必须主动 close()**：SPA 路由不会卸载文档，
-       *   浮层不会像整页跳转那样自己消失。 */
-      showToast(`正在当前页签跳转「${item.name}」…`, 'info');
-      window.setTimeout(() => {
+    const target = absoluteTarget(item.path, baseOrigin);
+    if (!target) {
+      showToast('打开失败：书签路径无效', 'err');
+      busy = false;
+      return;
+    }
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(target);
+    } catch {
+      showToast('打开失败：书签路径无效', 'err');
+      busy = false;
+      return;
+    }
+
+    /** 弹窗被拦 / 页内无法打开：交给 background 开新页签（原函数已是"只开新页签"） */
+    const fallback = async (): Promise<void> => {
+      const r = await ask<{ url: string }>({ kind: 'favorites.open', path: item.path, baseOrigin });
+      if (closed) {
+        return;
+      }
+      if (r.ok) {
+        showToast(`已在新标签页打开「${item.name}」`, 'ok');
+        window.setTimeout(() => close(), CLOSE_GRACE_MS);
+        return;
+      }
+      showToast(`打开失败：${r.error ?? '未知错误'}`, 'err');
+      busy = false;
+    };
+
+    // ① 跨站书签：普通新页签（不把账号上下文套到别的站点）
+    // ② 书签本身带 query：已经是完整地址，直接开
+    // ③ 当前页面已有带 query 的平台菜单链接：用它的完整地址
+    const direct = targetUrl.origin !== location.origin
+      ? target
+      : targetUrl.search
+        ? target
+        : findMenuHref(item.path);
+    if (direct) {
+      if (window.open(direct, '_blank')) {
         close();
-        spaNavigate(localUrl);
-      }, 80);
+        return;
+      }
+      await fallback();
       return;
     }
-    const r = await ask<{ url: string }>({ kind: 'favorites.open', path: item.path, baseOrigin });
-    if (closed) {
+
+    /* ④ 只有路径、页面上也没有完整菜单链接：
+     *    先同步开一个空白页签（保住用户手势），再让 background 去平台菜单接口
+     *    解析带 `?bid=…` 的完整地址，最后把空白页签导航过去。
+     *    ★ 空白页签的 opener 是当前账号页签 ⇒ 导航后由 `adoptFromOpener` 收编。 */
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      await fallback();
       return;
     }
-    if (r.ok) {
-      showToast(`已打开「${item.name}」`, 'ok');
-      window.setTimeout(() => close(), CLOSE_GRACE_MS);
+    showToast(`正在新标签页打开「${item.name}」…`, 'info');
+    let resolved = target;
+    try {
+      const r = await ask<{ url: string }>({ kind: 'favorites.resolve', path: item.path });
+      if (r.ok && r.data?.url) {
+        resolved = r.data.url;
+      }
+    } catch {
+      // 解析失败：用书签原地址
+    }
+    try {
+      popup.location.replace(resolved);
+    } catch {
+      // 空白页签被用户关闭 / 跨进程限制：退回 background 的普通新页签
+      await fallback();
       return;
     }
-    showToast(`打开失败：${r.error ?? '未知错误'}`, 'err');
-    busy = false;
+    close();
   }
 
   function onKeyDown(e: KeyboardEvent): void {

@@ -734,29 +734,22 @@ function originHostOf(raw: string | undefined): string | undefined {
 }
 
 /**
- * ★★ 2026-10-19（用户要求）：**常用页面跟随当前页的账号**。
+ * ★★ 2026-10-20（用户要求变更）：常用页面一律在**新页签**打开，不覆盖原页面。
  *
- * ## 缺陷形态（两轮）
+ * ## 历史（为什么这里反复改）
  *
- * ① 旧实现一律 `chrome.tabs.create({url})` —— 那是一个**没有被绑定**的普通页签：
- *    没有 `bindings` 记录 ⇒ 不装 DNR 的 AUTH / COOKIE 规则；不注入壳 ⇒ 存储命名空间、
- *    Cookie 袋、缓存分区全部缺失 ⇒ 新页签看到浏览器**共享 jar**（会话卫生刻意清干净了）
- *    ⇒ **未登录**。
- * ② 第一轮修复改成"以账号身份开一个**新页签**" —— 登录态对了，但用户的真实使用是
- *    **在账号 A 已经打开的页面里换一个路由**（例如首页 → 用户管理）。新页签会丢掉
- *    平台在内存里的路由/会话上下文，用户看到的仍不是"原来的那个界面换了个地址"。
- * ③ ⇒ 现在：**同源书签直接在来源页签内导航**（`chrome.tabs.update`）。绑定表、DNR
- *    规则、壳与存储命名空间都按 `tabId` 生效，所以这次导航天然就在账号 A 的上下文里；
- *    "仅仅只是浏览器地址路由发生了改变"。
+ * ① 旧实现 `chrome.tabs.create({url})`：新页签未绑定账号 ⇒ 共享 jar 被清 ⇒ 登录页。
+ * ② 4.2.13 改成"以账号身份开新页签"：登录对了，但用户当时要的是同页签路由变化。
+ * ③ 4.2.14–4.2.16 改成同页签 `tabs.update` / SPA 路由：登录与数据都对了，
+ *    但用户 2026-10-20 明确改口：**要用新页签，不要把原页面覆盖**。
  *
- * ## 判据（为什么同源**不再**依赖绑定表）
+ * ★ 现在的主路径在页内浮层：`window.open(...)` 会带上 opener，新页签由
+ *   `parallelSession.adoptFromOpener` 收编成同一账号（这是平台自己
+ *   `window.open` / `target=_blank` 已有的继承链路）。
+ *   这个函数只是**弹窗被拦 / 浮层不可用**时的兜底：仍然只开新页签。
  *
- * 上一版先 `boundAccountOf(sender.tab.id)`，识别不到就 `tabs.create` —— 用户实测
- * 正是这条路：识别没命中 ⇒ 新页签 ⇒ 共享 jar 被清 ⇒ 登录页。
- * ⇒ **同源书签不需要先知道账号 id**：当前页签就是用户要继承上下文的那个页签，
- *   `tabs.update` 换路由即可。`sender.tab` 只用来判断"目标是不是跨站"。
- *
- * ★ 未绑定且跨站的页（用户直接在平台上开的页签点外链）仍开普通新页签。
+ * ★ 绑不绑定账号：只有能确认 `accountId` 时才走 `parallelSession.open`；
+ *   认不出来就开普通新页签 —— **绝不覆盖来源页签**。
  */
 async function openFavoriteFromTab(
   sender: chrome.runtime.MessageSender,
@@ -773,8 +766,7 @@ async function openFavoriteFromTab(
   const accountId = tabId !== undefined ? parallelSession.boundAccountOf(tabId) : undefined;
   /* ★ 只对**同一站点**的书签套用账号上下文：书签允许填完整外链网址，
    *   把一个别的域名的页面绑进账号 A 的命名空间/规则里，属于把隔离平面
-   *   用在一个它不认识的站点上 —— 那既帮不上登录，也放大了接触面。
-   *   ⇒ 跨域书签保持原来的"普通新页签"行为。 */
+   *   用在一个它不认识的站点上 —— 那既帮不上登录，也放大了接触面。 */
   let sameHost = false;
   const boundHost = tabId !== undefined ? parallelSession.boundHostOf(tabId) : undefined;
   if (boundHost) {
@@ -785,31 +777,6 @@ async function openFavoriteFromTab(
     }
   }
 
-  /* ★★★ 主路径：**同源 ⇒ 就地导航**（不再要求"先认出账号"）。
-   *
-   * 用户实测上一版仍然新开页签并停在登录页：`boundAccountOf(tabId)` 没有命中
-   * （旧 SW / 绑定表缺记录都可能），于是落到 `tabs.create` 兜底。
-   * ⇒ 同源书签本来就不需要后台替它开页签，也不需要先知道账号 id：
-   *   当前页签就是用户要继承上下文的那个页签，`tabs.update` 换路由即可。
-   *   绑定表 / DNR 规则 / 壳的命名空间都按 tabId 生效，账号身份天然延续。
-   *
-   * ★ 这同时是页内浮层本地跳转的第二道保险：浮层走 `location.assign`，
-   *   其他调用方（或旧页面）发来的同源请求也落在同一条"不新开页签"的路径上。
-   */
-  let sameOrigin = false;
-  try {
-    sameOrigin = Boolean(sender.tab?.url) && new URL(url).origin === new URL(sender.tab!.url!).origin;
-  } catch {
-    sameOrigin = false;
-  }
-  if (tabId !== undefined && sameOrigin) {
-    await chrome.tabs.update(tabId, { url });
-    void forensics('favorite-open', { accountId: accountId ?? null, tabId, url, mode: 'same-tab' });
-    return { url };
-  }
-
-  /* 兜底：同 host 但不同 origin（协议/端口变化）仍以账号身份开新页签；
-   * 跨站书签则开普通页签。 */
   if (accountId && sameHost) {
     // ★ 新页签走与 `par.open` **同一条**绑定/建规则/推送种子的路径，
     //   只是落地页换成书签地址、且**不下发待登录明文凭证**（那不是登录页）。
@@ -820,6 +787,140 @@ async function openFavoriteFromTab(
   await chrome.tabs.create({ url, active: true });
   void forensics('favorite-open', { accountId: accountId ?? null, tabId: tabId ?? null, url, mode: 'plain-new-tab' });
   return { url };
+}
+
+/**
+ * ★ 2026-10-20：在**来源页签的 MAIN world**里读平台菜单，把"只有路径"的书签
+ * 补成平台实际使用的完整地址（关键是 `?bid=<业务对象 id>`）。
+ *
+ * ★ 为什么要 MAIN world：token 在页面的 `sessionStorage.__auth_token__`，
+ *   而且 localStorage 被壳命名空间化；ISOLATED world 读不到页面那份。
+ *
+ * ★ 返回第一个 pathname 相同且**带 query** 的菜单 URL；没有 query 的作为次选。
+ *   扫描整个 JSON 而不是只读某个字段 —— 菜单项的字段名在服务端版本间可能变
+ *   （`linkurl` / `url` / `menuUrl` …），按值匹配比按字段名猜更稳。
+ *
+ * ★ 这个函数会被 `chrome.scripting.executeScript({ world: 'MAIN', func })`
+ *   **序列化后注入页面**，不能引用模块作用域的变量。
+ */
+async function resolveMenuUrlInPage(path: string): Promise<string> {
+  try {
+    const token =
+      sessionStorage.getItem('__auth_token__')
+      || localStorage.getItem('__auth_token__')
+      || '';
+    if (!token) {
+      return '';
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3500);
+    try {
+      const res = await fetch('/api/platform/Menu/GetUserMenuPermission', {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        return '';
+      }
+      const json: unknown = await res.json();
+      const want = new URL(path, location.origin).pathname.replace(/\/+$/, '');
+      const strings: string[] = [];
+      const objects: Record<string, unknown>[] = [];
+      const walk = (v: unknown, depth = 0): void => {
+        if (depth > 8) {
+          return;
+        }
+        if (typeof v === 'string') {
+          strings.push(v);
+          return;
+        }
+        if (Array.isArray(v)) {
+          v.forEach((x) => walk(x, depth + 1));
+          return;
+        }
+        if (v && typeof v === 'object') {
+          objects.push(v as Record<string, unknown>);
+          for (const x of Object.values(v as Record<string, unknown>)) {
+            walk(x, depth + 1);
+          }
+        }
+      };
+      walk(json);
+      let fallback = '';
+      const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      /* 先按**结构化字段**找：菜单项可能把地址与业务对象 id 分开存
+       * （`linkurl` + `objectId`），而 URL 里的 `?bid=` 就是那个 objectId。 */
+      for (const o of objects) {
+        const rawLink = [o.linkurl, o.url, o.menuUrl, o.path, o.href]
+          .find((x): x is string => typeof x === 'string' && x.trim().length > 0);
+        if (!rawLink) {
+          continue;
+        }
+        try {
+          const u = new URL(rawLink, location.origin);
+          if (u.origin !== location.origin || u.pathname.replace(/\/+$/, '') !== want) {
+            continue;
+          }
+          if (u.search) {
+            return u.href;
+          }
+          const id = [o.objectId, o.bid, o.businessObjectId, o.object_id]
+            .find((x): x is string => typeof x === 'string' && GUID.test(x));
+          if (id) {
+            return `${u.origin}${u.pathname}?bid=${encodeURIComponent(id)}`;
+          }
+          fallback = fallback || u.href;
+        } catch {
+          // 不是 URL，继续
+        }
+      }
+      for (const s of strings) {
+        try {
+          const u = new URL(s, location.origin);
+          if (u.origin !== location.origin) {
+            continue;
+          }
+          if (u.pathname.replace(/\/+$/, '') !== want) {
+            continue;
+          }
+          if (u.search) {
+            return u.href;
+          }
+          fallback = fallback || u.href;
+        } catch {
+          // 不是 URL 字符串，继续
+        }
+      }
+      return fallback;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/** `favorites.resolve` 的消息实现：在来源页签 MAIN world 跑 `resolveMenuUrlInPage` */
+async function resolveFavoriteTarget(
+  tab: chrome.tabs.Tab | undefined,
+  path: string,
+): Promise<{ url: string }> {
+  if (!tab?.id) {
+    return { url: '' };
+  }
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: resolveMenuUrlInPage,
+      args: [path],
+    });
+    return { url: typeof r?.result === 'string' ? r.result : '' };
+  } catch {
+    return { url: '' };
+  }
 }
 
 chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
@@ -921,6 +1022,16 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     void tryRun(() => openFavoriteFromTab(sender, r)).then((result) =>
       sendResponse({ kind: 'favorites.open', result }),
     );
+    return true;
+  }
+
+  // 1.955 常用页面：把"只有路径"的书签解析成平台菜单里的完整地址（需要 sender.tab）
+  if (req && typeof req === 'object' && (req as { kind?: string }).kind === 'favorites.resolve') {
+    const r = req as { path?: unknown };
+    void tryRun(() => resolveFavoriteTarget(
+      sender.tab,
+      typeof r.path === 'string' ? r.path : '',
+    )).then((result) => sendResponse({ kind: 'favorites.resolve', result }));
     return true;
   }
 

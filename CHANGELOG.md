@@ -5,6 +5,40 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.17（2026-10-20）
+
+**用户要求变更**：常用页面跳转要**新开标签页**，不要覆盖原页面。
+
+### 同时暴露的第二个缺陷：新页签的地址少了 `?bid=…`，目标页没有数据
+
+用户实测截图：跳转后地址是 `/admin/user-mgmt/users/list`（无 query），页面只有框架、无数据；
+手动从平台菜单进入时地址是 `/admin/user-mgmt/users/list?bid=3a09ccdd-…`，数据正常。
+根因是**内置书签只存了 pathname**；这个平台的列表页靠 `bid`（业务对象 id）取数。
+
+### 修法
+
+1. **新页签、原页面不动**：页内浮层用 `window.open(..., '_blank')` 打开；
+   `window.open` 带 `openerTabId`，后台 `parallelSession.adoptFromOpener` 会把新页签
+   收编成来源页签的账号（平台自己的 `target=_blank` 走的就是这条继承链路）。
+   background 的 `favorites.open` 兜底也改回**只开新页签**，不再 `tabs.update` 来源页。
+2. **补全菜单地址**：同源书签若只有路径，按顺序尝试
+   a. 当前页面里 pathname 相同、且带 query 的菜单 `<a href>`；
+   b. 来源页签 MAIN world 调 `/api/platform/Menu/GetUserMenuPermission`，
+      扫描菜单 JSON，找 pathname 相同且带 query 的 `linkurl`；
+      若 `linkurl` 无 query 但同项有 GUID 的 `objectId`，拼成 `?bid=<objectId>`；
+   c. 都没有 ⇒ 用书签原地址。
+3. **弹窗手势**：需要异步解析时，先同步 `window.open('about:blank')` 保住用户手势，
+   解析完再 `location.replace(完整地址)`；解析失败则回退书签地址。
+
+### 验证
+
+- 新页签探针：原页面 URL 不变、`context.pages()` 从 1 变 2，新页签 URL 为
+  `/target?bid=TEST`（由 `favorites.resolve` 返回）。
+- `favorites.resolve` 真实扩展探针：本地 mock 菜单接口返回
+  `{ linkurl: '/admin/user-mgmt/users/list', objectId: '3a09ccdd-…' }`，
+  解析结果为 `http://…/admin/user-mgmt/users/list?bid=3a09ccdd-…`。
+- `window.open` 探针：内容脚本打开的新页签 `openerTabId` 为来源页签 id（adoption 可收编）。
+
 ## 4.2.16（2026-10-20）
 
 **用户实测**：4.2.15 已经能保持登录态进入目标页，但"进入页面时并不会刷新数据"。

@@ -213,13 +213,24 @@ export type RuntimeRequest =
   /** 取书签清单（空则回落内置默认；由 background 统一归一化，浮层不自己读 storage） */
   | { kind: 'favorites.list' }
   /**
-   * 打开某个书签。`baseOrigin` 为空时按当前活动页签的 origin 兜底。
+   * 在**新页签**打开某个书签（2026-10-20 用户明确要求：不要覆盖原页面）。
+   * `baseOrigin` 为空时按当前活动页签的 origin 兜底。
    *
-   * ★ 2026-10-19（用户要求）：来源页签**已绑定账号且同源**时，直接在**该页签内导航**
-   *   （`chrome.tabs.update`），不新建页签 —— 用户要的是"账号 A 的界面换个路由"，
-   *   新页签会丢掉平台在内存里的页面上下文。未绑定/跨源时才新建页签。
+   * ★ 页内浮层正常情况下直接 `window.open`（新页签 + opener 继承账号）；
+   *   这个 kind 是**弹窗被拦 / 浮层无法打开**时的兜底。
    */
-  | { kind: 'favorites.open'; path: string; baseOrigin?: string };
+  | { kind: 'favorites.open'; path: string; baseOrigin?: string }
+  /**
+   * ★ 2026-10-20：把一个"只有路径"的书签解析成平台菜单里的**完整地址**。
+   *
+   * 平台的管理页 URL 需要 `?bid=<业务对象 id>`（例如
+   * `/admin/user-mgmt/users/list?bid=…`）。书签若只存了路径，直接打开会**没有数据**。
+   * background 在来源页签的 MAIN world 用该账号的会话读平台菜单接口，
+   * 找到 pathname 相同的菜单项并返回它带 query 的地址。
+   *
+   * 返回 `url: ''` = 没解析到（调用方用书签原地址兜底）。
+   */
+  | { kind: 'favorites.resolve'; path: string };
 
 /**
  * 备份文件结构（v1）。
@@ -321,7 +332,8 @@ export type RuntimeResponse =
   | { kind: 'status.change'; result: Result<{ name: string }> }
   /* ---- 常用页面书签轮盘（v3.16：Alt+1）---- */
   | { kind: 'favorites.list'; result: Result<FavoriteItem[]> }
-  | { kind: 'favorites.open'; result: Result<{ url: string }> };
+  | { kind: 'favorites.open'; result: Result<{ url: string }> }
+  | { kind: 'favorites.resolve'; result: Result<{ url: string }> };
 
 /**
  * 实例状态上下文（v3.15）：从**当前活动页签的 URL** 解析出来的可操作对象。

@@ -265,8 +265,10 @@
         <div class="block-head">
           <h2>常用页面</h2>
         </div>
-        <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就打开。每行一条：
-          <code>名称,路径</code>；路径可以是 <code>/admin/…</code>（相对当前站点）或完整网址。</p>
+        <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就在<b>新标签页</b>打开。每行一条：
+          <code>名称,路径</code>；路径可以是 <code>/admin/…</code>（相对当前站点）或完整网址。
+          如果目标页地址带 <code>?bid=…</code>，建议直接粘贴平台地址栏里的完整路径；
+          扩展也会尝试从平台菜单自动解析出带 query 的完整地址。</p>
         <textarea id="fav-text" rows="7" spellcheck="false"
           placeholder="用户管理, /admin/user-mgmt/users/list&#10;工作流, /admin/config/workflow"></textarea>
         <span class="btn-group">

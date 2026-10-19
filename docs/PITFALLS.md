@@ -2449,47 +2449,55 @@ globalThis.__qlLogLevel = 'debug'     // SW / 任意扩展页面的 DevTools 控
 
 ---
 
-## #50 【已修】"同页签跳转"被写成"先认出账号才跳" ⇒ 识别失败就退回新页签
+## #50 【已修】常用页面跳转：账号识别 / 同页签 / 少 query 三个坑叠在一起
 
-**症状**：用户在账号 A 的页面按 `Alt+1` 打开同站书签，仍然**新开一个页签**，
-并停在登录页。改了两轮都没好，用户开始怀疑方向错了。
+**症状**（四轮，都是"看起来正常但结果是坏的"）：
 
-**根因**：4.2.14 的主路径是
-`if (accountId && tabId !== undefined && sameOrigin) tabs.update(...)`。
-"认出账号"依赖 `parallelSession.boundAccountOf(tabId)` 的**内存绑定表** ——
-SW 还没重载（旧版本）、绑定表缺记录、或页面是 SW 冷启后恢复的，都可能返回
-`undefined`。于是同一个 if 直接落到 `chrome.tabs.create` 兜底：
-新页签拿到共享 jar（会话卫生已清空）⇒ 登录页。
-★ 关键错在**把"安全/正确的跳转"建立在一个可能失败的识别步骤上**，
-而不是那条兜底路径本身。
+1. 在账号 A 的页面按 `Alt+1` 打开同站书签，**新开一个页签并停在登录页**；
+2. 改成同页签后，登录对了，但"进入页面时**不会刷新数据**"；
+3. 再改成 SPA 路由后，地址是 `/admin/user-mgmt/users/list`（**没有 `?bid=`**），
+   页面只有框架、没有数据；手动从平台菜单进入时地址带 `?bid=`，数据正常；
+4. 用户最终明确：**要用新标签页，不要覆盖原页面**。
 
-**判据**：
-1. `content/favorites-overlay.ts` 对**同源**书签在当前页签内做 **History API + popstate**
-   路由切换，不经过 background、不依赖 `boundAccountOf`；
-2. background 的同源分支条件里**没有** `accountId`（`tabId + sameOrigin` 即导航）；
-3. 集成探针（本地 HTTP 页 + mock `chrome.runtime` 注入 `dist/content/favorites-overlay.js`）：
-   点同源书签后 `page.url()` 变成目标路径，且 **`context.pages().length` 不变**；
-4. 平台真实登录页探针：点击同源书签后 URL 变为 `/login?returnUrl=…`，而
-   **`load` 事件计数仍为 1**（证明是路由切换、不是整页重载）。
+**根因**（三个独立缺陷，前两个是路径选择，第三个是 URL 不完整）：
 
-**处置**：**已修**（v4.2.15 解决"新页签"，v4.2.16 解决"整页重载导致数据不刷新"）。
-同源走 `history.pushState` + `PopStateEvent('popstate')`，跨站才交给 background。
-background 的同源分支保留为旧浮层/其他调用方的第二道保险。
+1. **新页签未绑定账号**：`chrome.tabs.create({url})` 没有 `bindings` 记录，
+   DNR 的 AUTH/COOKIE 规则不装，新页签看到共享 jar（会话卫生清空过）⇒ 登录页。
+2. **同页签以"先认出账号"为前提**：`if (accountId && sameOrigin) tabs.update(...)`。
+   `boundAccountOf(tabId)` 依赖内存绑定表，SW 冷启/旧版本可能返回 `undefined`，
+   于是落到 `tabs.create` 兜底 —— **兜底比主路径更糟**。
+3. **书签只有 pathname**：平台的列表页靠 `?bid=<业务对象 id>` 取数；
+   `/admin/user-mgmt/users/list` 能进框架，但不会查数据。
 
-★ **第二轮教训（v4.2.16）**：v4.2.15 用 `location.assign` 虽然解决了"新页签"，
-但它是**整页重载**，平台走冷启动路径，用户看到"进入页面但数据没刷新"。
-"同页签"与"平台路由切换"是两件事 —— 前者只保证同一个 tab，
-后者才保证目标页组件按平台自己的方式挂载/取数。
+**最终判据**（v4.2.17）：
 
-**推广**：★★ **"当前页签内做一个动作"不需要先证明'这个页签是谁的'。**
-同源导航的上下文由**页签本身**保证；把账号识别当前置条件，识别一旦失败就把
-用户推到一条**更差**的路径（新页签 + 共享 jar）。设计兜底时先问：
-**"这个前置条件失败时，兜底路径是不是比主路径更糟？"**
+1. `content/favorites-overlay.ts` 用 `window.open(url, '_blank')` 打开新页签，
+   **不覆盖来源页**；需要异步解析地址时先同步开 `about:blank`，再 `location.replace`。
+2. 新页签的 `openerTabId` 指向来源页签 ⇒ `parallelSession.adoptFromOpener` 收编为
+   同一账号。探针：内容脚本 `window.open` 后 `tabs.onCreated` 的 `openerTabId`
+   等于来源 tab id。
+3. 地址解析顺序：当前页里 pathname 相同且带 query 的 `<a href>` →
+   来源页 MAIN world 调 `/api/platform/Menu/GetUserMenuPermission`（用
+   `sessionStorage.__auth_token__`）→ `linkurl` 的 query；若无 query 但同项有 GUID
+   `objectId`，拼 `?bid=<objectId>` → 书签原地址。
+4. background 的 `favorites.open` 兜底**只开新页签**，函数里没有 `tabs.update`。
+5. 集成探针：`context.pages()` 从 1 变 2、原页面 URL 不变、新页签 URL 为
+   `/target?bid=TEST`；`favorites.resolve` 探针返回 `?bid=<objectId>`。
 
-★★ **"不新开页签"不等于"用户要的跳转已经完成"。** 用户说"只是路由变化"时，
-要问清楚：是**同一个 tab 的整页加载**，还是**平台路由的 SPA 切换**？
-对 SPA 来说两者在地址栏上看起来一样，但数据刷新/内存态完全不同 ——
-判据必须包含 **load 次数**，不能只看 URL 和 tab 数量。
+**处置**：**已修**（v4.2.17）。浮层 `window.open` 新页签 + opener 继承账号；
+菜单接口补全 `?bid=`；background 只做"弹窗被拦"的新页签兜底。
+
+**推广**：
+
+- ★★ **"当前页签内做一个动作"不需要先证明'这个页签是谁的'**；同理，
+  **"开新页签"也不需要先证明账号** —— 用 `window.open` 让 opener 自己继承，
+  比"先查绑定表、查不到就 tabs.create"稳。
+- ★★ **"同页签 / SPA 路由 / 新页签"是三个不同需求**，地址栏看起来一样，
+  登录态、内存态、数据刷新完全不同。用户说"只是路由变化"时，先问清楚是哪一个；
+  判据要同时看 **tab 数量、load 次数、URL 的 query**。
+- ★★ **SPA 的 pathname 不是完整身份**。`?bid=` / `?cid=` / `?mid=` 这类 query
+  才是页面取数的参数；只抄路径会得到"有框架、无数据"的假页面。
+  书签要么存完整地址，要么从平台菜单/接口解析出完整地址。
 
 ---
 
