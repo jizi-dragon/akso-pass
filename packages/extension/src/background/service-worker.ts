@@ -736,14 +736,18 @@ function originHostOf(raw: string | undefined): string | undefined {
 /**
  * ★★ 2026-10-19（用户要求）：**常用页面跟随当前页的账号**。
  *
- * ## 缺陷形态
+ * ## 缺陷形态（两轮）
  *
- * 用户在一个已登录账号 A 的平台页上按 `Alt+1` 打开书签，旧实现一律
- * `chrome.tabs.create({url})` —— 那是一个**没有被绑定**的普通页签：
- *   · 没有 `bindings` 记录 ⇒ 不装 DNR 的 AUTH / COOKIE 规则
- *   · 不注入壳（`shield`）⇒ 存储命名空间、Cookie 袋、缓存分区全部缺失
- * ⇒ 新页签看到的是浏览器**共享 jar**（会话卫生刻意把它清干净了）⇒ **未登录**。
- * 用户要的是"已经登录了的那个身份"，而不是"再登录一次"。
+ * ① 旧实现一律 `chrome.tabs.create({url})` —— 那是一个**没有被绑定**的普通页签：
+ *    没有 `bindings` 记录 ⇒ 不装 DNR 的 AUTH / COOKIE 规则；不注入壳 ⇒ 存储命名空间、
+ *    Cookie 袋、缓存分区全部缺失 ⇒ 新页签看到浏览器**共享 jar**（会话卫生刻意清干净了）
+ *    ⇒ **未登录**。
+ * ② 第一轮修复改成"以账号身份开一个**新页签**" —— 登录态对了，但用户的真实使用是
+ *    **在账号 A 已经打开的页面里换一个路由**（例如首页 → 用户管理）。新页签会丢掉
+ *    平台在内存里的路由/会话上下文，用户看到的仍不是"原来的那个界面换了个地址"。
+ * ③ ⇒ 现在：**同源书签直接在来源页签内导航**（`chrome.tabs.update`）。绑定表、DNR
+ *    规则、壳与存储命名空间都按 `tabId` 生效，所以这次导航天然就在账号 A 的上下文里；
+ *    "仅仅只是浏览器地址路由发生了改变"。
  *
  * ## 判据（为什么必须看 sender.tab）
  *
@@ -779,14 +783,33 @@ async function openFavoriteFromTab(
       sameHost = false;
     }
   }
+
+  /* ★★★ 主路径：**同源 + 已绑定账号 ⇒ 就地导航**。
+   *   `tabs.update` 不新建页签，也不改动绑定表 —— 这个页签本来就是账号 A 的，
+   *   导航后 DNR（按 tabId）、壳的命名空间、Cookie 袋全部照旧。 */
+  let sameOrigin = false;
+  try {
+    sameOrigin = Boolean(sender.tab?.url) && new URL(url).origin === new URL(sender.tab!.url!).origin;
+  } catch {
+    sameOrigin = false;
+  }
+  if (accountId && tabId !== undefined && sameOrigin) {
+    await chrome.tabs.update(tabId, { url });
+    void forensics('favorite-open', { accountId, tabId, url, mode: 'same-tab' });
+    return { url };
+  }
+
+  /* 兜底：同 host 但不同 origin（协议/端口变化）仍以账号身份开新页签；
+   * 跨站书签则开普通页签。 */
   if (accountId && sameHost) {
     // ★ 新页签走与 `par.open` **同一条**绑定/建规则/推送种子的路径，
     //   只是落地页换成书签地址、且**不下发待登录明文凭证**（那不是登录页）。
     await parallelSession.open(accountId, true, { targetUrl: url, stageCredentials: false });
-    void forensics('favorite-open', { accountId, tabId, url });
+    void forensics('favorite-open', { accountId, tabId, url, mode: 'bound-new-tab' });
     return { url };
   }
   await chrome.tabs.create({ url, active: true });
+  void forensics('favorite-open', { accountId: accountId ?? null, tabId: tabId ?? null, url, mode: 'plain-new-tab' });
   return { url };
 }
 

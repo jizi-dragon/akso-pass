@@ -212,7 +212,13 @@ export type RuntimeRequest =
   /* ---- 常用页面书签轮盘（v3.16：Alt+1）---- */
   /** 取书签清单（空则回落内置默认；由 background 统一归一化，浮层不自己读 storage） */
   | { kind: 'favorites.list' }
-  /** 在新标签页打开某个书签；`baseOrigin` 为空时按当前活动页签的 origin 兜底 */
+  /**
+   * 打开某个书签。`baseOrigin` 为空时按当前活动页签的 origin 兜底。
+   *
+   * ★ 2026-10-19（用户要求）：来源页签**已绑定账号且同源**时，直接在**该页签内导航**
+   *   （`chrome.tabs.update`），不新建页签 —— 用户要的是"账号 A 的界面换个路由"，
+   *   新页签会丢掉平台在内存里的页面上下文。未绑定/跨源时才新建页签。
+   */
   | { kind: 'favorites.open'; path: string; baseOrigin?: string };
 
 /**
