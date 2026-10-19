@@ -1,6 +1,6 @@
 # Akso Pass 用户手册
 
-> 适用版本：v4.2.14 · 面向读者：日常使用者
+> 适用版本：v4.2.15 · 面向读者：日常使用者
 > 技术实现细节见 `docs/PROJECT-STATUS.md` 与 `docs/CODEBASE_OVERVIEW.md`
 
 ---

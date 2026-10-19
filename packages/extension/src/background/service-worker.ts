@@ -749,13 +749,14 @@ function originHostOf(raw: string | undefined): string | undefined {
  *    规则、壳与存储命名空间都按 `tabId` 生效，所以这次导航天然就在账号 A 的上下文里；
  *    "仅仅只是浏览器地址路由发生了改变"。
  *
- * ## 判据（为什么必须看 sender.tab）
+ * ## 判据（为什么同源**不再**依赖绑定表）
  *
- * "我是哪个账号"不能由页面自报 —— 那等于把身份交给被注入的页面决定。
- * 唯一可信的来源是后台的绑定表：`sender.tab.id → bindings[tabId].accountId`。
+ * 上一版先 `boundAccountOf(sender.tab.id)`，识别不到就 `tabs.create` —— 用户实测
+ * 正是这条路：识别没命中 ⇒ 新页签 ⇒ 共享 jar 被清 ⇒ 登录页。
+ * ⇒ **同源书签不需要先知道账号 id**：当前页签就是用户要继承上下文的那个页签，
+ *   `tabs.update` 换路由即可。`sender.tab` 只用来判断"目标是不是跨站"。
  *
- * ★ 未绑定的页（用户直接在平台上开的页签）保持原行为：新建普通页签。
- *   那种页没有账号上下文，硬套一个账号只会**串号**。
+ * ★ 未绑定且跨站的页（用户直接在平台上开的页签点外链）仍开普通新页签。
  */
 async function openFavoriteFromTab(
   sender: chrome.runtime.MessageSender,
@@ -784,18 +785,26 @@ async function openFavoriteFromTab(
     }
   }
 
-  /* ★★★ 主路径：**同源 + 已绑定账号 ⇒ 就地导航**。
-   *   `tabs.update` 不新建页签，也不改动绑定表 —— 这个页签本来就是账号 A 的，
-   *   导航后 DNR（按 tabId）、壳的命名空间、Cookie 袋全部照旧。 */
+  /* ★★★ 主路径：**同源 ⇒ 就地导航**（不再要求"先认出账号"）。
+   *
+   * 用户实测上一版仍然新开页签并停在登录页：`boundAccountOf(tabId)` 没有命中
+   * （旧 SW / 绑定表缺记录都可能），于是落到 `tabs.create` 兜底。
+   * ⇒ 同源书签本来就不需要后台替它开页签，也不需要先知道账号 id：
+   *   当前页签就是用户要继承上下文的那个页签，`tabs.update` 换路由即可。
+   *   绑定表 / DNR 规则 / 壳的命名空间都按 tabId 生效，账号身份天然延续。
+   *
+   * ★ 这同时是页内浮层本地跳转的第二道保险：浮层走 `location.assign`，
+   *   其他调用方（或旧页面）发来的同源请求也落在同一条"不新开页签"的路径上。
+   */
   let sameOrigin = false;
   try {
     sameOrigin = Boolean(sender.tab?.url) && new URL(url).origin === new URL(sender.tab!.url!).origin;
   } catch {
     sameOrigin = false;
   }
-  if (accountId && tabId !== undefined && sameOrigin) {
+  if (tabId !== undefined && sameOrigin) {
     await chrome.tabs.update(tabId, { url });
-    void forensics('favorite-open', { accountId, tabId, url, mode: 'same-tab' });
+    void forensics('favorite-open', { accountId: accountId ?? null, tabId, url, mode: 'same-tab' });
     return { url };
   }
 

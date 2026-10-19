@@ -2449,6 +2449,37 @@ globalThis.__qlLogLevel = 'debug'     // SW / 任意扩展页面的 DevTools 控
 
 ---
 
+## #50 【已修】"同页签跳转"被写成"先认出账号才跳" ⇒ 识别失败就退回新页签
+
+**症状**：用户在账号 A 的页面按 `Alt+1` 打开同站书签，仍然**新开一个页签**，
+并停在登录页。改了两轮都没好，用户开始怀疑方向错了。
+
+**根因**：4.2.14 的主路径是
+`if (accountId && tabId !== undefined && sameOrigin) tabs.update(...)`。
+"认出账号"依赖 `parallelSession.boundAccountOf(tabId)` 的**内存绑定表** ——
+SW 还没重载（旧版本）、绑定表缺记录、或页面是 SW 冷启后恢复的，都可能返回
+`undefined`。于是同一个 if 直接落到 `chrome.tabs.create` 兜底：
+新页签拿到共享 jar（会话卫生已清空）⇒ 登录页。
+★ 关键错在**把"安全/正确的跳转"建立在一个可能失败的识别步骤上**，
+而不是那条兜底路径本身。
+
+**判据**：
+1. `content/favorites-overlay.ts` 对**同源**书签直接 `window.location.assign(url)`，
+   不经过 background、不依赖 `boundAccountOf`；
+2. background 的同源分支条件里**没有** `accountId`（`tabId + sameOrigin` 即导航）；
+3. 集成探针（本地 HTTP 页 + mock `chrome.runtime` 注入 `dist/content/favorites-overlay.js`）：
+   点同源书签后 `page.url()` 变成目标路径，且 **`context.pages().length` 不变**。
+
+**处置**：**已修**（v4.2.15）。同源走页内 `location.assign`，跨站才交给 background。
+background 的同源分支保留为旧浮层/其他调用方的第二道保险。
+
+**推广**：★★ **"当前页签内做一个动作"不需要先证明'这个页签是谁的'。**
+同源导航的上下文由**页签本身**保证；把账号识别当前置条件，识别一旦失败就把
+用户推到一条**更差**的路径（新页签 + 共享 jar）。设计兜底时先问：
+**"这个前置条件失败时，兜底路径是不是比主路径更糟？"**
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

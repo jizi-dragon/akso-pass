@@ -122,6 +122,36 @@ async function mount(): Promise<void> {
   }
   WIN.__QL_FAV_CLEANUP__ = close;
 
+  /**
+   * ★★★ 2026-10-20（用户实测"仍然新开页签并停在登录页"）：
+   * **同源书签直接在页面里跳转**，不经过 background。
+   *
+   * 为什么必须这样：
+   *   1. `location.assign()` 是**当前页签**的导航 —— 从源头上不存在"新页签"这条路；
+   *   2. 不再依赖 `boundAccountOf(sender.tab.id)`。上一版靠后台绑定表判断"我是哪个账号"，
+   *      而用户实测该判断没有命中（可能 SW 还是旧版本、或该页签绑定表里没有记录），
+   *      于是走了 `tabs.create` 的兜底 ⇒ 新页签 + 共享 jar 被会话卫生清空 ⇒ 登录页。
+   *   3. 当前页签本来就是账号 A 的页面；同页签换路由，账号 A 的登录态天然还在。
+   *
+   * ★ 相对路径用 `location.origin` 拼；绝对 URL 只有**同源**才走这里，
+   *   跨站书签仍交给 background 开普通新页签（不把账号上下文套到别的站点上）。
+   */
+  function sameOriginTarget(path: string, baseOrigin: string): string | null {
+    const raw = path.trim();
+    if (!raw || !baseOrigin) {
+      return null;
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+      try {
+        const u = new URL(raw);
+        return u.origin === baseOrigin ? u.href : null;
+      } catch {
+        return null;
+      }
+    }
+    return baseOrigin + (raw.startsWith('/') ? raw : `/${raw}`);
+  }
+
   async function open(item: FavoriteItem): Promise<void> {
     if (busy || closed) {
       return;
@@ -130,6 +160,17 @@ async function mount(): Promise<void> {
     showToast(`正在打开「${item.name}」…`, 'info');
     // 基准域名：优先当前页 origin（书签里的相对路径就拼在它上面）
     const baseOrigin = /^https?:$/.test(location.protocol) ? location.origin : '';
+    const localUrl = sameOriginTarget(item.path, baseOrigin);
+    if (localUrl) {
+      /* ★ 同源 ⇒ **当前页签内导航**（用户要求："仅仅只是浏览器地址路由发生了改变"）。
+       *   先让"正在当前页签跳转"上屏，再导航；导航开始后本浮层随页面卸载。
+       *   ★ 进度条式延迟只有 80ms —— 用户不会感到卡顿，但足以看见"没有新开页签"。 */
+      showToast(`正在当前页签跳转「${item.name}」…`, 'info');
+      window.setTimeout(() => {
+        window.location.assign(localUrl);
+      }, 80);
+      return;
+    }
     const r = await ask<{ url: string }>({ kind: 'favorites.open', path: item.path, baseOrigin });
     if (closed) {
       return;
