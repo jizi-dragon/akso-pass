@@ -25,8 +25,9 @@ npm run verify    # 逐个跑本目录下所有脚本
 ★ **但有两个脚本不需要浏览器**，可以直接单独跑（**秒级**，适合放进日常动手前的自检）：
 
 ```powershell
-node tools/verify/verify-log-redaction.mjs          # 日志打码验收：37 条
-node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：3/3
+node tools/verify/verify-log-redaction.mjs          # 日志打码验收：144 条
+node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：28/28
+node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要重新构建）：6/6
 ```
 
 `run-all.mjs` 只收 `verify-*.mjs` 前缀，所以这两个也在 `npm run verify` 的清单里
@@ -63,9 +64,10 @@ node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：3/3
 | `verify-adopt.mjs` | opener 亲子继承（同站继承 / 异域解绑 / 手动不继承 / 原页签保持） | 5/5 | ✔ |
 | `verify-boxmgmt.mjs` | 盒子管理（重命名 / 删除两步确认 / 冷启保持） | — | ✔ |
 | `verify-defbox.mjs` | 默认盒重命名 / 新账号归属 / 冷启 | — | ✔ |
-| `verify-track.mjs` | 录制埋点 | — | ✔ |
-| **`verify-log-redaction.mjs`** | **日志打码通道（15 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **121/121** | ✘ |
-| **`verify-falsify-logredaction.mjs`** | **上一条的反证（23 条）**：拆 `drain` / 拆 `appLogs` / 热路径改回 `diag` / 重复 `OfflineError` / 拆 `dispatch` 的 `default` / 契约加 kind / `log.error` 降级为 `debug` / 裸传凭据 / `${deviceCode}` 插值 / 孤儿 HTML id / 注释掉 `installLogPersist()` / 拆回灌 / `restoreToRing` 喂回 sink / 拆 `setForwarder` / `ql.log` 不入环 / 转发前不打码 / `sendSafe` 又变静默 ⇒ 各自变红 | **23/23** | ✘ |
+| ~~`verify-track.mjs`~~ | **已于 2026-10-16 下线**：它验的是 **v3.9 的环形扇区**（`120°` 固定弧 + 节点），而那个形态在 **v4.1 已被网格平铺取代** —— `ui/wheel/*.ts` 里 `arc` / `扇形` / `轨道` 的匹配数是 **0**，所以它**永远不可能通过**（第一条断言就 `TypeError`）。<br>★ 覆盖去哪了：渲染 → `verify-acct-grid.mjs`；盒子增删改 → `verify-boxmgmt.mjs`；默认盒 → `verify-defbox.mjs`。★ **诚实的缺口**：网格版的"切盒 / 页码点"目前**没有任何脚本覆盖**。 | — | ✘ |
+| **`verify-log-redaction.mjs`** | **日志打码通道（16 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **144/144** | ✘ |
+| **`verify-falsify-logredaction.mjs`** | **上一条的反证（28 条）**：拆 `drain` / 拆 `appLogs` / 热路径改回 `diag` / 重复 `OfflineError` / 拆 `dispatch` 的 `default` / 契约加 kind / `log.error` 降级为 `debug` / 裸传凭据 / `${deviceCode}` 插值 / 孤儿 HTML id / 注释掉 `installLogPersist()` / 拆回灌 / `restoreToRing` 喂回 sink / 拆 `setForwarder` / `ql.log` 不入环 / 转发前不打码 / `sendSafe` 又变静默 / **㉓–㉗ 第 13 节新补的 5 个站点** ⇒ 各自变红 | **28/28** | ✘ |
+| **`verify-falsify-loglevel.mjs`** | ★ **第 16 节（级别开关活在产物里）的反证**：级别退回**模块局部变量** / `log()` 不再经 `shouldLog()` 现读 / **删掉 `dist/`** ⇒ 各自变红。<br>★ 它是本仓**唯一"需要重新构建"**的反证（因为第 16 节读的是 `dist/`）⇒ 单独成篇，不拖慢日常那份。★ 它自己踩过一次坑：副本漏拷 `assets/` ⇒ build 失败 ⇒ `dist/` 没生成 ⇒ 所有注入**假通过**；现已**先断言"副本构建成功"**再注入 | **6/6** | ✘ |
 | **`verify-forensics-redaction.mjs`** | **取证 / 诊断通道的打码**（`forensics()` / `diag()` 写入 `chrome.storage.local`，而它们**会进诊断包被一键导出**）—— **真的把模块求值、真的调 `forensics()` 再读回落盘内容** | **25/25** | ✘ |
 | **`verify-falsify-forensics.mjs`** | **上一条的反证**：`forensics` 不打码 / `diag` 不打码 / 敏感键名单只剩裸 `password` ⇒ 必须变红 | **3/3** | ✘ |
 | **`verify-icons.mjs`** | **图标源与派生产物**：源在且**同时含品牌蓝与强调橘**（占位图不具备该性质）/ 4 档方形且含两色 / 大档覆盖率与源相近 / ★ **小档覆盖率必须与大档不同**（有意手调）/ 假源 `src-icon*` 不存在 / manifest 声明的路径在 **`dist/`** 下存在 | **42/42** | ✘ |
@@ -75,6 +77,8 @@ node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：3/3
 | **`verify-load.mjs`** | ★ **装载冒烟**（本篇唯一**需要浏览器**的那条）：真起 Chromium + `--load-extension`，验 ① 扩展被装载 ② 产物齐全性（**能取的从页面内 `fetch`、不能取的查磁盘**）③ 三个自有页面能开且无未捕获错误 ④ ★ **SW 真的活着**（能应答 `ql.diag` 且回了 `logs` 数组）⑤ 无致命错误。<br>★ 它**不验**登录 / 列表 / 开页签 / 盒子 / 设备流 / 离线降级 —— 那些要真实云端账号 + 真实内网平台，**必须人工走**（B7 的剩余部分），本脚本**不冒充**那部分覆盖 | **17/17** | ✔ |
 | **`verify-css-vars.mjs`** | ★ **CSS 变量卫生**（静态、秒级，**两个方向都查**）：逐页面按**真实 CSS 依赖链**（`<link rel=stylesheet>` + 递归 `@import`）解析，断言 ① 无「`var()` 无 fallback 又解析不到」（那会让**整条声明被丢弃**）② ★ **反方向**：定义的变量都有人用 ③ 无**自引用** `--x: var(--x)`（等于未定义）④ ★ **样式链无环、无重复引用**（`@import` 成环时浏览器行为是实现相关的，而去重会把环**静默吞掉**）。<br>★★ 起因：`wheel.css` 里品牌蓝 `#1e6fff` 散在 **12 处**（8 处 fallback + 4 处裸硬编码），而 `theme.css` 定义了一次 ⇒ **同一个颜色 13 处，改一处必漂**；我整理时又用全局替换把 `:root` 里**那一行自己的值**也换掉，造出 `--acc: var(--acc)`。<br>★ 而"截图逐字节相同"**没能发现它**（轮盘需有账号才渲染）⇒ **这类缺陷只能静态查，不能靠截图**。<br>★★ **② 的"使用者"范围必须按全目录算**：我第一版探针**把 `theme.css` 排除在"使用者"之外** ⇒ 把 `--sb-brand-hover` / `--sb-bg`（**只在 theme.css 自己的第 36/48/56 行被用**）报成死变量 —— **两个假缺陷**。 | **22/22** | ✘ |
 | **`verify-brand.mjs`** | ★ **品牌色一致性 + 不新增硬编码**（静态、秒级）：① **三处独立定义逐字等价**（`tokens.css` 的 `--sb-brand` / `wheel.css` 的 `--acc` 兜底 / `constants.ts` 的 `SESSION_COLORS[0]`）② ★ TS/JS 里品牌色的硬编码处数 **≤ 冻结基线（只减不增）** ③ 白名单每条写明"为什么它不能用 var"。<br>★★ 起因：CSS 侧我把品牌色收敛到 1 处之后**才去查 TS 侧** —— 发现 **24 处硬编码**（跨 6 个文件）。`typecheck` 不管颜色、`verify-css-vars` 只看 CSS ⇒ **跨语言的那一份从来没人看**。<br>★ 本轮消掉 `ring-wheel-style.ts` 的 **13 处**（10 处 `var(--acc,#1e6fff)` 的兜底**永远不会被用到** —— `ring-wheel.ts` 在每个扇区的 style 里都显式定义了 `--acc`）⇒ 基线 **24 → 15**，判据是轮盘截图**逐字节不变** | **10/10** | ✘ |
+| **`verify-type-scale.mjs`** | ★★ **字号刻度**（静态、秒级，**v4.2.12 新增**）：① 7 档名字与值**逐字等于 `akso-cloud` 的约定**（跨仓逐字比；那个仓不在同级目录就 SKIP）② `font-size` **不许有裸 px 字面量** ③ 每一处只许引用那 7 档 ④ ≥13px 的档之间相差 ≥2px ⑤ ★★ **注入宿主页 Shadow DOM 的那份必须带兜底值**（`var(--fs-13, 13px)`）。<br>★★ 起因：本仓**一个字号令牌都没有**，实测 **99 处字面量、18 种取值**（相邻两档只差 0.5px）。而 `akso-cloud` 早就有 7 档并被 `test_type_scale.py` 钉着 ⇒ 用户 2026-10-13 要求"两端页面美学与设计令牌统一"，这条就是那个要求的可执行形式。<br>★★ **⑤ 是本条最贵的一条**：`ACCT_GRID_CSS` 有**两个消费者** —— 小窗用 `<link>`（`:root` 拿得到），而**三个页内浮层把它内联进宿主页的 Shadow DOM**（拿不到、且 `:host{all:initial}` 会重置）。没有兜底就**整条声明被丢弃**、字号静默退回继承值 —— 而 `verify-css-vars.mjs` **抓不到**（它按**页面**的解析链算，而 `wheel.html` 那条链是通的）。<br>★ 反证 `verify-falsify-typescale.mjs`：**9/9**（注入裸 px / 自造档 / 无兜底 / 兜底值不符 ⇒ 各自如期变红） | **14/14** | ✘ |
+| **`verify-spacing.mjs`** | ★★ **间距刻度**（静态、秒级，**v4.2.12 新增**）：① 14 档名字与值**逐字等于 `akso-cloud`** ② 间距声明的**绝大多数在刻度上（阈值与那个仓同为 75%）** ③ `1px` 只许走 **`--sp-hair`** ④⑤ Shadow DOM 那份必须带兜底、且兜底值等于令牌值。<br>★★ 起因：本仓**一个间距令牌都没有**，实测 **173 处裸 px、61 种数值组合**。而 `akso-cloud` 早就有 14 档并被 `test_pages.py` 钉着（≥75%）。<br>★★ **② 的"比例而不是零"是刻意的**：`margin-left: auto` / `padding: 0` 是**合法的裸值**，而"零裸 px"会逼出"把某个值凑到刻度上只为达标"的假改动。**③ 也是刻意的**：`padding: 1px 6px` 里的 `1px` 是**描边的另一半**不是留白，换成 2px 会让徽章胖一圈 —— 所以给它自己的令牌而不是硬塞进刻度。<br>★ 反证 `verify-falsify-spacing.mjs`：**9/9** | **14/14** | ✘ |
 
 ★ 上面**八个**是 **2026-10-09 新增 / 扩充**的（`PITFALLS #3`~`#5`、`#12`~`#18`、`#22`~`#25`）；
 ★ `verify-load.mjs` 是**同日晚些**新增的（`PITFALLS #27`），
@@ -97,8 +101,38 @@ node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：3/3
 | **`verify-falsify-defectfix.mjs`** | **上一条的反证（6 条）**：把仓库复制到 `tmp/`（只拷 `src` + `tools/verify`），逐个注入"修复前"的写法 —— `reused: false` / 拆掉来源域校验 / 改回 `indexedDB.databases()` / 注回"在数据源处" / 改回无条件写盘 / `send()` 改回裸 `resolve` ⇒ 每条都必须**变红且红在对的那一节**。<br>★ 它也**反过来验自己**：`poke()` 会**数锚点出现次数**，不是恰好 1 次就明确失败（否则 `String.replace` 会改到别处，而"没变红"会被误读成"判据恒真"）；且两侧行尾**先归一化**（本仓同目录下 CRLF 与 LF 混用）。<br>★ 真实工作区**从未被改动**（副本结束时删除）。 | **OK** | ✘ |
 | **`verify-deadprotocol.mjs`** | ★ **死协议判据**（静态、秒级）：对**每个**消息 kind 与桥上行 op，要求它能报出**对端** —— ① 只出现在定义文件 ⇒ **类型孤儿**；② 只出现在定义 + 处理文件（`service-worker.ts` / `parallel-session.ts`）⇒ **零发送方**（handler 永不被走到）。<br>★★ 起因：清理时实测本仓曾有 **8 处**这类东西（`site.grants.list` / `site.grant.add` / `wheel.toggle` / `cloud.auth` / `CloudMergeReport` / `okOf()` / `registerAuthHandlers()` / `journalRollbackDone`），而 `typecheck` 与 `build` **全绿**、没有任何门禁会说话。<br>★ 白名单**只有一条**（`hold`：下行应答天然只有"定义 + 发送方"两个文件），每条都写明理由 —— 表每长一条，判据就弱一分（规则 26）。 | **OK** | ✘ |
 | **`verify-acct-grid.mjs`** | ★ **定尺网格（三个选择器共用）的回归判据**（真起 Chromium，约 15 秒）：① 源码不得再对列表做 `slice(0, N)`；`buildSectorWheel`/`buildRingWheel` 与径向原语（`polar`/`radialText`/`sectorPath`）**全部零命中** ② ★ **样式唯一源**：构建产物 `acct-grid.css` 与 `grid-style.ts` 的常量**逐字节一致**、`dist` 与源一致、三个浮层都引用**共用常量**且无第二份内联样式 ③ ★★ **`wheelIntent()` 纯函数 7 个边界用例**：空页 / 不足一屏 / 已滚到边界 ⇒ 都必须判 `'page'` ④ 运行期：18 项 → **18 格**、数字键角标恰好 10 个、文字**零旋转**；26 项 → **全部进 DOM 且可滚动**；行数恒 4、槽位恒 20、8 与 18 项**首格几何逐项相同**；★ **真机滚轮 `通桥 → 空盒子 → 内网`**。<br>★★ 起因有两条**真实事故**：v4.1 之前 `WHEEL_MAX = 10` 是硬上限、超出**直接丢弃**；以及 v4.1.1 用户实测**切到空盒子后滚轮失效、被困在空页里**（守卫误写成"这一页有没有内容"）。③ 就是后者的直接判据。 | **OK** | ✔ |
+| **`verify-falsify-permgates.mjs`** | **权限门控那一族改动的反证（11 条）**：把"每个新站点都弹一次 `permissions.request`" / "用 `confirm` 当门控" / "`permissions.contains` 的结果被当成永久事实"等**修复前的写法**逐条注回去，每条都必须变红。<br>★ 它验的是 v4.2.12 那条"**只对站点做增删改，不再把浏览器授权当成站点管理的一部分**"：判据不能只看"弹窗没了"，还要看"**该静默补齐的地方仍然会补**"（`ensureHostPermission` 在点击手势里跑）。<br>★ 与 `verify-falsify-defectfix.mjs` 同一套纪律：锚点必须唯一、行尾先归一化、真实工作区不动。 | **11/11** | ✘ |
+| **`verify-script-roster.mjs`** | ★★ **"加脚本要同步本文这张表"这条约定，自己的判据**（静态、秒级，v4.2.12 新增）：① 盘上每个 `verify-*.mjs` 都在 README 里被提到 ② 反向：表格里不留**指向不存在脚本的幽灵条目** ③ README 里那个"本表里的 `N 个`"活数字必须等于实际个数 ④ 自证：脚本数 > 20（否则前三条在"几乎没脚本"时恒真）。<br>★★ 起因：这张表**已经漏收过两次**（`verify-agents-budget.mjs` / `verify-boxsync.mjs` 在盘上跑了很久却从未进表），而那次是**靠人肉对账**发现的。README 自己诚实写着"「脚本清单 vs 本表」的自动比对目前仍然没有" —— 这条判据就是把那句话补上。<br>★ 第 ③ 条治的是 README 自己记过的事：那个数字**连续写错过五次**，因为"一个没人会去核对的数字，会安静地过期好几个月"。⇒ 现在它是**被算出来的**。<br>★ 它上线第一次跑就**抓到了它自己**（新脚本自己没进表）—— 这是它有效的第一个证据；本轮它一共**抓到三次**（自己 + `verify-radius` + `verify-falsify-radius`）。 | **6/6** | ✘ |
+| **`verify-radius.mjs`** | ★★ **圆角刻度**（静态、秒级，v4.2.12 新增）：① 四档 `8 / 12 / 16 / 999px` 的值等于约定 ② `border-radius` **不许有裸 px**（`50%` 与 `0` 除外）③ 只许引用那四档 ④⑤ Shadow DOM 那份必须带兜底、且兜底值等于令牌值。<br>★★ 起因：本仓圆角是**两档 + 22 处裸值**（`5/6/8/9/10/11/13px` 七种取值挤在 5–13 之间），而 `akso-cloud` 是 `8/12/16`。用户 2026-10-13 拍板「**akso-pass 用 8/12/16**」⇒ **卡片 16px 刻意不变**，动的是中间档（10→12）与原先不存在的小档。<br>★ **为什么放行 `50%` 而不放行 `999px`**：`50%` 是"做成圆"（与元素尺寸成比例，没有第二个合理值，令牌化它只是形式主义）；`999px` 是**胶囊弧度**，那是个具体的设计选择 ⇒ 它现在有令牌了（原先全仓裸写 17 处，想调得搜全仓）。<br>**⑥ 是跨仓判据的“另一端”**：kso-cloud/tools/verify_two_ends_roles.py 拿**两端同名**的选择器逐个比档位（那是**测量**，所以可靠），但它只覆盖两端都存在的名字。而我自己犯过一次错 —— 看名字猜“角色是卡片”，把 akso-cloud 的 .box-option / .import-panel / .batch-bar 一起提到 16px，而本仓是 12px：**一边在修“两端不一致”，一边造了 5 处新的不一致**。⇒ 把这份“名字 → 档”的小名单写死在本条里，本仓改档位时当场红。 | **12/12** | ✘ |
+| **`verify-falsify-radius.mjs`** | **上一条的反证（9 条）**：注入"修复前"的写法 —— `--sb-radius` 改回 10px / 删掉 `--sb-radius-sm` / 把一处改成裸 `5px` / 引用没定义的档 / 拿掉 Shadow DOM 的兜底 / 兜底值写错 ⇒ 每条都必须**变红且红在指名的那条断言上**。<br>★ 定位用**断言名**而不是小节号：判据里的小节标题是**合并**的（`=== ② … / ③ … ===`）且会重复出现，按小节号找会挑错，而那会被误读成"判据写错了"（本轮的 `verify-falsify-spacing` 就在这上面栽过一次）。 | **9/9** | ✘ |
 
-★ **本表里的"29 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+### ★★ 提交前怎么跑才**不重复**（2026-10-18 实测）
+
+本仓的脚本分两组（`run-all.mjs` 的 `BROWSER_SCRIPTS`，双向自证）：
+
+| 组 | 个数 | 耗时 | 跑法 |
+|---|---|---|---|
+| 静态（不需要浏览器） | 24 | ≈58 s | `run-all.mjs --static` |
+| 浏览器（真起 Chromium） | 13 | ≈62 s | `run-all.mjs --browser-only` |
+| 全部 | 37 | ≈110 s | `run-all.mjs --browser` |
+
+而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
+（日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
+⇒ 所以"提交前全量"有**两种**跑法，第二种不会让任何脚本跑两遍：
+
+| 跑法 | 耗时 | 有没有重复 |
+|---|---|---|
+| `acceptance.py` + `run-all.mjs --browser` | 44 + 110 = **154 s** | ★ **有**：14 个静态脚本跑了两遍 |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | 44 + 62 = **106 s** | ✅ **没有** |
+
+★ 这个"不重叠"不是约定，是**判据**：`acceptance.py` 的 §10 会检查它跑的那 14 个脚本
+**都不需要浏览器**（谓词与本文件 `BROWSER_SCRIPTS` 的自证是同一个）。
+⇒ 一旦有人把其中某个改成要浏览器，那条判据当场红，而不是悄悄变成"跑两遍"。
+
+★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
+（例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
+
+★ **本表里的"37 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -108,7 +142,7 @@ node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：3/3
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 29
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 37
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

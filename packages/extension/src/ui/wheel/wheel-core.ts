@@ -21,7 +21,9 @@ import type { ParallelAccount, ParallelAccountStatus } from '../../shared/types'
  *
  * - `WheelAccount`：三个网格共用的账号视图类型；
  * - `groupPagesByBox`：**盒子 = 一页**的分页语义（账号轮盘用）；
- * - `truncate` / `DEFAULT_BOX`：小的显示工具。
+ * - `truncate` / `DEFAULT_BOX`：小的显示工具；
+ * - `fetchPreferredBox` / `applyPreferredPage`：**当前站点优先盒子**（2026-10-19，
+ *   两个消费者：小窗 + 页内浮层）。它们不画东西，只决定"从第几页开始"。
  *
  * ⇒ 布局无关 ⇒ 将来再换形式（列表/树/看板）这些都不用动。
  */
@@ -52,4 +54,66 @@ export function groupPagesByBox(
     byName.get(name)!.push(a);
   }
   return pages;
+}
+
+/**
+ * ★★ 2026-10-19（用户要求 ⑦）：向后台要"当前站点优先的盒子"。
+ *
+ * `host` 由**小窗**传（它的页签没有站点上下文）；页内浮层不传 ——
+ * 后台用 `sender.tab` 取当前页，身份归属不能交给页面自报。
+ *
+ * 取不到（后台无应答 / 离线 / 老版本）一律返回空串 ⇒ 轮盘从第一页开始，
+ * 与改动前完全一致。**不猜**一个盒子。
+ */
+export async function fetchPreferredBox(host = ''): Promise<string> {
+  /* ★ 1.5 秒上限：后台要打两次云端（盒子 + 站点）。冷启动/弱网时它可能很久，
+   *   而**轮盘不能因此不显示** —— 拿不到就当没有偏好，先按默认盒画出来。 */
+  const timeout = new Promise<string>((resolve) => {
+    setTimeout(() => resolve(''), 1500);
+  });
+  try {
+    const res = (await Promise.race([
+      chrome.runtime.sendMessage({
+        kind: 'par.wheelContext',
+        ...(host ? { host } : {}),
+      }),
+      timeout,
+    ])) as
+      | { kind?: string; result?: { ok?: boolean; data?: { preferredBox?: string } } }
+      | undefined;
+    const data = res?.result?.ok ? res.result.data : undefined;
+    return typeof data?.preferredBox === 'string' ? data.preferredBox : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 把"优先盒子"落到页序号上。
+ *
+ * - 该盒已有页 ⇒ 返回它的下标
+ * - 后台说有这个盒子、但轮盘页里还没有（空盒没被记住）⇒ **补一页空页**
+ *   （用户要求"跳转到关联了站点 A 的盒子"，而不是悄悄回到第一页）
+ * - 默认盒为空时**不补** —— 空默认盒是自动禁用的（`groupPagesByBox` 不为它出页），
+ *   补出来会与"禁用盒不进轮盘"的既有规则冲突
+ * - 没有偏好 ⇒ `-1`（调用方保持第 0 页）
+ */
+export function applyPreferredPage(
+  pages: { label: string; accounts: WheelAccount[] }[],
+  preferred: string,
+  defaultBoxName: string = DEFAULT_BOX,
+): number {
+  const want = preferred.trim();
+  if (!want) {
+    return -1;
+  }
+  const hit = pages.findIndex((p) => p.label === want);
+  if (hit >= 0) {
+    return hit;
+  }
+  if (want === defaultBoxName) {
+    return -1;
+  }
+  pages.push({ label: want, accounts: [] });
+  return pages.length - 1;
 }

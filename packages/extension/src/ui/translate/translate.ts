@@ -24,7 +24,18 @@
  * → ④ 高级（语言/引擎，默认折叠但 summary 回显当前值） → ⑤ 统计 → ⑥ 吸底保存
  */
 import { EXT_VERSION, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../../shared/constants';
+import { getForwardingLogger } from '../../shared/log';
 import { toSnakeCase } from '../../shared/snake-case';
+
+/* ★ 用 `getForwardingLogger` 而不是 `getLogger`：**与 `ui/parallel/parallel.ts` 同一形状**。
+ *
+ * 为什么（`parallel.ts:17` 那条注释讲得很清楚）：UI 页面跑在**自己的进程**里，
+ * `getLogger()` 记的日志进的是**这个页面的**内存环 ⇒ **永远到不了诊断包**。
+ * 而转发 logger 会把行送回 background ⇒ 排障时在诊断包的 `appLogs` 里看得到。
+ *
+ * ★ 这一条对"读设置失败"尤其要紧：它是**用户报告"我的设置没了"**时
+ *   唯一能证明"其实是读失败"的证据，而诊断包正是用户会导出的东西。 */
+const log = getForwardingLogger('translate');
 import {
   loadTranslationSettings,
   saveTranslationSettings,
@@ -284,8 +295,17 @@ async function init(): Promise<void> {
   let settings: TranslationSettings;
   try {
     settings = await loadTranslationSettings();
-  } catch {
-    // storage 不可用时页面也要可用（否则整页空白，用户以为扩展坏了）
+  } catch (e) {
+    /* ★★ 2026-10-16：原来是裸吞（只留一句"页面也要可用"的注释）。
+     *
+     * 「回落保证页面可用（否则整页空白，用户以为扩展坏了）」**是对的**，
+     * 但"不留痕"是错的 —— 用户看到的是**"我的设置被重置了"**，
+     * 而不是"读失败了"。这与**已被判据点名的** `favorites.listFavorites`
+     * （"读失败 ⇒ 回落内置默认 ⇒ 界面对用户说谎"）**逐字同形**，
+     * 而这一条当时没被点名。⇒ 现在补上，并进 `verify-log-redaction.mjs` §13 的 CASES。
+     */
+    log.warn('读翻译设置失败 ⇒ 本次渲染用默认值（用户之前改的设置这一次看不到）：%s',
+      e instanceof Error ? e.message : String(e));
     settings = {
       translate_enabled: true,
       floating_icon_enabled: true,

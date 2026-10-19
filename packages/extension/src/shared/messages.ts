@@ -1,5 +1,5 @@
 import type { LogRecord } from './log';
-import type { ParallelAccount, ParallelAccountStatus, ParBox } from './types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -42,28 +42,101 @@ export type RuntimeRequest =
    * ★ 与 `par.boxes` 同一约定：`result.data` 为 `null` 表示"没拿到"（离线），
    *   那时 UI **一个字都不动** —— 不要把"没拿到"显示成"名字是空的"。 */
   | { kind: 'par.sites' }
-  | { kind: 'par.renameSite'; host: string; name: string }
   /**
    * 添加站点时顺带把名称落库（v4.2.1）。
    *
-   * ★ 与 `par.renameSite` 的差别是**语义**而不是实现：这个用于"站点还不存在于云端"的场景，
-   *   它必须先建站点（`ensureSite`）再写名字；`renameSite` 假定站点已存在、找不到就报错。
-   *   合成一条的话，"新建"与"改名"就会共用一条找不到时的处置，而它们该有相反的行为
-   *   （新建=创建，改名=报错）。
+   * ★ 这个 kind 同时承担"新建站点"与"给已存在的站点改个名"：
+   *   站点不存在时先建（`POST /api/sites`），存在时 PATCH 名称。
+   *   2026-10-19 起站点编辑走 `par.updateSite`（名称/地址/备注一起改），
+   *   这个 kind 只留给站点表单的"新增"。
+   * ★ `createBox`（2026-10-19）：新建站点时是否同步建一个同名盒子，缺省 true
+   *   （保持旧行为）。站点已存在时这个字段没有意义。
    */
-  | { kind: 'par.upsertSite'; host: string; name: string }
+  | { kind: 'par.upsertSite'; host: string; name: string; createBox?: boolean }
+  /**
+   * ★ 2026-10-19：**编辑站点**（用户要求「站点管理缺少编辑功能」）。
+   *
+   * 与云端控制台 `PATCH /api/sites/{id}` 同一条端点、同一组字段
+   * （名称 / 地址 / 备注）。`siteId` 是服务端主键 —— 扩展平时只认 host，
+   * 而改地址会让 host 跟着变，所以必须按 id 定位。
+   *
+   * ★ 字段缺省 = 不改（与 `AccountPatch` 同一口径）。`baseUrl` 变了等于换 host：
+   *   服务端会重新归一化并记住新协议，该站点下的账号仍按 `site_id` 关联。
+   */
+  | { kind: 'par.updateSite'; siteId: string; name?: string; baseUrl?: string; note?: string }
+  /**
+   * ★★ 2026-10-19：**账号轮盘的起始页**（用户要求：当前页所属站点有关联盒子时，
+   * `Alt+Q` 应优先停到那个盒子）。
+   *
+   * `host` 由**小窗**传入（它自己的页签没有 sender 上下文）。页内浮层不传，
+   * 由 background 从 `sender.tab` 取当前页 host —— 让调用方自报 host 等于把
+   * "用户现在在哪个站点"交给页面决定，而浮层与目标页必须是同一个。
+   *
+   * 返回值：
+   *   · `preferredBox` —— 要优先显示的盒子名。命中关联盒子时是它；没有关联盒子时
+   *     是**云端默认盒名**（用户要求"则为默认盒子"）；离线拿不到云端数据时是空串，
+   *     由轮盘用本机记住的默认盒兜底
+   *   · `matched`      —— 是"该站点确实有关联盒子"，还是只是兜底
+   *   · `host`         —— 归一后的站点 host（诊断用）
+   */
+  | { kind: 'par.wheelContext'; host?: string }
   /**
    * ★ v4.2.7：删**云端**站点的记录（用户要求"删除站点时云端也要删"）。
    *
    * ★ 服务端那条 `DELETE /api/sites/{id}` **会级联删掉该站点下的所有账号**，
-   *   所以调用方（UI）必须**先确认该站点没有账号** —— 这个 kind 只负责如实执行与回报，
-   *   不替调用方做决定。三态返回的含义见 `parallel-store.deleteSite` 的注释。
+   *   所以这个 kind 的返回值是**四态**（见 `CloudDeleteSiteResult`），其中
+   *   `blocked` 就是服务端的 409：它把"会被一起删掉的账号"带回来，
+   *   让调用方能把话说具体，而不是只报一个数字。
+   *
+   * ★★ v4.2.12：`force` 就是服务端那个查询参数。语义**必须**由调用方显式表达：
+   *   · 不传 / `false` ⇒ "我不知道它会连带删账号，先让我看看"
+   *   · `true`         ⇒ "我看过名单了，确认连账号一起删"
+   *   服务端把"我要连账号一起删"做成一个**必须写出来的动作**（`sites.py` 的注释），
+   *   这里照抄那个口径 —— 默认值绝不能让级联删除静默发生。
    */
-  | { kind: 'par.deleteSite'; host: string }
+  | { kind: 'par.deleteSite'; host: string; force?: boolean }
   | { kind: 'par.create'; siteHost: string; tabName: string; username: string; password: string; open: boolean; box?: string; scheme?: 'http' | 'https' }
   | { kind: 'par.probeScheme'; host: string }
-  | { kind: 'par.update'; id: string; patch: Partial<Pick<ParallelAccount, 'tabName'>> }
+  /**
+   * ★★★ v4.2.12：**账号编辑**（用户要求"两端管理逻辑一致"，以云端为准）。
+   *
+   * 云端控制台的编辑弹窗能改六样：账号名 / 页签名 / **所属站点** / 盒子 / 密码 / 备注。
+   * 而扩展这边此前**只能改页签名**（`Partial<Pick<ParallelAccount,'tabName'>>`）——
+   * 也就是说"选错了站点"在扩展里只能删掉重建，而重建会丢掉密码与备注。
+   *
+   * ⇒ patch 的类型放宽成**服务端 `AccountPatch` 的那一组字段**（逐字段可选，
+   *   `undefined` 一律表示"这一项不动"）。
+   *
+   * ★★ 三条不能搞错的语义（每一条在云端 `site.js` 的编辑弹窗里也都写着）：
+   *   · `password` **缺省 = 不改**，**空串 = 清空**。合成一个会让"没填"变成"清空了密码"，
+   *     而用户看不到任何提示、下次打开账号时填表会静默失效。
+   *   · `siteId` 只在**真的换了站点**时才带上：无脑带上会让每次保存都去走一遍
+   *     "挪站点"的校验（同一站点下不能有同名账号），而同站点下它不该触发任何站点逻辑。
+   *   · `box` 传的是**盒名**，等于默认盒名时要翻成空串（服务端的存储形态）。
+   */
+  | {
+      kind: 'par.update';
+      id: string;
+      patch: {
+        username?: string;
+        tabName?: string;
+        siteId?: string;
+        box?: string;
+        password?: string;
+        note?: string;
+      };
+    }
   | { kind: 'par.moveBox'; id: string; box: string }
+  /**
+   * ★★★ v4.2.12：**批量删除账号**（用户要求补齐"两端管理逻辑一致"）。
+   *
+   * 服务端早就有 `POST /api/accounts/batch-delete`（云端控制台的「删除所选」走的就是它），
+   * 而扩展这边只有逐个删除。批量走**服务端那一条**而不是循环发 N 个 DELETE：
+   *   · N 次网络往返 vs 1 次；
+   *   · 服务端只在真的删掉行时才推 `revision`（循环发会让版本号推 N 次）；
+   *   · 部分失败时服务端能给出准确的条数，而循环发只能报"第 3 个失败了"。
+   */
+  | { kind: 'par.batchDelete'; ids: string[] }
   | { kind: 'par.renameBox'; from: string; to: string }
   | { kind: 'par.deleteBox'; name: string }
   /**
@@ -192,14 +265,25 @@ export type RuntimeResponse =
   /* `null` = 没拿到（离线）⇒ UI 保持原样，不要把"没拿到"渲染成"名字为空"。
    * ★ 2026-10-13 起多带一个 `id`：盒子的"关联站点"要拿它当 `siteId` 去绑定
    *   （服务端按 `siteId` 认站点，而 UI 平时只认 host）。加字段是兼容的。 */
-  | { kind: 'par.sites'; result: Result<{ id: string; host: string; name: string; displayName: string }[] | null> }
-  | { kind: 'par.renameSite'; result: Result<{ host: string; name: string; displayName: string }> }
+  | { kind: 'par.sites'; result: Result<CloudSiteSummary[] | null> }
   | { kind: 'par.upsertSite'; result: Result<{ host: string; name: string; displayName: string }> }
-  /** ★ v4.2.7：三态 —— `deleted`（含级联删了几个账号）/ `missing` / `offline` */
-  | { kind: 'par.deleteSite'; result: Result<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }> }
+  /** ★ 2026-10-19：编辑站点（返回更新后的整行，UI 不必自己拼）。 */
+  | { kind: 'par.updateSite'; result: Result<CloudSiteSummary> }
+  /** ★ 2026-10-19：`Alt+Q` 的起始盒子（见上行请求的说明）。 */
+  | { kind: 'par.wheelContext'; result: Result<{ host: string; preferredBox: string; matched: boolean }> }
+  /**
+   * ★ v4.2.7 起是**多态**返回，v4.2.12 补上 `blocked`：
+   *   · `deleted` —— 删掉了；`accountsDeleted` 是**服务端**报的级联账号数
+   *   · `missing` —— 云端本来就没有这条站点记录
+   *   · `offline` —— 连不上云端（**本机什么都没动**，如实说）
+   *   · `blocked` —— 服务端 409：站点下还有账号，`usernames` 是**具体是哪些**
+   */
+  | { kind: 'par.deleteSite'; result: Result<CloudDeleteSiteResult> }
   | { kind: 'par.create'; result: Result<ParallelAccount> }
   | { kind: 'par.probeScheme'; result: Result<'http' | 'https'> }
   | { kind: 'par.update'; result: Result<ParallelAccount> }
+  /** ★ v4.2.12：批量删除的回报是**删掉的条数**（服务端只对真的删掉的行推 revision） */
+  | { kind: 'par.batchDelete'; result: Result<{ deleted: number }> }
   | { kind: 'par.moveBox'; result: Result<ParallelAccount> }
   | { kind: 'par.renameBox'; result: Result<{ moved: number }> }
   | { kind: 'par.deleteBox'; result: Result<{ moved: number }> }

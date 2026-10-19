@@ -398,21 +398,83 @@ function start(): void {
   }
 }
 
-/** 就绪（document_idle）后主动向 background 索取本次自动登录凭证；失败则轻量重试 */
+/**
+ * ★★ v4.2.12：**跨域 iframe 不许开口索取凭证**。
+ *
+ * `manifest.json` 里本脚本是 `all_frames: true` ⇒ 它在**每一个** iframe 里都跑，
+ * 包括第三方广告 / 统计 / 嵌套页。而之前它们**每个都会发一次请求**，后台逐条
+ * 按来源域拒掉（fail-closed，安全上是对的），代价是 `ql:forensics` 的 120 条环形
+ * 被 `autoLoginRejected` 刷满 —— 实测那一轮 23 条拒绝里 `frameId` 有 0/10/16/22/28/34/
+ * 81/93/115，**绝大多数根本不是顶层 frame**。日志环被噪声占满 = 真实的失败看不见。
+ *
+ * 判据很简单：**同源才可能是本账号站点的 frame**。目标站的密码框在**同源**
+ * `srcdoc` iframe 里（见文件头），所以这一刀不会打断主链路。
+ * 后台那道来源域校验**照旧保留**（这里是省流量的前置过滤，不是安全边界）。
+ */
+function originMatters(): boolean {
+  try {
+    return window.location.origin === window.top!.location.origin;
+  } catch {
+    // 读不到 top 的 location ⇒ 跨域 ⇒ 一定不是本账号站点的 frame
+    return false;
+  }
+}
+
+/**
+ * 就绪后向 background 索取本次自动登录凭证。
+ *
+ * ★★ v4.2.12：**必须重试**（这是用户报的「快捷登录不再自动填账密」的直接成因）。
+ *
+ * ## 缺陷形态
+ *
+ * 后台对 `sb:autoLoginRequest` 是 **fail-closed** 的：本页签还没绑定账号时回 `null`
+ * （来源域校验，见 `service-worker.ts` 那个分支的长注释）。而本函数**原来只问一次** ——
+ * 拿到 `null` 就什么都不做、也没有任何后续动作，整条自动填充链路就此**静默结束**。
+ *
+ * 谁先到？两边都在抢：后台要 `await` 云端账号详情、再 `tabs.create`、再写绑定表；
+ * 而本脚本在 `document_idle` 就跑起来了。站点越快，越容易撞上。
+ * 实测证据（本机 Chrome 扩展存储的 `ql:forensics`）：**23 条**
+ * `{"ev":"autoLoginRejected","reason":"unbound","boundHost":null,...}`，
+ * 且**没有一条成功记录** —— 也就是这条路在这些站点的每一次打开上都走空了。
+ *
+ * ## 为什么是"退避重试"而不是"等一个信号"
+ *
+ * 后台那边确实可以主动 `tabs.sendMessage` 推一次（旧实现里就有一条 `sb:autoLogin`
+ * 下行消息），但**那条消息依赖"发送时内容脚本已就绪"** —— 后台发早了消息会掉在地上，
+ * 而它同样不会重试（`pushDown` 的 catch 明说"内容脚本未就绪…会再次推送"，
+ * 但 `open()` 只推一次）。于是"谁等谁"变成一个双向的推断，两边都猜对方。
+ * ⇒ 让**内容脚本**持有唯一的重试循环：它是唯一知道"我准备好了"的一方，
+ *   而后台的回答是幂等的纯查询（`getPendingAutoLogin`），多问几次没有副作用。
+ *
+ * ★ 上界取 **35 秒**、间隔退避到 3 秒：`pendingAutoLogin` 的 TTL 是 **60 秒**
+ *   （见 `background/core/auto-login-cache.ts`），所以这个窗比 TTL 短，
+ *   不会问到一个已经过期被清掉的条目；而它也比后台那一串 await 宽裕得多。
+ * ★ 命中之后**立刻停**（`credentials` 一旦有值就不再轮询），稳态下零开销。
+ * ★ 每一次失败的尝试都**不写日志**：本仓的日志环形很小，而这条路径每次开账号都会走
+ *   —— 记成功那一次就够（见下面的 `log.debug`）。
+ */
 async function requestCredentials(attempt = 0): Promise<void> {
   if (credentials) {
     return;
   }
+  /** 退避表（毫秒）。★ 刻意不在里面用一个公式：这些数是**实测出来的手感** ——
+   *  前 4 次要在 1 秒内问完（后台通常只要一次云端请求就绪），
+   *  之后退到秒级，避免把 SW 唤醒成忙轮询。 */
+  const BACKOFF_MS = [120, 250, 400, 700, 1200, 1800, 2600, 3000];
   try {
     const res = await chrome.runtime.sendMessage({ type: CONTENT_MESSAGE.autoLoginRequest });
     if (res && typeof res === 'object' && typeof res.username === 'string' && typeof res.password === 'string') {
       credentials = { username: res.username, password: res.password };
+      log.debug('background 交付待登录凭证，开始自动填表');
       start();
+      return;
     }
   } catch {
-    if (attempt < 3) {
-      window.setTimeout(() => void requestCredentials(attempt + 1), 500);
-    }
+    // 消息层失败（SW 正在启动/被回收）与"还没绑定"走同一条重试路 —— 两者对用户
+    // 是同一件事：现在还没有凭据，过一会儿可能就有了。
+  }
+  if (attempt < BACKOFF_MS.length) {
+    window.setTimeout(() => void requestCredentials(attempt + 1), BACKOFF_MS[attempt]);
   }
 }
 
@@ -432,4 +494,13 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
   }
 });
 
-void requestCredentials();
+/**
+ * 只有「可能是本账号站点」的 frame 才发起索取（见 `originMatters` 的说明）。
+ *
+ * ★ 后台那条下行消息（`sb:autoLogin`）**不设这道门**：它是后台**主动**推的，
+ *   收到就说明后台已经认定这个 frame 有权拿（以后台自己的来源域校验为准）——
+ *   在这里再加一道本地判断只会造出**第二个判据**，而两个判据迟早不一致。
+ */
+if (originMatters()) {
+  void requestCredentials();
+}

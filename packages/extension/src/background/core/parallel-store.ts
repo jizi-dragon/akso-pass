@@ -1,7 +1,7 @@
 import { SESSION_COLORS } from '../../shared/constants';
 import { cloudStore, fetchPlaintextPassword } from './cloud-store';
 import { cacheBelongsTo, loadSnapshot, saveSnapshot } from './account-cache';
-import type { ParallelAccount } from '../../shared/types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount } from '../../shared/types';
 
 /** 新增账号的入参 */
 export interface ParallelAccountInput {
@@ -26,6 +26,27 @@ export interface ParallelStore {
   create(input: ParallelAccountInput): Promise<ParallelAccount>;
   updateScheme(id: string, scheme: 'http' | 'https'): Promise<ParallelAccount>;
   updateTabName(id: string, tabName: string): Promise<ParallelAccount>;
+  /**
+   * ★★★ v4.2.12：**账号编辑**（六样字段，与云端控制台的编辑弹窗一一对应）。
+   *
+   * 它**取代**原来那个只能改页签名的入口吗？没有 —— `updateTabName` 保留，
+   * 因为"改标题"是一个独立、高频、且**只碰一个字段**的动作（页签名就是标签标题）。
+   * 让高频动作走一条窄通路，语义上更安全：它**不可能**误改站点或密码。
+   * ★ 宽的那条（本方法）走「编辑」弹窗 —— 低频，且用户明确知道自己在改什么。
+   */
+  updateAccount(
+    id: string,
+    patch: {
+      username?: string;
+      tabName?: string;
+      siteId?: string;
+      box?: string;
+      password?: string;
+      note?: string;
+    },
+  ): Promise<ParallelAccount>;
+  /** ★ v4.2.12：批量删除（走服务端的 batch-delete，返回真的删掉了几条） */
+  batchDelete(ids: string[]): Promise<number>;
   updateBox(id: string, box: string): Promise<ParallelAccount>;
   renameBox(from: string, to: string): Promise<number>;
   clearBox(name: string): Promise<number>;
@@ -40,19 +61,25 @@ export interface ParallelStore {
    *   ★ 注意这里写的是 `src/ui/` 而不是带通配的写法 —— 后者含注释开始标记，
    *     会让"块注释配平"判据（`verify-css-vars.mjs`）**误判**（见 PITFALLS #43）。
    */
-  listSites(force?: boolean): Promise<{ id: string; host: string; name: string; displayName: string }[]>;
-  /** 给站点改自定义名称（只改 name，不动 baseUrl —— 后者是 host 的唯一来源） */
-  renameSite(host: string, name: string): Promise<void>;
-  /** 添加站点时落名：站点不存在就建（与 `renameSite` 的差别是"容忍不存在"） */
-  upsertSite(host: string, name: string): Promise<void>;
+  listSites(force?: boolean): Promise<CloudSiteSummary[]>;
+  /** 添加站点时落名：站点不存在就建 */
+  upsertSite(host: string, name: string, createBox?: boolean): Promise<void>;
+  /** ★ 2026-10-19：编辑站点（名称 / 地址 / 备注），见 `cloud-store.updateSiteOnCloud` */
+  updateSite(
+    siteId: string,
+    patch: { name?: string; baseUrl?: string; note?: string },
+  ): Promise<CloudSiteSummary>;
   /**
    * ★ v4.2.7：删云端站点（**服务端会级联删掉它下面的账号**）。
    *
-   * ★ 返回值刻意做成三态而不是 `void`：`missing`（云端本来就没有）与
+   * ★ 返回值刻意做成**四态**而不是 `void`：`missing`（云端本来就没有）与
    *   `deleted` 都算"云端已经干净了"，而 `offline` 意味着**本机删了、云端还在** ——
    *   这三件事对用户的意思完全不同，不能压成一个布尔。
+   * ★★ v4.2.12 加 `blocked`：服务端 409（站点下还有账号）**带着名单**回来，
+   *   所以它必须是一支**正常分支**，而不是冒成一句 `HTTP 409` 的异常
+   *   （那会让"级联删除"这个后果没有机会被摊开确认）。见 `CloudDeleteSiteResult`。
    */
-  deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }>;
+  deleteSite(host: string, force?: boolean): Promise<CloudDeleteSiteResult>;
   /* ---------------- 盒子的三个写动作（2026-10-13 新增） ----------------
    *
    * ★★ 为什么这三个必须经过这一层，而不是让 UI 自己拼请求：
@@ -237,6 +264,24 @@ export const parallelStore: ParallelStore = {
     return cloudStore.updateTabName(id, tabName);
   },
 
+  updateAccount(
+    id: string,
+    patch: {
+      username?: string;
+      tabName?: string;
+      siteId?: string;
+      box?: string;
+      password?: string;
+      note?: string;
+    },
+  ): Promise<ParallelAccount> {
+    return cloudStore.updateAccount(id, patch);
+  },
+
+  batchDelete(ids: string[]): Promise<number> {
+    return cloudStore.batchDelete(ids);
+  },
+
   updateBox(id: string, box: string): Promise<ParallelAccount> {
     return cloudStore.updateBox(id, box);
   },
@@ -257,20 +302,23 @@ export const parallelStore: ParallelStore = {
    *   ⇒ 直接让 `OfflineError` 抛出去，由 UI 显示"离线"而不是显示一个**半空的名字**。
    *   ★ 这条判断是有意的：宁可不显示，也不要显示"名字为空 = 看起来没设过"。
    */
-  listSites(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
+  listSites(force = false): Promise<CloudSiteSummary[]> {
     return cloudStore.listSites(force);
   },
 
-  renameSite(host: string, name: string): Promise<void> {
-    return cloudStore.renameSite(host, name);
+  upsertSite(host: string, name: string, createBox = true): Promise<void> {
+    return cloudStore.upsertSite(host, name, createBox);
   },
 
-  upsertSite(host: string, name: string): Promise<void> {
-    return cloudStore.upsertSite(host, name);
+  updateSite(
+    siteId: string,
+    patch: { name?: string; baseUrl?: string; note?: string },
+  ): Promise<CloudSiteSummary> {
+    return cloudStore.updateSite(siteId, patch);
   },
 
-  deleteSite(host: string): Promise<{ kind: 'deleted' | 'missing' | 'offline'; accountsDeleted?: number }> {
-    return cloudStore.deleteSite(host);
+  deleteSite(host: string, force = false): Promise<CloudDeleteSiteResult> {
+    return cloudStore.deleteSite(host, force);
   },
 
   /* ---------------- 盒子的三个写动作（2026-10-13）：纯转发，语义在 cloud-store ---------------- */

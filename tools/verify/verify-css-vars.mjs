@@ -167,8 +167,42 @@ for (const html of htmls) {
   //   ★★ 我第一版探针就栽在这里：它**把 `theme.css` 排除在"使用者"之外** ⇒
   //      造出了两个假缺陷。**"谁算使用者"这个范围，划错一次就是一次假红。**
   const allUiText = allUi.map((p) => stripComments(readFileSync(p, 'utf8'))).join('\n');
+  /* ★★ 2026-10-13：**刻度令牌是刻意共用的，允许"定义了但本仓不用"**。
+   *
+   * ## 为什么需要这个豁免（以及它为什么不是"把判据放宽"）
+   *
+   * `tokens.css` 里那 7 档 `--fs-*` 是**两端共用的同一套刻度**
+   * （`akso-cloud` 的 `test_type_scale.py` 逐字钉着同一组名字与值）。
+   * 而 akso-pass **用不到 32/54 这两档**（那是展示级大标题，
+   * 本仓最大的字是空态图标 18px）。
+   *
+   * ⇒ 若没有这条豁免，只有两个选择，两个都坏：
+   *   ① 从 akso-pass 删掉 32/54 ⇒ **两端的刻度不再相同**，
+   *      而"同一套"正是用户 2026-10-13 那条要求的全部内容；
+   *   ② 把这条反向判据整条删掉 ⇒ 失去"定义了没人用"的检查（那是真缺陷的形态）。
+   * ⇒ 所以留一条**逐条写明理由**的豁免，而不是动判据。
+   *
+   * ★ 与 `AGENTS.md` 规则 28（豁免必须被当作缺陷对待、且每条都要配可执行判据）
+   *   的关系：这里配的判据就是**下面这段自证** ——
+   *   豁免表非空时，每一条都必须有长度足够的理由文本。
+   *   ★ 空理由 / 占位理由会被当场抓住，而不是"以后再补"。
+   */
+  const INTENTIONALLY_SHARED = {
+    '--fs-32': '展示级大标题档；与 akso-cloud 共用同一套刻度，本仓暂未使用（最大的字是 18px 的空态图标）',
+    '--fs-54': '展示级大标题档；同上，两端刻度必须逐字相同',
+    '--sp-11': '间距刻度第 12 档（64px）；与 akso-cloud 共用同一套 14 档，本仓最大的留白是 56px',
+    '--sp-12': '间距刻度第 13 档（80px）；同上 —— 两端刻度必须逐字相同，缺一档就不叫"同一套"',
+    '--sp-13': '间距刻度第 14 档（88px）；同上',
+  };
+  const badAllow = Object.entries(INTENTIONALLY_SHARED)
+    .filter(([, why]) => !why || why.trim().length < 12)
+    .map(([k]) => k);
+  check(`${rel} 共用刻度豁免的每条都写明了理由`, badAllow.length === 0,
+    badAllow.join(' ') || `${Object.keys(INTENTIONALLY_SHARED).length} 条`);
+
   const unused = [...defs.keys()].filter(
-    (name) => !new RegExp(`var\\(\\s*${name.replace(/[-]/g, '\\-')}\\b`).test(allUiText));
+    (name) => !(name in INTENTIONALLY_SHARED)
+      && !new RegExp(`var\\(\\s*${name.replace(/[-]/g, '\\-')}\\b`).test(allUiText));
   check(`${rel} 定义的变量都有人用（反方向）`, unused.length === 0,
     unused.join(' ') || `检查了 ${defs.size} 个`);
 

@@ -56,11 +56,33 @@ try {
       mutate(s) { return s.replace('void parallelSession.restore().catch((e: unknown) => {', 'void 0; // REMOVED restore\n  ((e: unknown) => { void e; })('); },
     },
     {
-      name: '④ 残留判定退回"包含通配"的恒真形态',
+      /* ★★ v4.2.12：这条反证的**注入目标跟着判据换向**了。
+       *
+       * 旧目标：`revokeHost` 里那句"按 host 归属算残留" —— 而那个函数连同
+       * "撤销授权 + 判定残留 + 落停用名单"的三合一已经整体删掉（用户要求
+       * "站点管理只做增删改，无需关注授权"）。
+       *
+       * ⇒ 现在注入到**新的那个判定点**：`ensureHostPermission()` 决定"授权够不够用"。
+       *   把里面那句 `contains` 实查换成"扫一遍 origins 里有没有通配"这种**恒真**写法 ——
+       *   那正是当初让"删任何站点都弹未能回收"的病根（manifest 自己的声明恒在）。
+       */
+      name: '④ 授权判定退回"包含通配"的恒真形态',
       file: 'par',
-      mutate(s) { return s.replace(
-        "  const hostOrigins = allOrigins.filter((o) => originToHost(o) === displayHost);",
-        "  const hostOrigins = allOrigins.filter((o) => originToHost(o) === displayHost || o.includes('*://*/*'));"); },
+      /* ★★ 锚点必须**先把 CRLF 归一成 LF** 再匹配。
+       *   实测踩到：`parallel.ts` 是 **CRLF**（本仓同一目录下混用两种行尾），
+       *   而多行锚点字符串里写的是 `\n` ⇒ `String.replace` **一处都不匹配**，
+       *   于是这一条反证每次都报"注入确实改变了文件: ✖"。
+       *   ★ 症状极易误读：看起来像"判据脚本写错了"，实际是行尾差异 ——
+       *     `verify-falsify-defectfix.mjs` 的 `poke()` 里已经写着同一条教训
+       *     （那次它害我误判了两条判据"恒真"）。这里照抄那个做法。 */
+      mutate(s) {
+        const crlf = s.includes('\r\n');
+        const norm = (x) => x.replace(/\r\n/g, '\n');
+        const a = "  const covered = await chrome.permissions\n    .contains({ origins: [pat, '*://*/*'] })\n    .then((r) => r)";
+        const b = "  const all = await chrome.permissions.getAll();\n  const covered = (all.origins ?? []).some((o) => o.includes('*://*/*')) || await chrome.permissions\n    .contains({ origins: [pat, '*://*/*'] })\n    .then((r) => r)";
+        const out = norm(s).replace(a, b);
+        return crlf ? out.replace(/\n/g, '\r\n') : out;
+      },
     },
   ];
 

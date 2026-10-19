@@ -26,7 +26,10 @@ export interface GridOpts {
 /** 运行态短语：把 `hasToken` / `tabIds` / `enforcementOff` 翻成用户能读的一句话 */
 function statusText(a: WheelAccount): { text: string; cls: 'on' | 'wait' | 'idle' | 'off' } {
   if (a.enforcementOff) {
-    return { text: '未授权 · 已暂停', cls: 'off' };
+    // ★ v4.2.12（用户要求 ④）：措辞跟着 `parallel.ts` 的 `badgeOf` 一起改 ——
+    //   从"未授权 · 已暂停"（一个用户无从处置的内部概念）改成"需要重新打开"
+    //   （一个他能做的动作，而重开时授权会被静默补齐）。三处一起改，别只改一处。
+    return { text: '需要重新打开', cls: 'off' };
   }
   const n = a.tabIds?.length ?? 0;
   if (n > 0 && a.hasToken) {

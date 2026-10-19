@@ -2,21 +2,21 @@
 
 body {
   width: 328px;
-  padding: 14px;
+  padding: var(--sp-3);
 }
 
 .pop {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 /* ---- 品牌头 ---- */
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 4px 2px 0;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-0) 0;
 }
 
 /* ★ v4.2.1：品牌标识改成**真实 Akso logo**。原先的 `.brand-ring` 是我用 CSS 画的
@@ -36,23 +36,23 @@ body {
 }
 .brand-text h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-15);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 .brand-text p {
-  margin: 1px 0 0;
-  font-size: 11px;
+  margin: var(--sp-hair) 0 0;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
 }
 
 .ver {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
   background: var(--sb-brand-soft);
   border: 1px solid var(--sb-border);
-  padding: 3px 8px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--sb-radius-pill);
   font-variant-numeric: tabular-nums;
 }
 
@@ -64,24 +64,24 @@ body {
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius-lg);
   box-shadow: var(--sb-shadow-sm);
-  padding: 10px 6px;
+  padding: var(--sp-2) var(--sp-2);
 }
 .stat {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 .stat b {
-  font-size: 19px;
+  font-size: var(--fs-18);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   color: var(--sb-text);
 }
 .stat span {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
   letter-spacing: 0.04em;
 }
@@ -91,17 +91,17 @@ body {
 .divider {
   width: 1px;
   background: var(--sb-border);
-  margin: 2px 0;
+  margin: var(--sp-0) 0;
 }
 
 /* ---- 唯一主操作 ---- */
 .launch {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: var(--sp-3);
   width: 100%;
   text-align: left;
-  padding: 12px 13px;
+  padding: var(--sp-3) var(--sp-3);
   background: var(--sb-surface);
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius-lg);
@@ -117,7 +117,7 @@ body {
   width: 34px;
   height: 34px;
   flex: none;
-  border-radius: 10px;
+  border-radius: var(--sb-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,20 +129,20 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--sp-hair);
 }
 .launch-text b {
-  font-size: 13.5px;
+  font-size: var(--fs-13);
   color: var(--sb-text);
 }
 .launch-text i {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
 }
 .launch-arrow {
   color: var(--sb-text-secondary);
-  font-size: 15px;
+  font-size: var(--fs-15);
   transition: transform 0.15s ease, color 0.15s ease;
 }
 .launch:hover .launch-arrow {
@@ -155,10 +155,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  font-size: 10.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
-  padding-bottom: 2px;
+  padding-bottom: var(--sp-0);
 }
 .foot i {
   width: 3px;

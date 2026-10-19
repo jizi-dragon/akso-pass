@@ -442,7 +442,21 @@ async function schemeOfAccount(accountId: string): Promise<Scheme> {
   try {
     const account = await parallelStore.get(accountId);
     return account.scheme ?? 'https';
-  } catch {
+  } catch (e) {
+    /* ★★ 2026-10-16：这条 `catch` 原来是**裸吞**的 —— 而它的后果是"用户只看到打不开的页面"。
+     *
+     * 为什么必须留痕（AGENTS 规则 29 的口径："失败时用户看到什么"）：
+     *   · 读存储失败 ⇒ 落回 `'https'`；而**内网平台是纯 http**（`10.100.0.105`，
+     *     见 AGENTS §4）⇒ 页签按 `https://` 打开 ⇒ **打不开**，
+     *     而用户与排障的人都看不到"题目出在读存储上"。
+     *   · 这与**已被判据点名的** `site-auth.ts::probeScheme`（"静默按 https 兜底"）
+     *     是**同一个形态** —— 那一条在 `verify-log-redaction.mjs` §13 的白名单里，
+     *     而这一条当时**没被点名**。现在补上（并进 §13 的 CASES）。
+     * ★ 级别用 `warn` 不是 `debug`：它是"按下去会改变行为"的兜底，
+     *   而 `debug` 在产物里默认关闭 ⇒ 等于没留痕（PITFALLS #17 的教训）。
+     */
+    log.warn('schemeOfAccount(%s) 读账号失败 ⇒ 按 https 兜底（内网 http 站点会打不开）：%s',
+      accountId, e instanceof Error ? e.message : String(e));
     return 'https';
   }
 }
@@ -560,8 +574,22 @@ async function terminateLoginState(accountId: string, host: string): Promise<voi
         await removeJarCookie(c);
       }
     }
-  } catch {
-    // 清扫失败不影响快照终结
+  } catch (e) {
+    /* ★★ 2026-10-16：这条 `catch` 原来是 `// 清扫失败不影响快照终结` 后面**什么都不做**。
+     *
+     * 为什么必须留痕：这一段的职责是"**最后一个页签关闭时把 cookie 从真实 jar 里清掉**"，
+     * 而"真实 jar 不驻留扩展账号的会话"是 AGENTS **规则 4 / 隔离平面 4 的核心不变量**。
+     * 清扫失败 ⇒ 该账号的 Cookie **继续留在真实 jar 里** ⇒ 下一个用同一浏览器的人
+     * 可能拿到它的登录态。而**上面那句注释说得对（不影响快照终结）**，
+     * 但那不是"不用记"的理由 —— 它影响的是**别的东西**。
+     *
+     * ★ 为什么可以是 `warn` 而不是"必须热路径静默"：
+     *   它**每个账号只在最后一次关页签时走一次**，不是热路径
+     *   ⇒ §13 白名单里那条"热路径怕挤爆环"的理由在这里不成立。
+     */
+    log.warn('terminateLoginState(%s) jar 清扫失败 ⇒ 该账号的 Cookie 可能仍留在真实 jar 里：%s',
+      accountId, e instanceof Error ? e.message : String(e));
+    void diag(`terminateLoginState(${accountId}) jar 清扫失败（规则 4 的不变量这次没维持住）`);
   }
   delete snap.token;
   delete snap.cookies;
@@ -872,10 +900,49 @@ async function syncAccountRules(accountId: string, host: string): Promise<void> 
 /* ---------------- 绑定生命周期 ---------------- */
 
 export const parallelSession = {
-  /** 打开（或新建）账号标签页并完成绑定 */
-  async open(accountId: string, forceNewTab = false): Promise<{ tabId: number; reused: boolean }> {
+  /**
+   * 打开（或新建）账号标签页并完成绑定。
+   *
+   * ★ 2026-10-19：多两个可选项，给「常用页面跟随当前账号」用：
+   *   · `targetUrl` —— 新页签最终导航到的地址（缺省仍是站点登录页/根路径）
+   *   · `stageCredentials` —— 是否下发待自动填表凭证。打开收藏页时传 `false`：
+   *     那只页不是登录页，下发一份 60 秒 TTL 的明文凭证只是**多一处暴露面**。
+   *     绑定、种子与 DNR 规则照旧安装 —— 那些才是"仍然是账号 A"的保证。
+   */
+  async open(
+    accountId: string,
+    forceNewTab = false,
+    opts: { targetUrl?: string; stageCredentials?: boolean } = {},
+  ): Promise<{ tabId: number; reused: boolean }> {
     void diag(`open(${accountId}) 入口`);
     const account = await parallelStore.get(accountId);
+    /**
+     * ★★ **站点为空就不许继续**（v4.2.12 加）。
+     *
+     * 缺陷形态：`account.siteHost` 来自 `cloud-store.toAccount()` 的那条五级回落
+     * （`rec.siteHost` → `rec.baseUrl` → `rec.site.baseUrl` → `siteById.get(siteId)?.host`
+     * → `rec.siteName`）。**最后一级是个陷阱**：云端 `sites/accounts` 的 `siteName` 是
+     * **用户起的显示名**（生产库里就有「通桥」「公司配置环境」），`looksLikeHost()` 会拒掉它
+     * ⇒ `siteHost` 落成空串。
+     *
+     * 而空串会让后面每一处都**静默地做错事**，且都不报错：
+     *   · URL 拼成 `https:///login` → `new URL` 抛异常 / Chrome 打不开；
+     *   · 预绑定写进 `bindings` 的 host 是空串 ⇒ 后台的来源域校验恒不通过
+     *     （`hostNoPortOf('')` 是空串）⇒ **自动填表永远拿不到凭证**；
+     *   · `ensureHostPermission('')` 会去请求一个**非法的权限模式** ⇒ Chrome 静默返回 false。
+     * ⇒ 与其让它在三个地方各自静默失败，不如在这里**一次性、可读地**失败。
+     *
+     * ★ 本段注释里**不要**写出那个非法模式的样子：它的尾部正是块注释的结束标记，
+     *   会让注释提前结束（`docs/PITFALLS.md` #43，由 `verify-css-vars.mjs` 的
+     *   "块注释配平"判据当场抓住 —— 我这一轮就在这句上犯了一次）。
+     */
+    if (!account.siteHost) {
+      throw new Error(
+        `账号「${account.tabName || account.username}」没有解析出站点域名。`
+          + '常见原因是云端这条账号的站点记录缺失（或站点名是中文显示名而地址为空）。'
+          + '请在账号中心重新确认它的所属站点，或到云端控制台检查该站点。',
+      );
+    }
     let tabId: number | null = null;
 
     if (!forceNewTab) {
@@ -896,15 +963,101 @@ export const parallelSession = {
       box: account.box ?? null,
     });
 
-    if (tabId === null) {
-      // 登录前基线：记录打开时刻的真实 jar，快照首捕时按差集清扫（v3.10.2 会话卫生）
+    /** 登录前基线：记录打开时刻的真实 jar，快照首捕时按差集清扫（v3.10.2 会话卫生）。
+     *  ★ 必须在 `tabs.create` **之前**调（下面 `newTab` 那一支），否则基线里会混进
+     *    新页签自己发的请求所落的 Cookie，"差集清扫"就再也认不出哪些是登录带来的。 */
+    const preJarDone = { v: false };
+    const capturePreJarOnce = async (): Promise<void> => {
+      if (preJarDone.v) {
+        return;
+      }
+      preJarDone.v = true;
       await capturePreJar(account.id, account.siteHost);
-      // v3.12.0 登录态生命周期跟随页签：无活绑定页签 = 登录态已终结（最后页签关闭时
-      // 快照已清）——此刻残留的 token/Cookie 属于「已死凭证」，一律废弃并从登录页重新
-      // 开始（自动填表免输入）。彻底消灭「过期凭证免密直达 → 登录 POST 带旧身份」的丑态。
+    };
+
+    /**
+     * ★★ **绑定与待登录凭证必须先于导航落地**（见 `open()` 上方的长注释：
+     * 内容脚本在 `document_idle` 就索取凭证，晚一步就是一次不可重试的拒绝）。
+     *
+     * 提取成一个函数是为了让「新建」与「复用」两条路**都**走同一段代码 ——
+     * 两份实现迟早只有一份是对的（本仓反复出现过的形态）。
+     */
+    const bindAndStage = async (
+      targetTabId: number,
+      withCredentials = true,
+    ): Promise<'ready' | 'no-creds' | 'skipped'> => {
+      void diag(`open(${accountId}) 预绑定 tab=${targetTabId} host=${account.siteHost}`);
+      bindings.set(targetTabId, { accountId: account.id, host: account.siteHost });
+      await persistBindings();
+      if (!withCredentials) {
+        // ★ 打开收藏页/直达页：绑定与规则要装，待登录明文凭证**不下发**
+        //   （见 `open()` 的 opts 说明）
+        void diag(`open(${accountId}) 直达页：跳过待登录凭证下发`);
+        return 'skipped';
+      }
+      if (!account.hasPassword) {
+        void diag(`open(${accountId}) 无凭证字段`);
+        return 'no-creds';
+      }
+      try {
+        const creds = await resolveAccountPlaintext(account);
+        if (!creds) {
+          void diag(`open(${accountId}) 取不到凭证（云端无口令或口令为空）`);
+          return 'no-creds';
+        }
+        await setPendingAutoLogin(targetTabId, creds.username, creds.password);
+        void diag(`open(${accountId}) 凭证就绪并下发待登录（早于导航）`);
+        return 'ready';
+      } catch (e) {
+        // 凭证取不到（密文损坏 / 云端网络失败）不应阻断网络平面安装（原实现会让 open() 在此中断）
+        void diag(`open(${accountId}) 凭证解析失败：${e instanceof Error ? e.message : String(e)}`);
+        return 'no-creds';
+      }
+    };
+
+    /** 建页签 —— **顺序是这一版的核心**：
+     *      ① 绑账号 → ② 等 URL 确定 → ③ 先写绑定与待登录凭证 → ④ 才摘要真取凭据
+     *         → ⑤ 最后才 `tabs.update` 让它导航。
+     *  ★★ 旧顺序是「先 `tabs.create` 再绑」，而 `tabs.create` 一返回浏览器就开始装载页面
+     *     —— 快站上 `document_idle` 的内容脚本会在 `bindings.set` 之前发出
+     *     `sb:autoLoginRequest`，后台按 fail-closed 回 `null`，而**内容脚本当时不重试**
+     *     ⇒ 自动填充整条链路**静默失效**（用户报的「快捷登录不能自动填账密」）。
+     *     实测证据：`ql:forensics` 里 23 条 `autoLoginRejected { reason: 'unbound' }`。 */
+    const newTab = async (url: string): Promise<{ tab: chrome.tabs.Tab; staged: string }> => {
+      await capturePreJarOnce();
+      const tab = await chrome.tabs.create({ url: 'about:blank' });
+      const tid = tab.id;
+      if (tid === undefined) {
+        throw new Error(`新建标签页失败：${account.siteHost}`);
+      }
+      let staged = 'skipped';
+      try {
+        staged = await bindAndStage(tid, opts.stageCredentials !== false);
+        await chrome.tabs.update(tid, { url });
+      } catch (e) {
+        // 绑定/取凭据失败**绝不能把页签留在 about:blank**（那看起来像"扩展坏了"）。
+        // 如实导航过去，用户至少能自己输密码；失败原因已在上面留痕。
+        await chrome.tabs.update(tid, { url }).catch(() => undefined);
+        staged = 'failed';
+        void diag(`open(${accountId}) 预绑定失败，已如实放行导航：${e instanceof Error ? e.message : String(e)}`);
+      }
+      return { tab, staged };
+    };
+
+    if (tabId === null) {
+      // ★★ 2026-10-19：**先算有没有活着的同账号页签**，再决定要不要废弃登录态。
+      //
+      // `stale` 那段原本在 `hasLiveSibling` **之前**执行 ⇒ `forceNewTab`（"再开一个
+      // 同账号页签"）会把仍在用的 token / Cookie 快照一起清掉，随后 `syncAccountRules`
+      // 以 `token=null` 重装规则 ⇒ **两个页签同时失去 AUTH**。注释一直说"复制语义下
+      // 由活页签背书"，而代码没有照着做 —— 这是那种"注释对、代码错、界面不报错"的
+      // 缺陷（新开页签的入口这次被移除，但收藏页跟随账号同样会走这一支）。
+      // ⇒ 只有**真的没有活页签**时才废弃残留登录态。
+      const hasLiveSibling = boundTabsOf(accountId).length > 0;
       const stale = tokens.get(accountId);
-      const staleCleared = Boolean(stale && (stale.token || stale.cookies?.length || stale.authUser));
-      if (stale && staleCleared) {
+      const staleCleared =
+        !hasLiveSibling && Boolean(stale && (stale.token || stale.cookies?.length || stale.authUser));
+      if (!hasLiveSibling && stale && staleCleared) {
         delete stale.token;
         delete stale.cookies;
         delete stale.authUser;
@@ -912,49 +1065,31 @@ export const parallelSession = {
         await persistTokens();
         void diag(`open(${accountId}) 无活页签：废弃残留登录态（v3.12.0 生命周期），走登录页自动填表`);
       }
-      // 唯一例外（复制语义）：已有活页签但用户强制新开（forceNewTab）→ 视为「同账号
-      // 复制页签」，token 活性由活页签背书，直达根路径保持身份稳定。
-      const hasLiveSibling = boundTabsOf(accountId).length > 0;
       const scheme = account.scheme ?? 'https';
-      const url = `${scheme}://${account.siteHost}${hasLiveSibling ? '/' : '/login'}`;
-      const tab = await chrome.tabs.create({ url });
+      // ★ `targetUrl` = 调用方指定的落地页（收藏页跟随当前账号）；
+      //   缺省仍是"有活页签直达根路径，否则走登录页"。
+      const url = opts.targetUrl?.trim()
+        || `${scheme}://${account.siteHost}${hasLiveSibling ? '/' : '/login'}`;
+      const { tab, staged } = await newTab(url);
       tabId = tab.id!;
-      void diag(`open(${accountId}) 新建 tab=${tabId} url=${url}`);
+      void diag(`open(${accountId}) 新建 tab=${tabId} staged=${staged} url=${url}`);
       void forensics('open-tab', {
         accountId,
         tabId,
         url,
         hasLiveSibling,
         staleCleared,
+        staged,
         cookieSnapshot: stale?.cookies?.length ?? 0,
         hadToken: Boolean(stale?.token),
       });
     } else {
+      // 复用：页签可能正停在该站点的登录页上（用户刚被登出），所以**同样要先把
+      // 绑定与凭证补齐再激活**。★ 绑定本来就该在（`boundTabsOf` 查的就是它），
+      // 但"凭证还在不在"是另一回事 —— 60 秒 TTL 一过就没了，重新聚焦等于什么都没填。
+      const staged = await bindAndStage(tabId);
       await chrome.tabs.update(tabId, { active: true });
-      void diag(`open(${accountId}) 复用 tab=${tabId}`);
-    }
-
-    bindings.set(tabId, { accountId: account.id, host: account.siteHost });
-    await persistBindings();
-    void diag(`open(${accountId}) 绑定已持久化`);
-
-    // 自动填表凭证：本地 = 解密 credentials；云端 = 当场取一次明文
-    // （resolveAccountPlaintext 是数据层门面的附加能力，两条路都归它，调用点只认"有/没有"）
-    if (account.hasPassword) {
-      try {
-        const creds = await resolveAccountPlaintext(account);
-        if (!creds) {
-          void diag(`open(${accountId}) 取不到凭证（云端无口令或口令为空）`);
-        } else {
-          await setPendingAutoLogin(tabId, creds.username, creds.password);
-          void diag(`open(${accountId}) 凭证就绪并下发待登录`);
-        }
-      } catch (e) {
-        // 凭证取不到（密文损坏 / 云端网络失败）不应阻断网络平面安装（原实现会让 open() 在此中断）
-        void diag(`open(${accountId}) 凭证解析失败：${e instanceof Error ? e.message : String(e)}`);
-      }
-    } else {
-      void diag(`open(${accountId}) 无凭证字段`);
+      void diag(`open(${accountId}) 复用 tab=${tabId} staged=${staged}`);
     }
 
     // 推送绑定种子：桥转发给 MAIN 壳（壳在 committed 前后到达均可自举）
@@ -1022,6 +1157,22 @@ export const parallelSession = {
 
   /** 删除账号：关闭其全部绑定标签页、摘除规则、清 token */
   async deleteAccount(accountId: string): Promise<void> {
+    await this.closeAccountTabs(accountId);
+    await parallelStore.delete(accountId);
+  },
+
+  /**
+   * ★★★ v4.2.12：**只做本机的会话清理，不碰云端数据**（批量删除用的前半步）。
+   *
+   * 为什么要把这一步单独摘出来：批量删除走的是服务端那一条
+   * `POST /api/accounts/batch-delete`（一次请求、一次推 revision），
+   * 所以**不能**循环调用 `deleteAccount()` —— 那会变成 N 次云端 DELETE，
+   * 而其中任何一次失败都会留下一半删掉、一半还在的状态。
+   *
+   * ★ 顺序纪律：**先关页签再删数据**。反过来的话，"数据删掉了而关页签失败"
+   *   会留下绑着一个已不存在账号的幽灵页签 —— 而它的 DNR 规则还在改写请求头。
+   */
+  async closeAccountTabs(accountId: string): Promise<void> {
     const tabs = boundTabsOf(accountId);
     for (const tabId of tabs) {
       await this.unbindTab(tabId);
@@ -1031,7 +1182,6 @@ export const parallelSession = {
     }
     tokens.delete(accountId);
     await persistTokens();
-    await parallelStore.delete(accountId);
   },
 
   /** ISOLATED 桥上行消息入口 */
@@ -1199,6 +1349,18 @@ export const parallelSession = {
    */
   boundHostOf(tabId: number): string | undefined {
     return bindings.get(tabId)?.host;
+  },
+
+  /**
+   * 该标签页绑定的**账号 id**（未绑定返回 `undefined`）。
+   *
+   * ★ 2026-10-19 新增：`favorites.open` 要判断"这个请求来自哪个账号的页签" ——
+   *   常用页面必须**在该账号的登录态下打开**，否则新页签拿到的是共享 jar 里的
+   *   空白身份，用户还得再登录一遍。判断依据只能是后台的绑定表（`sender.tab`），
+   *   不能让页面自报账号 id。
+   */
+  boundAccountOf(tabId: number): string | undefined {
+    return bindings.get(tabId)?.accountId;
   },
 
   /** 诊断用内部状态快照（经 ql.diag 消息暴露给台架） */

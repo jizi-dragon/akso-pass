@@ -1,5 +1,5 @@
 import { LOCAL_KEYS, SESSION_COLORS } from '../../shared/constants';
-import type { ParallelAccount, ParBox } from '../../shared/types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount, ParBox } from '../../shared/types';
 import { isOfflineError, OfflineError } from './offline';
 // v4.2.1：站点显示名从地址推导（用户要求：未填名称时从地址截取，如 tonbridge-config）
 import { deriveSiteNameFromHost } from '../../shared/snake-case';
@@ -147,7 +147,14 @@ function colorOf(id: string): string {
 
 function errorDetail(data: unknown, raw: string): string {
   const rec = asRecord(data);
-  const detail = str(rec.detail) || str(rec.error) || str(rec.message);
+  const rawDetail = rec.detail ?? rec.error ?? rec.message;
+  // ★★ v4.2.12：`detail` 可能是**对象**（服务端的结构化错误，如删除站点时的 409）。
+  //   原来只认字符串 ⇒ 那种情况下会回落到 `raw`（整段响应体的前 200 字），
+  //   于是用户看到的是一截**被截断的 JSON**，而不是 `detail.message` 那句人话。
+  const detail =
+    typeof rawDetail === 'string'
+      ? rawDetail
+      : str(asRecord(rawDetail).message) || str(asRecord(rawDetail).error);
   if (detail) {
     return detail.slice(0, 300);
   }
@@ -242,7 +249,28 @@ async function requestJson<T>(
     //     而这条通道（`diag()`）虽然也打码，但没有必要把响应体带进来。
     log.error('云端 %s %s → %d（非离线，读路径不会回落）',
       init.method ?? 'GET', path, res.status);
-    throw new Error(`云端请求失败（HTTP ${res.status}）${detail ? `：${detail}` : ''}`);
+    /*
+     * ★★ v4.2.12：把**服务端的结构化 detail 原样挂在 Error 上**。
+     *
+     * 缺陷形态（真实存在于删除站点那条路径上）：`DELETE /api/sites/{id}` 在
+     * "站点下还有账号"时回 **409**，而 `detail` 是一个**对象**
+     * （`{code:'site_has_accounts', accountCount, usernames}`）。
+     * 原来它只被 `errorDetail()` 串成一句话塞进 `message` ⇒ 调用方**再也拿不到**
+     * `accountCount` / `usernames`，于是"把要删的账号摊开给人看"这件事**做不到**，
+     * 只能把服务端的 JSON 原文显示给用户（`akso-cloud/app/web/static/site.js`
+     * 那边是能拿到的 —— 两端的体验因此不一致）。
+     *
+     * ⇒ 现在两个都给：`message` 保持可读（人看），`detail` 带原始对象（代码看）。
+     *   ★ 这是 `webRequest` 那个"C 通道"的同族纪律：**别在传输层把信息丢掉**，
+     *     丢掉之后下游没有任何办法把它找回来。
+     */
+    const err = new Error(`云端请求失败（HTTP ${res.status}）${detail ? `：${detail}` : ''}`) as Error & {
+      status?: number;
+      detail?: unknown;
+    };
+    err.status = res.status;
+    err.detail = asRecord(data).detail ?? undefined;
+    throw err;
   }
   if (data === undefined && text.trim()) {
     // 200 但响应体不是 JSON：代理/门户劫持的典型形态，绝不能当成"空数据"吞掉
@@ -302,6 +330,8 @@ interface CloudSite {
   name: string;
   baseUrl: string;
   host: string;
+  /** 用户备注（云端控制台可编辑；扩展的站点编辑弹窗也带这一格）。 */
+  note: string;
   /**
    * 显示名（站点管理那一行的**主标题**）。
    *
@@ -358,6 +388,7 @@ async function loadSites(force = false): Promise<CloudSite[]> {
         name,
         baseUrl,
         host,
+        note: str(rec.note),
         // 显示名口径见接口注释：**name 与 host 不同**才算用户起过名；
         // 否则用从地址推导的短名（服务端建站时把 name 填成了完整 host，
         // 直接用 name 就等于永远显示一长串域名）。
@@ -512,6 +543,18 @@ async function defaultBoxName(): Promise<string> {
 
 /* ==================== 记录 → ParallelAccount ==================== */
 
+/**
+ * 钉住**站点域名解析不了**的那种账号 —— 一起看 `toAccount` 的那条回落链。
+ *
+ * ★★ v4.2.12：这条链的最后一级 `looksLikeHost(rec.siteName)` **必须留在最后**。
+ *   理由不是"顺序好看"，而是一个实测过的缺陷形态：
+ *   `siteName` 是**用户起的显示名**（生产库里就有「通桥」「公司配置环境」），
+ *   `looksLikeHost()` 用的是 host 正则 ⇒ 中文名一定被拒、`siteHost` 落空串。
+ *   而空串会让 `open()` 拼出 `https:///login`、让预绑定的 host 校验恒不通过
+ *   （自动填表永远拿不到凭证）——**三处各自静默失败**。
+ *   ⇒ 所以 `open()` 现在对空 `siteHost` 直接抛一句可读的错（见那里的注释），
+ *     而不是让它在三个下游各自变成"没反应"。
+ */
 function toAccount(rec: Record<string, unknown>, siteById: Map<string, CloudSite>, defaultBox: string): ParallelAccount {
   const id = str(rec.id);
   const username = str(rec.username);
@@ -537,6 +580,18 @@ function toAccount(rec: Record<string, unknown>, siteById: Map<string, CloudSite
     username,
     color: colorOf(id),
     ...(box ? { box } : {}),
+    /* ★★ v4.2.12：`siteId` 与 `note` 必须带出来。
+     *
+     * 缺陷形态（不是"少个字段"那么轻）：`/api/accounts` **本来就返回**这两个
+     * （`account_public` 里有 `siteId` / `note`），而这里映射时丢掉了 ⇒
+     *   · 编辑账号时**无法**预选中它当前所属的站点（下拉只能随便选一个）
+     *     ⇒ 一保存就把账号挪到别的站点去了，而用户什么都没改；
+     *   · 在网页控制台写的备注，在扩展里**永远看不到**。
+     * 两处都不报错，只是"那一格是空的 / 选中的是错的"。
+     * ★ 这是本仓规则 14 的同族：**同一件事不要两处声明** —— 而这里是反过来的，
+     *   声明处（服务端）给了，消费处（这里）吞了。 */
+    ...(siteId ? { siteId } : {}),
+    ...(str(rec.note) ? { note: str(rec.note) } : {}),
     hasPassword: rec.hasPassword === true || Boolean(str(rec.passwordEnc)),
     createdAt: num(rec.createdAt) ?? updatedAt,
     updatedAt,
@@ -583,55 +638,99 @@ async function patchAccount(id: string, patch: Record<string, unknown>): Promise
  *   （`siteId` 是库里的主键，`host` 是从 `base_url` 抽出来的）。加字段是兼容的：
  *   两个既有消费方（站点管理栏、导入）只读 `host`/`name`。
  */
-async function loadSiteNames(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
+async function loadSiteNames(force = false): Promise<CloudSiteSummary[]> {
   const sites = await loadSites(force);
-  return sites.map((s) => ({ id: s.id, host: s.host, name: s.name, displayName: s.displayName }));
+  return sites.map((s) => ({
+    id: s.id,
+    host: s.host,
+    name: s.name,
+    displayName: s.displayName,
+    baseUrl: s.baseUrl,
+    note: s.note,
+  }));
 }
 
 /**
- * 给站点改自定义名称。
+ * 添加站点时顺带落名：**站点不存在就建**，存在就更新名称。
  *
- * ★ 只 PATCH `name`，**不动 `baseUrl`** —— baseUrl 是 host 的唯一来源
- *   （`host_of(base_url)`），改了它等于把站点的身份键换掉，账号会全部错位。
- *   `SitePatch` 是逐字段显式建模的（服务端注释里写了原因：`BaseModel` 默认忽略多余字段，
- *   漏字段会**静默不生效**），所以传 `{ name }` 是安全的。
- */
-async function renameSiteOnCloud(host: string, name: string): Promise<void> {
-  const wanted = host.trim().toLowerCase();
-  const sites = await loadSites(true);
-  const hit = sites.find((s) => s.host === wanted);
-  if (!hit) {
-    throw new Error(`云端找不到站点 ${wanted}（先在「站点管理」里添加并授权该站点）`);
-  }
-  const trimmed = name.trim();
-  await cloudRequest(`/api/sites/${encodeURIComponent(hit.id)}`, {
-    method: 'PATCH',
-    // 空名 = 恢复成 host（服务端建的默认名就是 host，口径一致）
-    body: { name: trimmed || wanted },
-  });
-  invalidateCloudCache();
-}
-
-/**
- * 添加站点时顺带落名：**站点不存在就建**，存在就改名。
- *
- * ★ 与 `renameSiteOnCloud` 的差别是**语义**：那个假定站点已存在、找不到就报错
- *   （用户不该以为给一个不存在的站点改了名）；这个的用途正是"刚添加的站点"，
- *   所以它必须能创建。合成一条会让"新建"与"改名"共用同一条找不到时的处置，
- *   而它们该有相反的行为。
+ * ★ 2026-10-19：随着站点管理改成「编辑」弹窗（`par.updateSite`），
+ *   旧的 `par.renameSite`（只改名）**整体删除** —— 留着它就是一条零发送方的死协议。
+ *   这个函数仍然保留：站点表单走的是"新建站点"这条路，它必须能创建。
  *
  * ★ 名字为空时回落到 host —— 与用户要求的口径一致（"未填写名称时自动从地址填充"），
  *   也与服务端建站点时的默认名一致（`ms.name.strip() or host`）。
+ *
+ * ★★ 2026-10-19：`createBox` 只在**真的新建站点**时才生效（用户要求：新增站点时
+ *   由用户选择要不要同步建一个同名盒子，默认建）。站点已存在时它没有意义 ——
+ *   这里不读它，免得"改个名"顺手再建一个盒子。
  */
-async function upsertSiteOnCloud(host: string, name: string): Promise<void> {
+async function upsertSiteOnCloud(host: string, name: string, createBox = true): Promise<void> {
   const wanted = host.trim().toLowerCase();
   const name2 = name.trim() || wanted;
-  const id = await ensureSite(wanted); // 不存在就在这里建
-  await cloudRequest(`/api/sites/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: { name: name2 },
+  const sites = await loadSites(true);
+  const hit = sites.find((s) => s.host === wanted);
+  if (hit) {
+    if (hit.name !== name2) {
+      await cloudRequest(`/api/sites/${encodeURIComponent(hit.id)}`, {
+        method: 'PATCH',
+        body: { name: name2 },
+      });
+      invalidateCloudCache();
+    }
+    return;
+  }
+  /* ★★ 2026-10-19：**建站点时一次把名称带上**（不要"先建成 host 名、再 PATCH"）。
+   *   服务端的 `create_site` 会拿 `name` 去建同名盒 —— 分两步的话，盒子会叫 host，
+   *   而站点卡片显示的是用户起的名字，两端看起来像两个不同的东西。 */
+  await cloudRequest('/api/sites', {
+    method: 'POST',
+    body: { name: name2, baseUrl: `https://${wanted}`, note: '', createBox },
   });
   invalidateCloudCache();
+}
+
+/**
+ * ★★ 2026-10-19：**编辑站点**（用户要求扩展的站点管理要有编辑功能）。
+ *
+ * 只 PATCH 传进来的字段（`undefined` = 不动）。`baseUrl` 是唯一会**改变 host**
+ * 的字段 —— 服务端会重新跑域名预处理并记住协议，账号仍按 `site_id` 关联，
+ * 所以这里不替调用方做"要不要改地址"的判断，只如实转发。
+ */
+async function updateSiteOnCloud(
+  siteId: string,
+  patch: { name?: string; baseUrl?: string; note?: string },
+): Promise<CloudSiteSummary> {
+  const id = siteId.trim();
+  if (!id) {
+    throw new Error('缺少站点 id，无法保存');
+  }
+  const body: Record<string, string> = {};
+  if (patch.name !== undefined) {
+    body.name = patch.name;
+  }
+  if (patch.baseUrl !== undefined) {
+    body.baseUrl = patch.baseUrl;
+  }
+  if (patch.note !== undefined) {
+    body.note = patch.note;
+  }
+  if (!Object.keys(body).length) {
+    throw new Error('没有要修改的字段');
+  }
+  await cloudRequest(`/api/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+  invalidateCloudCache();
+  const hit = (await loadSites(true)).find((s) => s.id === id);
+  if (!hit) {
+    throw new Error('站点已保存，但重新读取时找不到它（请刷新确认）');
+  }
+  return {
+    id: hit.id,
+    host: hit.host,
+    name: hit.name,
+    displayName: hit.displayName,
+    baseUrl: hit.baseUrl,
+    note: hit.note,
+  };
 }
 
 /**
@@ -645,10 +744,15 @@ async function upsertSiteOnCloud(host: string, name: string): Promise<void> {
  *   · 云端**没有**这条站点记录时不当失败（`kind: 'missing'`）：本机删掉一个从没同步过的
  *     站点是完全正常的路径，报错会让用户以为删除失败。
  */
-export type CloudDeleteSiteResult =
-  | { kind: 'deleted'; accountsDeleted: number }
-  | { kind: 'missing' }
-  | { kind: 'offline'; reason: string };
+/**
+ * ★★ v4.2.12：这个类型**搬到了 `shared/types.ts`**，这里只 re-export 一次。
+ *
+ * 理由不是洁癖：`shared/messages.ts` 的 `par.deleteSite` 响应要写它的类型，
+ * 而 `shared/` 里**不应该** import `background/`（那是分层倒置）。放到共享层之后
+ * 三处（协议、数据层、UI）指的是**同一个声明**，改字段时不会再出现"一边改了另一边没改"。
+ */
+export type { CloudDeleteSiteResult } from '../../shared/types';
+
 
 /* ★★ v4.2.9：**这里不需要"剥端口"那种宽容匹配** —— 我一度加了它，随后自己删掉了。
  *
@@ -669,7 +773,7 @@ export type CloudDeleteSiteResult =
  *   ① `needsGrant` 那一态只 `hideHost` 就 `continue`，**根本走不到删云端的代码**（判据 E3 抓到）；
  *   ② 站点列表把**云端自己**那条记录也算了进来（`isCloudHost` 漏了端口这一维）。
  */
-async function deleteSiteOnCloud(host: string): Promise<CloudDeleteSiteResult> {
+async function deleteSiteOnCloud(host: string, force = false): Promise<CloudDeleteSiteResult> {
   const wanted = host.trim().toLowerCase();
   let id: string | undefined;
   try {
@@ -683,21 +787,59 @@ async function deleteSiteOnCloud(host: string): Promise<CloudDeleteSiteResult> {
     return { kind: 'missing' };
   }
   try {
-    const res = asRecord(await cloudRequest<unknown>(`/api/sites/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+    const qs = force ? '?force=true' : '';
+    const res = asRecord(
+      await cloudRequest<unknown>(`/api/sites/${encodeURIComponent(id)}${qs}`, { method: 'DELETE' }),
+    );
     invalidateCloudCache();
-    // 服务端把级联删掉的账号数放在返回值里（它的注释写明了"必须如实告诉调用方"）
-    const n = Number(res.accountsDeleted ?? res.accounts_deleted ?? 0);
+    /*
+     * ★★ v4.2.12 修一个**静默缺陷**：这里原来读的是 `accountsDeleted` / `accounts_deleted`，
+     *   而服务端 `sites.py` 返回的字段名是 **`deletedAccounts`**（它的注释写明
+     *   "必须如实告诉调用方删了几个账号"）。
+     *   ⇒ 两边都不报错，只是这个数字**恒为 0**：级联删掉 12 个账号时，
+     *     界面会说"已删除站点（0 个账号）" —— 而 `service-worker.ts` 的注释还写着
+     *     "把服务端回报的 accountsDeleted 原样透传，让 UI 能如实告知"。
+     *   ★ 判据：`tools/verify/verify-boxsync.mjs` 的同类断言（读名字必须与服务端一致）。
+     */
+    const n = Number(res.deletedAccounts ?? res.accountsDeleted ?? res.accounts_deleted ?? 0);
     return { kind: 'deleted', accountsDeleted: Number.isFinite(n) ? n : 0 };
   } catch (e) {
     if (isOfflineError(e)) {
       return { kind: 'offline', reason: e instanceof Error ? e.message : String(e) };
     }
+    /*
+     * ★★ v4.2.12：**409 是一支正常分支，不是错误**。
+     *
+     * 服务端在"站点下还有账号且没带 force"时回 409，而那个响应体里带着
+     * `accountCount` 与 `usernames` —— 它就是为了让调用方能把话说具体
+     * （`sites.py` 的注释：只回一个数字的话，前端只能说"有 12 个账号"；
+     * 说得出是哪 12 个，才能让人真的停下来看一眼）。
+     *
+     * 改前这一支没有对应状态 ⇒ 它以 `Error('云端请求失败（HTTP 409）：{...}')`
+     * 冒到 UI，把服务端的 JSON 摊在用户脸上，而**级联删除这个后果从未被摊开确认**。
+     */
+    const detail = (e as { detail?: unknown })?.detail;
+    const structured = asRecord(detail);
+    if (structured.code === 'site_has_accounts') {
+      return {
+        kind: 'blocked',
+        accountCount: Number(structured.accountCount ?? 0) || 0,
+        usernames: Array.isArray(structured.usernames) ? structured.usernames.map((u) => String(u)) : [],
+      };
+    }
     throw e;
   }
 }
 
-/** 站点按 host 找；找不到就建一个（服务端会对 baseUrl 做域名预处理，所以建完以 id 为准） */
-async function ensureSite(host: string, scheme?: 'http' | 'https'): Promise<string> {
+/**
+ * 站点按 host 找；找不到就建一个（服务端会对 baseUrl 做域名预处理，所以建完以 id 为准）。
+ *
+ * ★ 2026-10-19：`createBox` 透传给 `POST /api/sites`。**账号创建路径传 `false`** ——
+ *   那是"为账号补建站点"，用户没在这一步被问过"要不要建盒"，
+ *   替他建一个同名盒属于**未确认的副作用**（盒子是用户在盒子管理里显式管理的东西）。
+ *   站点表单那条路径才传用户勾选的值。
+ */
+async function ensureSite(host: string, scheme?: 'http' | 'https', createBox = false): Promise<string> {
   const wanted = host.trim().toLowerCase();
   const sites = await loadSites(true);
   const hit = sites.find((s) => s.host === wanted);
@@ -707,7 +849,7 @@ async function ensureSite(host: string, scheme?: 'http' | 'https'): Promise<stri
   const created = asRecord(
     await cloudRequest<unknown>('/api/sites', {
       method: 'POST',
-      body: { name: wanted, baseUrl: `${scheme ?? 'https'}://${wanted}`, note: '' },
+      body: { name: wanted, baseUrl: `${scheme ?? 'https'}://${wanted}`, note: '', createBox },
     }),
   );
   const id = str(asRecord(created.site).id) || str(created.id);
@@ -809,6 +951,82 @@ export const cloudStore = {
     return getOne(id);
   },
 
+  /**
+   * ★★★ v4.2.12：**账号编辑**（六样字段，与云端控制台的编辑弹窗一一对应）。
+   *
+   * 服务端的 `PATCH /api/accounts/{id}`（`AccountPatch`）本来就能改这六样，
+   * 缺的只是"扩展这一侧把它们传下去"。三条语义细节见 `par.update` 的注释。
+   *
+   * ★ 为什么在这里（而不是让 UI 自己拼 PATCH）：本仓的 UI **从不直接 fetch 云端**
+   *   （`src/ui/` 下零 `cloudRequest`）。UI 破例直连会绕过授权、令牌与离线回落三样，
+   *   而且**失败形态是静默的**（UI 里一个 `catch {}` 就看不出来了）。
+   */
+  async updateAccount(
+    id: string,
+    patch: {
+      username?: string;
+      tabName?: string;
+      siteId?: string;
+      box?: string;
+      password?: string;
+      note?: string;
+    },
+  ): Promise<ParallelAccount> {
+    const body: Record<string, unknown> = {};
+    if (patch.username !== undefined) {
+      const u = patch.username.trim();
+      if (!u) {
+        throw new Error('账号名不能为空');
+      }
+      body.username = u;
+    }
+    if (patch.tabName !== undefined) {
+      body.tabName = patch.tabName.trim();
+    }
+    if (patch.siteId !== undefined && patch.siteId) {
+      body.siteId = patch.siteId;
+    }
+    if (patch.box !== undefined) {
+      // 空串与"默认盒名"都翻成服务端的存储形态（空串 = 未归盒）
+      body.box = await uploadBoxName(patch.box);
+    }
+    if (patch.password !== undefined) {
+      /* ★ **空串 = 不改**，不是"清空"。
+       *   判定放在这里而不是调用点：它是这条通路自己的语义，第二个调用方
+       *   （导入、脚本、以后的界面）不该各自决定一次 —— 而"没填就把密码清了"
+       *   的表现是**下次打开账号填表静默失效**，没有任何报错。 */
+      const pw = patch.password;
+      if (pw) {
+        body.password = pw;
+      }
+    }
+    if (patch.note !== undefined) {
+      body.note = patch.note;
+    }
+    if (!Object.keys(body).length) {
+      return getOne(id); // 什么都没改：**不发请求**（服务端每次 PATCH 都会推 revision）
+    }
+    await patchAccount(id, body);
+    return getOne(id);
+  },
+
+  /**
+   * ★ v4.2.12：批量删除账号（走服务端那一条 `POST /api/accounts/batch-delete`）。
+   * 见 `par.batchDelete` 的注释：不走"循环发 N 个 DELETE"。
+   */
+  async batchDelete(ids: string[]): Promise<number> {
+    const clean = [...new Set(ids.filter(Boolean))];
+    if (!clean.length) {
+      return 0;
+    }
+    const res = asRecord(
+      await cloudRequest<unknown>('/api/accounts/batch-delete', { method: 'POST', body: { ids: clean } }),
+    );
+    invalidateCloudCache();
+    // 服务端可能回 `deleted` 或 `count`（两处都读一次，别让字段名漂了之后数字恒为 0）
+    return num(res.deleted) ?? num(res.count) ?? 0;
+  },
+
   async updateBox(id: string, box: string): Promise<ParallelAccount> {
     const name = box.trim();
     const target = name ? await uploadBoxName(name) : '';
@@ -867,23 +1085,27 @@ export const cloudStore = {
   },
 
   /** 站点清单（host ↔ 用户自定义名称），见 `loadSiteNames` 的说明（★ 2026-10-13 起含 `id`） */
-  async listSites(force = false): Promise<{ id: string; host: string; name: string; displayName: string }[]> {
+  async listSites(force = false): Promise<CloudSiteSummary[]> {
     return loadSiteNames(force);
   },
 
-  /** 站点改名，见 `renameSiteOnCloud` 的说明 */
-  async renameSite(host: string, name: string): Promise<void> {
-    return renameSiteOnCloud(host, name);
-  },
-
   /** 添加站点时落名（站点不存在就建），见 `upsertSiteOnCloud` 的说明 */
-  async upsertSite(host: string, name: string): Promise<void> {
-    return upsertSiteOnCloud(host, name);
+  async upsertSite(host: string, name: string, createBox = true): Promise<void> {
+    return upsertSiteOnCloud(host, name, createBox);
   },
 
-  /** ★ v4.2.7：删云端站点（**级联删账号**），见 `deleteSiteOnCloud` 的说明 */
-  async deleteSite(host: string): Promise<CloudDeleteSiteResult> {
-    return deleteSiteOnCloud(host);
+  /** ★ 2026-10-19：编辑站点（名称 / 地址 / 备注），见 `updateSiteOnCloud` 的说明 */
+  async updateSite(
+    siteId: string,
+    patch: { name?: string; baseUrl?: string; note?: string },
+  ): Promise<CloudSiteSummary> {
+    return updateSiteOnCloud(siteId, patch);
+  },
+
+  /** ★ v4.2.7：删云端站点（**级联删账号**），见 `deleteSiteOnCloud` 的说明
+   *  ★ v4.2.12：多一个 `force` —— 见 `CloudDeleteSiteResult` 的四态说明 */
+  async deleteSite(host: string, force = false): Promise<CloudDeleteSiteResult> {
+    return deleteSiteOnCloud(host, force);
   },
 
   /**

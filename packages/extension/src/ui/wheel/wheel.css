@@ -39,7 +39,7 @@ body {
 /* 网格比环形宽（5 列要放下），所以上限从 92vmin 放宽到 94vw / 700px */
 .stage {
   width: min(94vw, 700px);
-  padding: 16px;
+  padding: var(--sp-4);
 }
 
 /* ---- 容器：只承担尺寸与入场；控件样式在 acct-grid.css ---- */

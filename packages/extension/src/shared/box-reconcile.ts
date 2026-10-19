@@ -45,11 +45,15 @@ export interface BoxReconcileInput {
 }
 
 export interface BoxReconcileResult {
-  /** 对账后的盒子列表（顺序：默认盒 → 记住的 → 账号里的，取并集）。 */
+  /**
+   * 对账后的盒子列表（顺序：默认盒 → 记住的 → 账号里的 → **云端独有的**，取并集）。
+   * ★ 云端独有的是 2026-10-19 补的：网页上新建的空盒子/建站自动建的盒子
+   *   此前永远进不了扩展的列表（见函数里那段注释）。
+   */
   boxes: string[];
   /** 被剪掉的盒名（供调用点记账/日志；空数组表示没变）。 */
   dropped: string[];
-  /** 是否**真的**变了 —— 调用点据此决定要不要写盘。 */
+  /** 是否**真的**变了（含"新增"）—— 调用点据此决定要不要写盘。 */
   changed: boolean;
 }
 
@@ -79,11 +83,33 @@ export function reconcileBoxes(input: BoxReconcileInput): BoxReconcileResult {
     : remembered.filter((b) => cloudNames.includes(b) || fromAccounts.includes(b));
 
   const dropped = remembered.filter((b) => !keepRemembered.includes(b));
+  /* ★ 2026-10-19：**云端的空盒子也要进列表**。
+   *
+   * 旧实现的并集只取「默认盒 + 本地记住的 + 账号里的」——
+   * 而"本地记住的"只在**已经进过列表**之后才会被写进 `ql:boxes`。
+   * 于是在网页控制台新建一个空盒子 / 建站点时自动建的盒子，
+   * 扩展这边**永远看不到它**，直到有人把一个账号移进去。
+   * 用户要求"盒子管理自动同步"，一个看不见的新盒子就是没同步。
+   *
+   * ★ 顺序仍然保持"默认盒 → 记住的 → 账号里的 → 云端独有的"：
+   *   云端独有的排在最后，不影响既有顺序的稳定性。
+   */
   const boxes = [...new Set([
     ...(def ? [def] : []),
     ...keepRemembered.filter((b) => b !== def),
     ...fromAccounts.filter((b) => b !== def),
+    ...cloudNames.filter((b) => b !== def),
   ])];
 
-  return { boxes, dropped, changed: dropped.length > 0 };
+  /* `changed` 必须把"新增"也算进去 —— 旧版只算 `dropped`。
+   * 少了这一半，云端新建的空盒虽然被算进 `boxes`，却不会被写回 `ql:boxes`，
+   * 下一次刷新又消失（看起来像"新建的盒子自己没了"）。 */
+  const before = new Set([
+    ...(def ? [def] : []),
+    ...remembered.filter((b) => b !== def),
+    ...fromAccounts.filter((b) => b !== def),
+  ]);
+  const changed = dropped.length > 0 || boxes.length !== before.size || boxes.some((b) => !before.has(b));
+
+  return { boxes, dropped, changed };
 }

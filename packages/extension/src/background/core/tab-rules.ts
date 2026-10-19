@@ -293,7 +293,22 @@ export const tabRules = {
     let existing: chrome.declarativeNetRequest.Rule[] = [];
     try {
       existing = await chrome.declarativeNetRequest.getSessionRules();
-    } catch {
+    } catch (e) {
+      /* ★★ 2026-10-16：原来是裸吞（`catch { existing = []; }`），而它有两个**都静默**的后果：
+       *
+       *  ① **孤儿规则永远不会被清理**：下面的差集算法拿 `existing` 当"浏览器里现在有什么"，
+       *     空集 ⇒ 它算出"没有任何规则要删" ⇒ 上一次运行留下的规则**永久留在浏览器里**。
+       *  ② **规则 id 会撞车**：`nextAuthId / nextCookieId` 从 `AUTH_BASE / COOKIE_BASE`
+       *     重新分配（它不知道那些 id 已被占用）⇒ 加规则时 `updateSessionRules`
+       *     （**原子批量**，见规则 1）会因为 id 冲突**整批被拒** —— 于是 AUTH 与 COOKIE
+       *     两个平面一起失效，而运维**只看到**下游那句 `addRule #%d 失败`，
+       *     真正的原因（读规则失败）从未出现。
+       *
+       * ★ 用 `error` 而不是 `warn`：这一条会让**另一个平面**静默失效，
+       *   而不是"某个功能没生效"。级别与后果相称（规则 17：失败不能用 debug）。
+       */
+      log.error('getSessionRules 失败 ⇒ 孤儿规则无法清理、且规则 id 将从 %d 重新分配（会撞上旧规则，'
+        + '整批 updateSessionRules 可能被拒）：%s', AUTH_BASE, e instanceof Error ? e.message : String(e));
       existing = [];
     }
 

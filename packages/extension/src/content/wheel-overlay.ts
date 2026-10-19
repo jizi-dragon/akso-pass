@@ -7,7 +7,13 @@
  * 交互：悬停高亮 → 点击切换；Esc / 再次快捷键 / 点击遮罩关闭。无任何窗口控制元素。
  */
 import { LOCAL_KEYS } from '../shared/constants';
-import { DEFAULT_BOX, groupPagesByBox, type WheelAccount } from '../ui/wheel/wheel-core';
+import {
+  DEFAULT_BOX,
+  applyPreferredPage,
+  fetchPreferredBox,
+  groupPagesByBox,
+  type WheelAccount,
+} from '../ui/wheel/wheel-core';
 import { buildAccountGrid } from '../ui/wheel/grid-core';
 import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 
@@ -40,7 +46,10 @@ async function fetchAccounts(): Promise<WheelAccount[]> {
 }
 
 /** 轮盘分页 = 账号归属盒子 + 管理页记忆的空盒子（修复「新建空盒子切换不到」） */
-async function fetchPages(): Promise<{ label: string; accounts: WheelAccount[] }[]> {
+async function fetchPages(): Promise<{
+  pages: { label: string; accounts: WheelAccount[] }[];
+  defaultBox: string;
+}> {
   const [accounts, remembered, defaultBoxStore, disabledStore] = await Promise.all([
     fetchAccounts(),
     chrome.storage.local
@@ -57,19 +66,24 @@ async function fetchPages(): Promise<{ label: string; accounts: WheelAccount[] }
       .catch(() => [] as string[]),
   ]);
   const disabled = new Set(disabledStore);
+  const def = defaultBoxStore || DEFAULT_BOX;
   // 禁用盒不进轮盘（即使盒内有账号）；空默认盒自动禁用（groupPagesByBox 只为有未归盒账号的默认盒出页）
-  const pages = groupPagesByBox(accounts, defaultBoxStore || DEFAULT_BOX).filter((p) => !disabled.has(p.label));
+  const pages = groupPagesByBox(accounts, def).filter((p) => !disabled.has(p.label));
   const seen = new Set(pages.map((p) => p.label));
   for (const name of remembered) {
     if (!seen.has(name) && name !== defaultBoxStore && !disabled.has(name)) {
       pages.push({ label: name, accounts: [] });
     }
   }
-  return pages;
+  return { pages, defaultBox: def };
 }
 
 async function mount(): Promise<void> {
-  let pages = await fetchPages();
+  const boot = await fetchPages();
+  let pages = boot.pages;
+  /* ★★ 2026-10-19（用户要求 ⑦）：当前页所属站点有关联盒子时，**先停到那个盒子**。
+   * ★ 不在这里 await：后台要打两次云端，弱网时会让浮层迟迟不出现。
+   *   先按默认页画出来，偏好回来后再翻页（见文件末尾的 `applyPreferred`）。 */
   let pageIndex = 0;
 
   /* ---------- 宿主节点与 Shadow 根 ---------- */
@@ -173,7 +187,7 @@ async function mount(): Promise<void> {
   let lastFingerprint = JSON.stringify(pages.map((p) => [p.label, p.accounts.map((a) => a.id)]));
   const refresh = async (): Promise<void> => {
     try {
-      const grouped = await fetchPages();
+      const grouped = (await fetchPages()).pages;
       const fp = JSON.stringify(grouped.map((p) => [p.label, p.accounts.map((a) => a.id)]));
       if (fp === lastFingerprint) {
         return;
@@ -201,4 +215,22 @@ async function mount(): Promise<void> {
       host.classList.add('show');
     }),
   );
+
+  /* ---------- 当前站点优先盒子（异步；失败/超时就停在默认页） ---------- */
+  void (async () => {
+    try {
+      // 不传 host：后台从 `sender.tab` 取当前页 —— 浮层注入在哪个页，身份就该是哪个页。
+      const preferred = (await fetchPreferredBox()) || boot.defaultBox;
+      if (closed) {
+        return;
+      }
+      const idx = applyPreferredPage(pages, preferred, boot.defaultBox);
+      if (idx > 0) {
+        pageIndex = idx;
+        render();
+      }
+    } catch {
+      // 偏好只是锦上添花：取不到就停在默认页
+    }
+  })();
 }

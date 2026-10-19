@@ -1,4 +1,4 @@
-import type { ParallelAccount, ParallelAccountStatus, ParBox } from '../../shared/types';
+import type { CloudSiteSummary, ParallelAccount, ParallelAccountStatus, ParBox } from '../../shared/types';
 import type {
   CloudDevicePoll,
   DataBackup,
@@ -69,6 +69,8 @@ const selDelete = document.getElementById('sel-delete') as HTMLButtonElement;
 const siteForm = document.getElementById('site-form') as HTMLFormElement;
 const sHost = document.getElementById('s-host') as HTMLInputElement;
 const sName = document.getElementById('s-name') as HTMLInputElement;
+/** ★ 2026-10-19：建站时是否同步建一个同名盒子（用户要求：默认「是」）。 */
+const sCreateBox = document.getElementById('s-create-box') as HTMLInputElement;
 const siteListEl = document.getElementById('site-list') as HTMLUListElement;
 
 const importToggle = document.getElementById('import-toggle') as HTMLButtonElement;
@@ -91,6 +93,17 @@ const boxModalList = document.getElementById('box-modal-list') as HTMLDivElement
 const boxModalNew = document.getElementById('box-modal-new') as HTMLInputElement;
 const boxModalOk = document.getElementById('box-modal-ok') as HTMLButtonElement;
 const boxModalCancel = document.getElementById('box-modal-cancel') as HTMLButtonElement;
+
+/**
+ * ★★★ v4.2.12：**动态弹窗的挂载点**（`body`）。
+ *
+ * 编辑账号那个弹窗是**按需建出来的**（字段随站点/盒子清单变化，写死在 HTML 里
+ * 就要在每次渲染时同步一堆 `<option>`）。挂在 `body` 而不是某个卡片里：
+ * `.modal` 是 `position: fixed; inset: 0`，放在卡片里会被祖先的
+ * `overflow: hidden` / `transform` 裁掉 —— 而那种裁切**不报错**，
+ * 表现是"弹窗根本没出来"。
+ */
+const accountModalRoot = document.body;
 const cloudBannerEl = document.getElementById('cloud-banner') as HTMLDivElement;
 const parHintEl = document.getElementById('par-hint') as HTMLParagraphElement;
 
@@ -100,6 +113,7 @@ const sourceHelpPop = document.getElementById('cloud-help-pop') as HTMLDivElemen
 const cloudAccountEl = document.getElementById('cloud-account') as HTMLSpanElement;
 const cloudMenuEl = document.getElementById('cloud-account-menu') as HTMLDivElement;
 const cloudMenuSync = document.getElementById('cloud-menu-sync') as HTMLButtonElement;
+const cloudMenuOpen = document.getElementById('cloud-menu-open') as HTMLButtonElement;
 const cloudMenuLogout = document.getElementById('cloud-menu-logout') as HTMLButtonElement;
 const authBarEl = document.getElementById('auth-bar') as HTMLDivElement;
 const authReloginBtn = document.getElementById('auth-relogin') as HTMLButtonElement;
@@ -136,8 +150,21 @@ let defaultBox = DEFAULT_BOX_FALLBACK;
 /* ==================== 状态 ==================== */
 
 let browserAccounts: BrowserAccount[] = [];
-let grantedHosts: string[] = [];
-let blockedHosts: string[] = [];
+/**
+ * 站点管理的数据源。
+ *
+ * ★★ v4.2.12：这里原来有两个本地名单 —— 浏览器授权清单（`grantedHosts`）与
+ *   "有授权但在扩展里被停用"的 host（`blockedHosts`）。它们一起让「站点管理」显示的
+ *   **不是云端那个站点列表**：云端删掉的站点只要授权还在就还在，云端有的站点只要没授权
+ *   就被标成"缺授权"。用户实测到的"两端站点管理对不上"就是这个。
+ *
+ * ⇒ 现在**云端是唯一权威**（`cloudSites`，由 `refreshSiteNames()` 从 `par.sites` 填），
+ *   每一行由 `buildSiteRows()` **一处**构造出来。授权状态一个字都不再影响渲染。
+ *
+ * ★ 为什么不干脆把 `ql:blockedHosts` / `ql:hiddenHosts` 两个 storage 键也删掉：
+ *   旧版本往它们里写过东西，而"盘上还有旧数据"与"代码还在读写它"是两件事。
+ *   这一版删掉的是**读取方**，旧数据由 `purgeLegacyHostLists()` 一次性清掉。
+ */
 /** 盒子清单（默认盒子恒在 + storage 记忆 + 账号实际归属） */
 let boxes: string[] = [DEFAULT_BOX_FALLBACK];
 /** 当前盒子筛选：'全部' 或盒子名 */
@@ -180,6 +207,8 @@ let lastBoxOptions = '';
 /* ★ 2026-10-13：盒子管理台账与它的站点下拉（同一套"没变就别重建"的路子） */
 let lastLedgerKey = '';
 let lastBoxSiteKey = '';
+/** ★ 2026-10-19：盒子详情缓存的指纹（避免 3 秒轮询每次都写同一个 `ql:boxDetails`） */
+let lastBoxDetailsJson = '';
 
 function setStat(id: string, value: string | number): void {
   const el = document.getElementById(id);
@@ -267,7 +296,19 @@ async function loadBrowserAccounts(): Promise<void> {
 
 function badgeOf(a: BrowserAccount): { cls: string; text: string } {
   if (a.enforcementOff) {
-    return { cls: 'login_failed', text: '未授权 · 已暂停' };
+    /* ★★ v4.2.12（用户要求 ④「撤销关于授权的提示」）：文案从「未授权 · 已暂停」改成
+     * 「需要重新打开」。
+     *
+     * 为什么不是"把这一态藏起来"：它**是真实状态** —— `enforcementOff` 表示
+     * 「本页签没有可执行的宿主权限」，此时 DNR 改不了鉴权头、存储隔离也不生效。
+     * 用户看到的后果是"两个账号串号了"，所以**必须可见**。
+     * ⇒ 改的是**措辞**：从"授权"（一个用户无从处置的内部概念）改成
+     *   "**重新打开**"（一个他能做的动作，而重开时 `ensureHostPermission`
+     *   会静默把授权补上 —— 见那里的注释）。
+     * ★ 本仓对"删功能要四处都删"有纪律（规则 27），所以这一组文案在
+     *   `badgeOf` / `grid-core.ts` / `parallel.html` 三处一起改；
+     *   而 `/api/...` 的 `云端未授权` 是**另一件事**（云端会话过期），不在本次范围内。 */
+    return { cls: 'login_failed', text: '需要重新打开' };
   }
   if (a.hasToken && a.tabIds.length > 0) {
     return { cls: 'online', text: `在线 ×${a.tabIds.length}` };
@@ -366,24 +407,27 @@ function renderBrowserAccounts(): void {
     openBtn.textContent = a.tabIds.length ? '聚焦标签页' : '打开';
     openBtn.addEventListener('click', () => void openAccount(a.id, false));
 
-    const newTabBtn = document.createElement('button');
-    newTabBtn.className = 'btn-ghost';
-    newTabBtn.textContent = '新标签页';
-    newTabBtn.addEventListener('click', () => void openAccount(a.id, true));
+    /* ★★★ 2026-10-19（用户要求 ③）：**撤掉「新标签页」按钮**。
+     *
+     * 用户原话：「在 akso-pass 的账号中心中，隐藏按钮『打开新标签页』。」
+     * 同账号多页并行的能力仍在（Alt+Q 轮盘、页面内 `window.open` 的亲子继承都走
+     * 别的入口），这里撤掉的只是账号卡上那个**会让人以为"又要登录一次"**的按钮。 */
 
-    const renameBtn = document.createElement('button');
-    renameBtn.className = 'btn-ghost';
-    renameBtn.textContent = '改页签名';
-    renameBtn.addEventListener('click', () => {
-      const next = prompt('新的页签名（该账号标签页的标题）', a.tabName || a.username);
-      if (next === null) {
-        return;
-      }
-      void (async () => {
-        await send({ kind: 'par.update', id: a.id, patch: { tabName: next.trim() || a.username } });
-        await refreshAll();
-      })();
-    });
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-ghost';
+    editBtn.textContent = '编辑';
+    /* ★★★ v4.2.12（用户要求"两端管理逻辑一致"，口径以云端为准）：
+     * 这一格从 `prompt('新的页签名…')` 换成**完整的编辑弹窗** ——
+     * 与 `akso-cloud` 控制台那个弹窗同一组字段：账号名 / 页签名 / 所属站点 /
+     * 盒子 / 密码 / 备注。
+     *
+     * ★ 为什么不能继续用 `prompt`：① 它只能收一个值，而"选错了站点"是**用户真会
+     *   遇到的事**（云端那边为此专门加过 `siteId`，见 `test_account_edit.py`）；
+     *   ② prompt 在扩展页里样式不可控；③ **无法写自动化判据**
+     *   （Playwright 只能靠 dialog 事件间接驱动）—— 而"判据不可写"在本仓等于
+     *   "这条路径不会被验"（这正是 `beginRename` 早就改成就地编辑的原因）。
+     */
+    editBtn.addEventListener('click', () => openAccountEditor(a));
 
     const moveBtn = document.createElement('button');
     moveBtn.className = 'btn-ghost';
@@ -402,10 +446,217 @@ function renderBrowserAccounts(): void {
       }
     });
 
-    actions.append(openBtn, newTabBtn, renameBtn, moveBtn, del);
+    actions.append(openBtn, editBtn, moveBtn, del);
     li.append(head, actions);
     browserListEl.appendChild(li);
   }
+}
+
+/**
+ * ★★★ v4.2.12：**账号编辑弹窗**（与 `akso-cloud` 控制台的编辑弹窗同字段、同语义）。
+ *
+ * | 字段 | 语义 | 与云端的对应 |
+ * |---|---|---|
+ * | 账号名 `username` | 登录用户名 | `AccountPatch.username` |
+ * | 页签名 `tabName` | 该账号所有标签页的标题 | `AccountPatch.tabName` |
+ * | 所属站点 `siteId` | **换站点**（同站点下不许同名） | `AccountPatch.siteId` |
+ * | 盒子 `box` | 收纳分组（默认盒翻成空串） | `AccountPatch.box` |
+ * | 密码 `password` | **留空 = 不改**（不是清空） | `AccountPatch.password` |
+ * | 备注 `note` | 自由文本（此前扩展完全看不到） | `AccountPatch.note` |
+ *
+ * ★★ 三条**必须照抄云端**的取舍（每一条在 `site.js` 的 `openEdit` 里也都写着）：
+ *   1. **只在真的换了站点时才带 `siteId`** —— 无脑带上会让每次保存都去走一遍
+ *      "挪站点"的校验路径，而同站点下它不该触发任何站点相关的逻辑。
+ *   2. **密码留空 = 不动**，`if (pw) body.password = pw`。合成"空串=清空"会让
+ *      用户什么都没填就把密码清了 —— 表现是**下次打开账号填表静默失效**。
+ *   3. **什么都没改就不发请求** —— 服务端每次 PATCH 都会推 `revision`
+ *      （见 `accounts.py` 的 `:379`），空保存会让别的客户端白拉一次全量快照。
+ *
+ * ★ 站点下拉的数据源是 `cloudSites`（站点管理那一份）—— 与云端控制台的
+ *   `sites` 数组同源。**不要**另取一份：那会让"站点管理里有的、下拉里没有"重现。
+ */
+function openAccountEditor(a: BrowserAccount): void {
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  const h = document.createElement('h3');
+  h.textContent = '编辑账号';
+
+  const form = document.createElement('form');
+  form.className = 'form';
+
+  /** 一个「标签 + 控件 + 可选说明」的行（与站点表单同一形状，避免第二套表单观感） */
+  const field = (label: string, control: HTMLElement, hint?: string): HTMLLabelElement => {
+    const wrap = document.createElement('label');
+    wrap.className = 'field';
+    const span = document.createElement('span');
+    span.textContent = label;
+    wrap.append(span, control);
+    if (hint) {
+      const small = document.createElement('small');
+      small.textContent = hint;
+      wrap.append(small);
+    }
+    return wrap;
+  };
+
+  const uInput = document.createElement('input');
+  uInput.type = 'text';
+  uInput.value = a.username;
+  uInput.maxLength = 200;
+  uInput.required = true;
+
+  const tInput = document.createElement('input');
+  tInput.type = 'text';
+  tInput.value = a.tabName;
+  tInput.maxLength = 120;
+  tInput.placeholder = '空则用账号名';
+
+  // 所属站点：当前值按 `siteId` 预选中（★ 不是按 host —— 服务端认 id）
+  const sSelect = document.createElement('select');
+  for (const s of cloudSites) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.displayName === s.host ? s.host : `${s.displayName}（${s.host}）`;
+    if (a.siteId && s.id === a.siteId) {
+      opt.selected = true;
+    }
+    sSelect.append(opt);
+  }
+  // ★ 当前站点不在下拉里（离线/云端记录缺失）时**补一个占位项**并选中它。
+  //   不补的话 `select.value` 会落到第一项 ⇒ 用户一保存就把账号挪到别的站点，
+  //   而他什么都没改 —— 一个静默的数据迁移。
+  if (a.siteId && !cloudSites.some((s) => s.id === a.siteId)) {
+    const opt = document.createElement('option');
+    opt.value = a.siteId;
+    opt.textContent = `${a.siteHost || '未知站点'}（当前）`;
+    opt.selected = true;
+    sSelect.prepend(opt);
+  }
+
+  const bSelect = document.createElement('select');
+  for (const name of boxes) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    if (name === boxOf(a)) {
+      opt.selected = true;
+    }
+    bSelect.append(opt);
+  }
+
+  const pInput = document.createElement('input');
+  pInput.type = 'password';
+  pInput.maxLength = 500;
+  pInput.placeholder = '留空 = 不修改';
+  pInput.autocomplete = 'new-password';
+
+  const nInput = document.createElement('input');
+  nInput.type = 'text';
+  nInput.value = a.note ?? '';
+  nInput.maxLength = 1000;
+
+  form.append(
+    field('账号名', uInput),
+    field('页签名', tInput, '该账号所有标签页的标题'),
+    field('所属站点', sSelect, '换站点后，同一站点下不能有同名账号'),
+    field('盒子', bSelect),
+    field('密码', pInput, '留空表示不改密码（不是清空）'),
+    field('备注', nInput),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-ghost';
+  cancel.type = 'button';
+  cancel.textContent = '取消';
+  const save = document.createElement('button');
+  save.className = 'btn-primary';
+  save.type = 'submit';
+  save.textContent = '保存';
+  actions.append(cancel, save);
+  form.append(actions);
+
+  card.append(h, form);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal';
+  overlay.append(card);
+  accountModalRoot.append(overlay);
+
+  const close = (): void => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      close();
+    }
+  };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  cancel.addEventListener('click', close);
+  uInput.focus();
+  uInput.select();
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    void (async () => {
+      const patch: {
+        username?: string;
+        tabName?: string;
+        siteId?: string;
+        box?: string;
+        password?: string;
+        note?: string;
+      } = {};
+      const nextUser = uInput.value.trim();
+      const nextTab = tInput.value.trim();
+      const nextNote = nInput.value;
+      if (nextUser !== a.username) {
+        patch.username = nextUser;
+      }
+      if (nextTab !== a.tabName) {
+        patch.tabName = nextTab;
+      }
+      // ★ 取舍 1：只在**真的换了站点**时才带（见函数头注释）
+      if (sSelect.value && sSelect.value !== a.siteId) {
+        patch.siteId = sSelect.value;
+      }
+      if (bSelect.value !== boxOf(a)) {
+        patch.box = bSelect.value;
+      }
+      // ★ 取舍 2：留空 = 不改
+      if (pInput.value) {
+        patch.password = pInput.value;
+      }
+      if (nextNote !== (a.note ?? '')) {
+        patch.note = nextNote;
+      }
+      // ★ 取舍 3：什么都没改就不发请求
+      if (!Object.keys(patch).length) {
+        close();
+        return;
+      }
+      save.disabled = true;
+      cancel.disabled = true;
+      save.textContent = '保存中…';
+      const res = await send({ kind: 'par.update', id: a.id, patch });
+      if (!res.result.ok) {
+        save.disabled = false;
+        cancel.disabled = false;
+        save.textContent = '保存';
+        alert(`保存失败：${res.result.error}`);
+        return;
+      }
+      close();
+      lastListKey = ''; // 强制重渲染（页签名/站点/盒子都可能变了）
+      await refreshAll();
+    })();
+  });
 }
 
 /* ==================== 盒子 ==================== */
@@ -425,12 +676,49 @@ let disabledBoxes: string[] = [];
 
 /**
  * 云端的**盒子详情**（名字 → `ParBox`），只作渲染依据。
- * ★ 离线时它是空的 ⇒ 渲染回落成"只画名字"（而不是把没有的字段显示成 0 / 空）。
+ *
+ * ★ 2026-10-19：云端拿不到时**不再显示「离线：站点信息未同步」** ——
+ *   见 `loadBoxes` 与 `renderBoxLedger` 里的说明。这里先用
+ *   `ql:boxDetails` 的**上一次成功快照**填充（离线可读），拿不到才真的为空。
  */
 let boxDetail = new Map<string, ParBox>();
 
+/** 把 storage 里那份只读副本还原成 `boxDetail`（形状不对就整份丢弃，宁可空也不半空） */
+function restoreBoxDetailCache(raw: unknown): void {
+  if (boxDetail.size || !Array.isArray(raw)) {
+    return;
+  }
+  const rows = raw
+    .filter((r): r is ParBox => {
+      const o = (r ?? {}) as Record<string, unknown>;
+      return typeof o.name === 'string' && o.name.length > 0;
+    })
+    .map((r) => ({
+      name: r.name,
+      isDefault: r.isDefault === true,
+      disabled: r.disabled === true,
+      autoDisabled: r.autoDisabled === true,
+      count: Number.isFinite(r.count) ? r.count : 0,
+      renameable: r.renameable !== false,
+      deletable: r.deletable !== false,
+      bindable: r.bindable !== false,
+      siteId: typeof r.siteId === 'string' ? r.siteId : '',
+      siteName: typeof r.siteName === 'string' ? r.siteName : '',
+    }));
+  if (rows.length) {
+    boxDetail = new Map(rows.map((b) => [b.name, b]));
+    lastBoxDetailsJson = JSON.stringify(rows);
+  }
+}
+
 async function loadBoxes(): Promise<void> {
-  const stored = await chrome.storage.local.get([LOCAL_KEYS.boxList, LOCAL_KEYS.defaultBox, LOCAL_KEYS.disabledBoxes]);
+  const stored = await chrome.storage.local.get([
+    LOCAL_KEYS.boxList,
+    LOCAL_KEYS.defaultBox,
+    LOCAL_KEYS.disabledBoxes,
+    LOCAL_KEYS.boxDetails,
+  ]);
+  restoreBoxDetailCache(stored[LOCAL_KEYS.boxDetails]);
   const remembered = (stored[LOCAL_KEYS.boxList] as string[] | undefined) ?? [];
   defaultBox = ((stored[LOCAL_KEYS.defaultBox] as string | undefined) ?? '').trim() || DEFAULT_BOX_FALLBACK;
   disabledBoxes = (stored[LOCAL_KEYS.disabledBoxes] as string[] | undefined) ?? [];
@@ -465,20 +753,39 @@ async function loadBoxes(): Promise<void> {
  *   · 面板里的灰态、轮盘跳过的页、`boxOf()` 的回落 —— 全部跟着云端走；
  *   · 轮盘那两处**直读 storage 的独立实现**（小窗 + 页内浮层）一行都不用改；
  *   · 用户**不能再**在本地"改默认盒名"或"改禁用态"——那两个动作现在都打到云端。
- * ★ `boxDetail` 只活在内存里：离线时它为空，渲染回落成"只画名字"，
- *   而不是把取不到的字段显示成 0 / 空串（那会被读成"这个盒子真的没有账号"）。
+ * ★ `boxDetail` 在内存里，同时落一份 `ql:boxDetails` 只读副本（2026-10-19）：
+ *   离线时用**上一次成功同步**的详情渲染，而不是把取不到的字段显示成 0 / 空串
+ *   （那会被读成"这个盒子真的没有账号"），也不再显示「离线未同步」的提示。
  */
 async function reconcileBoxesWithCloud(): Promise<void> {
   // ★ 类型来自 `shared/messages.ts`（本仓规则：协议单一定义，调用点不就地 cast）。
   const res = await send({ kind: 'par.boxes' }).catch(() => null);
   const truth = res && res.kind === 'par.boxes' && res.result.ok ? res.result.data : null;
 
+  /* ★★★ 2026-10-14：**版本错配的防线**（这次"数据不同步"的直接触发点）。
+   *
+   * 面板页面与 Service Worker 是**两份独立产物**。改了 `par.boxes` 的载荷形状之后，
+   * 如果只刷新了页面、没在 `chrome://extensions` 点「重新加载」，就会跑出
+   * "**新页面 + 旧 SW**"：旧 SW 回的是 `{names: [...]}`，而下面读的是 `truth.boxes`
+   * ⇒ **第一句 `.map` 就抛**。
+   * ★ 而那一抛的代价远不止盒子：它会把 `refreshAll()` 里排在**后面**的
+   *   `loadBrowserAccounts()` 一并带走 ⇒ **账号列表再也不刷新**（用户报的症状）。
+   * ⇒ 认不出形状就按"**没拿到**"处理（与离线同一条路，一个字都不动），
+   *   并且**大声说出来** —— 这是唯一能让"两个版本在跑"这件事变得可见的地方。
+   */
+  const cloudBoxes = Array.isArray(truth?.boxes) ? truth.boxes : null;
+  if (truth && !cloudBoxes) {
+    log.warn('par.boxes 的载荷里没有 boxes 数组 —— 多半是「页面已更新、扩展没重新加载」'
+      + '造成的版本错配。本轮按"没拿到"处理（盒子保持本地那份）；'
+      + '请在 chrome://extensions 点「重新加载」把两半对齐。');
+  }
+
   // ★★ 对账的**规则**在 `shared/box-reconcile.ts`（纯函数）—— 这里只负责
   //   "取云端名单 + 写回 storage"。抽出去的理由是那三条约束里有两条是**反方向**的
   //   （离线不许剪、账号在用的不许剪），而它们跑起来要云端授权 ⇒ 不抽出来就
   //   永远验不到（本脚本的第一版正是因此只能 SKIP）。
   //   ★ 云端没答复时 `cloudNames` 传空数组，纯函数会**原样返回**。
-  const cloudNames = truth?.boxes.map((b) => b.name) ?? [];
+  const cloudNames = cloudBoxes?.map((b) => b.name) ?? [];
   const out = reconcileBoxes({
     remembered: boxes.filter((b) => b !== defaultBox),
     fromAccounts: browserAccounts.map((a) => boxOf(a)),
@@ -488,13 +795,23 @@ async function reconcileBoxesWithCloud(): Promise<void> {
 
   const patch: Record<string, unknown> = {};
 
-  if (truth) {
-    boxDetail = new Map(truth.boxes.map((b) => [b.name, b]));
+  if (cloudBoxes) {
+    boxDetail = new Map(cloudBoxes.map((b) => [b.name, b]));
+    /* ★ 2026-10-19：把服务端算好的详情落一份只读副本（`ql:boxDetails`）。
+     * 离线时盒子台账用**上一次同步到的状态**渲染，而不是显示「离线：站点信息未同步」
+     * （用户明确要求不要那个提示）。★ 只在内容真的变了时写盘 —— 这个函数挂在
+     * 3 秒轮询上，稳态必须零写。 */
+    const detailJson = JSON.stringify(cloudBoxes);
+    if (detailJson !== lastBoxDetailsJson) {
+      lastBoxDetailsJson = detailJson;
+      patch[LOCAL_KEYS.boxDetails] = cloudBoxes;
+    }
 
     // ① 默认盒名 = **云端权威**（用户不能再改它：服务端把默认盒名做成了常量）
     //    ★ 本地那个键从此只是缓存 —— 用户以前在本地改过的名字会在这时被纠回来，
     //      而那个旧名字会作为"云端没有、账号也没用"的记住项被下面的对账剪掉。
-    const cloudDefault = truth.default.trim();
+    //    ★ `String(... ?? '')`：载荷形状再怎么漂，这里也不许抛（抛了就拖死账号刷新）。
+    const cloudDefault = String(truth?.default ?? '').trim();
     if (cloudDefault && cloudDefault !== defaultBox) {
       defaultBox = cloudDefault;
       patch[LOCAL_KEYS.defaultBox] = cloudDefault;
@@ -503,7 +820,7 @@ async function reconcileBoxesWithCloud(): Promise<void> {
     // ② 禁用态 = **云端权威**。★ 服务端的 `disabled` **已经含**了
     //    "默认盒且为空"的派生态（`autoDisabled`）⇒ 不要再叠加本地派生，
     //    否则会出现"服务端说启用、扩展判禁用"这第三套口径。
-    const cloudDisabled = truth.boxes.filter((b) => b.disabled).map((b) => b.name).sort();
+    const cloudDisabled = cloudBoxes.filter((b) => b.disabled).map((b) => b.name).sort();
     const localDisabled = [...disabledBoxes].sort();
     if (cloudDisabled.join('\u0000') !== localDisabled.join('\u0000')) {
       disabledBoxes = cloudDisabled;
@@ -665,9 +982,12 @@ async function createBoxFromForm(): Promise<void> {
  *   · `disabled` —— 按钮文案是「禁用」还是「启用」；
  *   · `siteId` / `siteName` —— 关联站点那一格。
  *
- * ★ 离线（`boxDetail` 为空）时**只画名字 + 账号数**，不画任何操作按钮：
- *   操作都要打到云端，离线时它们必然失败 —— 给一个"点了报错"的按钮
- *   与网页控制台那条纪律相反（宁可没有按钮）。
+ * ★ 2026-10-19（用户要求）：不再区分"离线 / 在线"两种画法 ——
+ *   云端详情每次成功拉取都会落一份只读副本（`ql:boxDetails`），离线时用
+ *   **上一次同步到的状态**渲染（站点关联、按钮都照常）。只有在**从未**拿到过
+ *   任何一份快照时，才只画名字 + 账号数、不给操作按钮（那些操作必然失败）。
+ *   ★ 关键差别是**文案**：那一格留空，而不是写「离线：站点信息未同步」——
+ *     后者会让用户以为盒子坏了，而他对此什么都做不了。
  */
 function renderBoxLedger(): void {
   const key = JSON.stringify([
@@ -722,9 +1042,17 @@ function renderBoxLedger(): void {
     // 关联站点那一格：三种形态，判据只来自服务端的 `bindable` / `siteId`
     const domain = document.createElement('div');
     domain.className = 'site-card-domain';
-    domain.textContent = d
-      ? (d.siteId ? `关联站点：${d.siteName || d.siteId}` : (d.bindable ? '未关联站点' : '不参与站点关联'))
-      : '（离线：站点信息未同步）';
+    if (d) {
+      domain.textContent = d.siteId
+        ? `关联站点：${d.siteName || d.siteId}`
+        : (d.bindable ? '未关联站点' : '不参与站点关联');
+    } else {
+      /* ★ 2026-10-19（用户要求）：**不显示「离线：站点信息未同步」**。
+       * 盒子详情是自动同步的（见 `reconcileBoxesWithCloud`），拿不到时说明
+       * 还没拉到第一份快照 —— 那是"暂时没有信息"，不是"你的盒子坏了"。
+       * 与其说一句用户无法处置的离线提示，不如这一格留空。 */
+      domain.hidden = true;
+    }
 
     const count = document.createElement('div');
     count.className = 'site-card-count';
@@ -737,11 +1065,9 @@ function renderBoxLedger(): void {
     const actions = document.createElement('div');
     actions.className = 'site-actions';
     if (!d) {
-      // 离线：一个按钮都不给（见本函数注释最后一段）
-      const hint = document.createElement('span');
-      hint.className = 'muted';
-      hint.textContent = '离线';
-      actions.append(hint);
+      /* 还没有任何一份云端快照（首次启动即离线）：**不给操作按钮**。
+       * 操作都要打到云端，离线时点了必然失败；而"失败"不是用户的错。
+       * ★ 这里**不再**画一个「离线」标签 —— 理由同上。 */
     } else if (d.isDefault) {
       const fixed = document.createElement('span');
       fixed.className = 'muted';
@@ -802,7 +1128,7 @@ function renderBoxLedger(): void {
 function bindSitePrompt(name: string): void {
   const usable = cloudSites;
   if (!usable.length) {
-    alert('还没有可关联的站点 —— 先在「站点管理」里添加并授权一个站点。');
+    alert('还没有可关联的站点 —— 先在「站点管理」里添加一个站点。');
     return;
   }
   const lines = usable.map((s, i) => `${i + 1}. ${s.displayName}（${s.host}）`).join('\n');
@@ -1068,7 +1394,10 @@ dataImportFile.addEventListener('change', () => {
     const { created, skipped } = res.result.data;
     alert(
       `导入完成：新建 ${created} 个账号，跳过 ${skipped} 个。` +
-        (hosts.length && !granted ? `\n注意：站点授权未完成，账号将显示「未授权·已暂停」——请在「添加授权」中补授站点。` : ''),
+        (hosts.length && !granted
+          ? '\n注意：有站点的浏览器权限还没就位，那些账号会显示「需要重新打开」——'
+            + '打开一次账号即可（届时会自动补齐）。'
+          : ''),
     );
     lastChipsKey = '';
     lastBoxOptions = '';
@@ -1116,14 +1445,43 @@ selDelete.addEventListener('click', () => {
   if (!selectedIds.size) {
     return;
   }
-  if (!confirm(`删除选中的 ${selectedIds.size} 个账号？将同时关闭它们的所有并行标签页。`)) {
+  const names = browserAccounts
+    .filter((a) => selectedIds.has(a.id))
+    .map((a) => a.tabName || a.username);
+  const shown = names.slice(0, 8).join('、') + (names.length > 8 ? ` …等共 ${names.length} 个` : '');
+  // ★ 把**具体是哪些**摊开（与站点级联删除同一纪律）：只报一个数字的话，
+  //   用户没有机会在按下之前发现自己多勾了一个。
+  if (!confirm(`删除选中的 ${selectedIds.size} 个账号？\n\n${shown}\n\n`
+    + '将同时关闭它们的所有并行标签页，且**无法恢复**。')) {
     return;
   }
   void (async () => {
-    for (const id of selectedIds) {
-      await send({ kind: 'par.delete', id });
+    /* ★★ v4.2.12：改走**服务端的批量删除**（`POST /api/accounts/batch-delete`），
+     * 而不是在这里循环发 N 个 `par.delete`。
+     *   ① N 次网络往返 vs 1 次；
+     *   ② 服务端只在真的删掉行时才推 `revision`（循环发会让版本号推 N 次，
+     *      别的客户端因此白拉 N 次全量快照）；
+     *   ③ 部分失败时服务端能给出准确条数，而循环发只能报"第 3 个失败了"。
+     * ★ 本机侧（关页签、摘规则、清 token）由 SW 的 `closeAccountTabs` 逐个做 ——
+     *   那部分**不能**合并成一次，因为它本来就是每个账号各自的事。 */
+    const res = await send({ kind: 'par.batchDelete', ids: [...selectedIds] });
+    /* ★ `send()` 的返回是**全协议联合**（`RuntimeResponse`），所以这里必须
+     *   先用 `kind` 收窄再读 `data` —— 直接读会得到一个跨 30 多个成员的联合类型
+     *   （`tsc` 报的正是 "Property 'deleted' does not exist on type …"）。
+     *   这是本仓"协议单一定义"的代价，也是它的价值：**漏判 kind 会当场被类型系统抓住**。 */
+    if (res.kind !== 'par.batchDelete' || !res.result.ok || !res.result.data) {
+      const err = res.kind === 'par.batchDelete' && !res.result.ok ? res.result.error : '后台未返回结果';
+      alert(`批量删除失败：${err}`);
+      return;
+    }
+    if (res.result.data.deleted !== selectedIds.size) {
+      // 数量对不上就**如实报**（静默的话用户会以为全删干净了）
+      log.warn('批量删除：请求 %d 个，服务端回报删掉 %d 个', selectedIds.size, res.result.data.deleted);
     }
     selectedIds.clear();
+    batchMode = false;
+    batchToggle.textContent = '批量管理';
+    lastListKey = '';
     await refreshAll();
   })();
 });
@@ -1286,7 +1644,7 @@ importRun.addEventListener('click', () => {
   void (async () => {
     const siteHost = pHostSelect.value;
     if (!siteHost) {
-      alert('请先在「站点管理」添加并授权站点。');
+      alert('请先在「站点管理」添加站点。');
       return;
     }
     const box = pBoxSelect.value;
@@ -1331,13 +1689,83 @@ importRun.addEventListener('click', () => {
 
 /* ==================== 添加账号（单个） ==================== */
 
-async function ensureHostPermission(host: string): Promise<boolean> {
-  try {
-    return await chrome.permissions.request({ origins: [`*://${host}/*`] });
-  } catch {
-    // 无手势上下文等场景
+/**
+ * ★★★ v4.2.12：**授权的唯一处置点** —— 而且它现在对用户是隐形的。
+ *
+ * ## 为什么授权这件事删不掉
+ *
+ * 用户的要求是「站点管理只做增删改，无需关注浏览器是否授权」。但 Chrome 的约束是硬的：
+ * `manifest.json` 里 `host_permissions: []` + `optional_host_permissions` 是通配 ——
+ * **任何一个站点在用之前都要有一条宿主权限**，否则：
+ *   · 内容脚本（`shield-*` / `auto-login` / `title-hook`）**根本不注入**该页面；
+ *   · `declarativeNetRequestWithHostAccess` 的改头规则**不生效**；
+ *   · 于是"多账号并行"这件事整个不成立（连自动填表都拿不到凭证）。
+ * ⇒ 可以消掉的是**界面上的授权概念**，不是授权本身。
+ *
+ * ## 做法：一次要通配，之后永不再问
+ *
+ * 用户在**登录云端账号库**那一次点击里已经表达了"我要用这个扩展"，
+ * 就在那个手势里顺手把通配授权要下来（见 `authReloginBtn` 那个捕获阶段监听器）。
+ * 拿到之后 `chrome.permissions.contains()` 对**任何一个**站点都为真，
+ * 于是这里**一个字节都不写、一个窗都不弹** —— 用户从此不必知道有这回事。
+ *
+ * ★★ **本段注释里绝对不要写出带通配的权限模式字面量。** 它们的结尾正好是块注释的
+ *   结束标记，会让注释**提前结束**、后面整段代码变成语法垃圾
+ *   （`docs/PITFALLS.md` #43 —— 我在这一轮里已经犯过一次，由 `tsc` 当场抓住：
+ *   一次报出 200 多条 "Invalid character"）。要指代它就写"通配模式"。
+ *
+ * ★★ 顺序纪律（本仓栽过两次，见 v4.2.7 / v4.2.9 的提交说明）：
+ *   `permissions.request` 必须在**用户手势里最先发起** —— 前面只要有一次 `await`，
+ *   手势就失效，Chrome **不弹窗、不报错、直接返回 false**，表现为"点了没反应"。
+ *   ⇒ 所以这个函数被设计成**可以在手势里同步调用**：它内部第一件事就是发请求。
+ *
+ * ★ 没拿到通配时（用户点了拒绝，或 Chrome 不给这个窗）**不阻断任何操作**：
+ *   退回到"按站点请求"。那条路 Chrome 会弹一个**针对具体站点**的窗，
+ *   而那个窗是用户能理解的（"是否允许访问 xxx"）。两者都不出现在我们的界面里。
+ *
+ * @param interactive 是否允许弹窗（true 只能在用户手势里传）
+ */
+async function ensureHostPermission(host: string, interactive = true): Promise<boolean> {
+  if (!host) {
     return false;
   }
+  const pat = patternOfHost(host);
+  // ① 已经被更宽的授权覆盖 ⇒ 什么都不做（Chrome 对"已覆盖"的请求既不弹窗也不报错，
+  //    只在 `getAll().origins` 里看不到具体 origin —— 那些都不影响可用性）
+  const covered = await chrome.permissions
+    .contains({ origins: [pat, '*://*/*'] })
+    .then((r) => r)
+    .catch(() => false);
+  if (covered) {
+    return true;
+  }
+  if (!interactive) {
+    return false;
+  }
+  // ② 未覆盖：先请求通配（一次解决以后所有站点），失败再退到本站点
+  const wide = await chrome.permissions
+    .request({ origins: ['*://*/*'] })
+    .catch(() => false);
+  if (wide) {
+    log.info('已获得全网通配授权（站点 %s 一并覆盖）', host);
+    return true;
+  }
+  const one = await chrome.permissions.request({ origins: [pat] }).catch(() => false);
+  return one;
+}
+
+/**
+ * 在**已知处于用户手势中**时尽早把通配授权要下来（不 await 任何前置动作）。
+ *
+ * ★ 返回值只用于留痕，不用于判断 —— 调用方**不能**因为它是 false 就回滚别的事：
+ *   授权可以稍后补（`ensureHostPermission` 会在用的时候再试一次），
+ *   而"登录云端"这件事与授权成败无关。
+ */
+function requestWideHostPermission(): Promise<boolean> {
+  // ★ 这一句必须**同步**发起（不放在 await 之后），否则手势已经没了。
+  return chrome.permissions
+    .request({ origins: ['*://*/*'] })
+    .catch(() => false);
 }
 
 /* ==================== scheme（v3.10.9）：协议 hint 与解析 ==================== */
@@ -1385,9 +1813,31 @@ async function openAccount(id: string, forceNewTab: boolean): Promise<void> {
   if (!account) {
     return;
   }
-  if (!(await ensureHostPermission(account.siteHost))) {
-    alert(`需要授权访问 ${account.siteHost} 才能改写其请求头。`);
-    return;
+  /* ★★ v4.2.12：授权在这里**静默补齐**，不再是一道会拦人的门。
+   *
+   * 改前这里是 `if (!(await ensureHostPermission(...))) { alert('需要授权访问 …'); return; }`
+   * —— 即"没授权就别想打开"，而用户看到的是一个**他刚刚在站点管理里被要求不要再关心**
+   * 的概念。现在的口径是：
+   *   · 已在通配授权下（登录云端时要过的那一次）⇒ 这一路什么都不做、什么都不弹；
+   *   · 万一没有 ⇒ 在这次**点击手势**里补一次（Chrome 可能弹一个具体站点的窗），
+   *     能补上就继续；
+   *   · 补不上（用户明确拒绝）⇒ 如实说清后果，**仍然打开**它 —— 让用户自己判断，
+   *     而不是让一个他看不懂的错误把这行按钮变成死的。
+   */
+  const granted = await ensureHostPermission(account.siteHost);
+  if (!granted) {
+    log.warn('站点 %s 未取得宿主权限：该页签的隔离与自动填表都不会生效', account.siteHost);
+    if (
+      !confirm(
+        `浏览器没有允许 Akso Pass 访问 ${account.siteHost}。\n\n`
+          + '这种情况下**仍然可以打开**这个账号，但：\n'
+          + '· 不会隔离它的登录态（可能与其它账号串号）\n'
+          + '· 不会自动填充账密\n\n'
+          + '要现在打开吗？（也可以在 chrome://extensions 的「网站访问权限」里改成「在所有网站上」）',
+      )
+    ) {
+      return;
+    }
   }
   const res = await send({ kind: 'par.open', id, forceNewTab });
   if (!res.result.ok) {
@@ -1400,9 +1850,11 @@ async function openAccount(id: string, forceNewTab: boolean): Promise<void> {
 async function createAccount(open: boolean): Promise<void> {
   const siteHost = pHostSelect.value;
   if (!siteHost) {
-    alert('请先在「站点管理」添加并授权站点，站点下拉才会有可选项。');
+    alert('请先在「站点管理」添加站点，站点下拉才会有可选项。');
     return;
   }
+  // 添加账号**也是用户手势**：顺手把授权补齐（静默；补不上也不拦 —— 账号照样存云端）
+  void ensureHostPermission(siteHost);
   const tabName = pTabName.value.trim();
   const username = pUsername.value.trim();
   const password = pPassword.value;
@@ -1458,32 +1910,6 @@ function patternOfHost(host: string): string {
 }
 
 /**
- * ★★ v4.2.4：**这个 host 是不是"云端服务自己"** —— 是的话它不属于"站点管理"。
- *
- * ## 缺陷形态（用户 2026-10-12 实测，原话"我认为这是很滑稽的事"）
- *
- * `grantedHosts` 是直接映射浏览器权限清单来的，而扩展为了**访问云端 API** 申请过
- * 云端服务那条 origin（见 `parallel.ts` 里的 `CLOUD_ORIGIN_PATTERN`，设备流授权那一步）。
- * ★ 这里刻意不把那串 origin 的字面量写出来 —— 它的结尾正是注释结束标记，
- *   会让本段注释提前结束、进而破坏整个文件（我在这上面栽过七次，见 PITFALLS #43）。
- * ⇒ **云端自己的域名进了"站点管理"**，成了一张：
- *   · 没有并行账号（它不是平台，没有账号可加）
- *   · 又删不掉（那是扩展**必须**保留的权限 —— Chrome 拒绝回收、
- *     就算回收了扩展也就登不上云端账号库了）
- * 的卡片。
- * ★ 它还会出现在「添加账号」的站点下拉里 —— 那是更实际的问题：用户可能真的
- *   把某个平台账号**建到云端域名上**，而那永远不会工作。
- *
- * ⇒ 判据：**与云端服务同源**的 host 一律不算"并行账号的站点"。
- *   比对**host**（而不是整串 origin）⇒ 无论云端是 http 还是 https、带不带端口都能对上。
- *
- * ★★ 依赖顺序：它读 `cloudBaseUrl`，而那个值由 `loadCloudState()` 填。
- *   `refreshAll()` 里 `loadCloudState()` **排在 `loadSites()` 之前** ——
- *   这个顺序是**功能前提**，不是风格：调换之后 `cloudBaseUrl` 还是空串，
- *   `isCloudHost` 一律返回 false ⇒ **过滤静默失效**，云端域名又回到列表里。
- *   判据：`tmp/verify-twotier.mjs` 的 A/B 组会断言云端 host 不出现在站点卡片与下拉里。
- */
-/**
  * 剥掉 host 里的端口（`a.com:8443` → `a.com`）。
  *
  * ★ 为什么不 import `background/core/tab-rules.ts` 里那个 `hostNoPortOf`：
@@ -1532,79 +1958,130 @@ function countAccountsFor(displayHost: string): number {
   return browserAccounts.filter((a) => a.siteHost === displayHost || a.siteHost.endsWith(`.${bare}`)).length;
 }
 
+/**
+ * 站点管理的加载与渲染：**拉云端 → 建行 → 变了才重画**（v4.2.12 重写）。
+ *
+ * ★★ 改前这里做的是另一件事：拿 `chrome.permissions.getAll()` 当站点列表，
+ *   再叠加两个本地名单。那让"站点"有了两个互相不可见的来源（见状态声明处那段注释）。
+ *
+ * ★ 顺序依赖：`refreshSiteNames()` 必须在 `buildSiteRows()` **之前** ——
+ *   行里的 `title` 与 `siteId` 都来自它（`cloudSites` / `siteNames`）。
+ */
 async function loadSites(): Promise<void> {
-  const all = await chrome.permissions.getAll();
-  const blockedStored = await chrome.storage.local.get(LOCAL_KEYS.blockedHosts);
-  const blocked = new Set<string>((blockedStored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
+  // 站点名从云端拉；拿不到（离线）时**保持上一次的列表**（见 refreshSiteNames 的说明）
+  const fresh = await refreshSiteNames();
 
-  grantedHosts = Array.from(
-    new Set(
-      (all.origins ?? [])
-        .map(originToHost)
-        // ★ v4.2.4：**云端服务自己的域名不算并行账号的站点**（见 `isCloudHost`）——
-        //   它是扩展为了访问云端 API 才申请的权限，永远删不掉也不该删。
-        .filter((h): h is string => h !== null && !isCloudHost(h)),
-    ),
-  ).sort();
-
-  // 名单自愈：浏览器层已无授权的停用条目直接移除
-  //   ★ 比对用**排序后的内容**而不是 `Set.size`：一减一增时 size 不变，
-  //     而名单其实已经变了（size 比较会漏掉这种情形，且漏得毫无痕迹）。
-  const storedList = Array.from(blocked).sort();
-  for (const b of Array.from(blocked)) {
-    const still = await chrome.permissions.contains({ origins: [`*://${b}/*`] }).catch(() => false);
-    if (!still) {
-      blocked.delete(b);
-    }
-  }
-  blockedHosts = Array.from(blocked).sort();
-  // ★★ 2026-10-12 修：**只在自愈真的改变了名单时才写盘**。
-  //
-  //   本函数由 `refreshAll()` 调用，而 `refreshAll` 挂在 `setInterval(…, 3000)` 上
-  //   ⇒ 原来这里**每 3 秒无条件写一次 `chrome.storage.local`**，稳态下就是
-  //     "一直写同一个值"的磁盘写放大（用户不开任何界面时也在写）。
-  //   ★ 判据：稳态（浏览器权限无变化）下 `ql:blockedHosts` 的写入次数应为 **0**。
-  //   ★ 为什么可以安全跳过：`blockedHosts` 这个内存副本**总是**被赋成最新值（上一行），
-  //     渲染与后续逻辑读的都是它；storage 只是给冷启/别的页面用的持久副本。
-  if (JSON.stringify(storedList) !== JSON.stringify(blockedHosts)) {
-    await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });
+  /* ★★ 2026-10-19（用户要求：同步应当自动执行，不再有「同步到云端」按钮）：
+   *
+   * 账号引用了、但云端站点表里没有的 host，在这里**自动补建**成站点记录。
+   * 旧逻辑把这件事留给用户点「同步到云端」，于是：
+   *   · 列表上一直挂着一个"未同步"的标记（其实只是个本地引用）
+   *   · 用户不理解"同步"是什么、也不知道该不该点
+   * ⇒ 现在由界面自己完成，且**只在刚刚成功拉到云端列表时**做 ——
+   *   拿不到列表就补建会把所有账号站点当成缺失，在网络抖动时造出重复站点。
+   */
+  if (fresh && (await ensureMissingSites())) {
+    // 补建成功后重拉一次，让新记录（含 id/baseUrl）进入本轮的渲染
+    await refreshSiteNames();
   }
 
-  // 站点名从云端拉；拿不到（离线）时 `siteNames` 为 null，渲染回落成显示域名
-  await refreshSiteNames();
-
-  // ★ v4.2.3：用户主动隐藏的 host（与 blockedHosts 是**两件事**，见 LOCAL_KEYS 注释）
-  const hiddenStored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
-  const hiddenHosts = (hiddenStored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? [];
-
-  // ★ v4.2.4：`referenced` 也是渲染输入（云端站点记录 + 账号引用的 host）——
-  //   不进 key 的话"账号引用了新站点"不会让站点管理重新渲染（那正是这条路径的入口）。
+  const rows = buildSiteRows();
+  // ★ 渲染输入要**全进 key**：少了哪一项，"它变了但界面不动"就会静默发生
+  //   （v4.2.2 实测到的"改名后下拉不更新"就是这个形态）。
   const sitesKey = JSON.stringify([
-    grantedHosts,
-    blockedHosts,
-    hiddenHosts,
-    browserAccounts.map((a) => [a.id, a.tabName, a.box ?? '']),
-    // ★ 名字也要进 key：它是渲染输入的一部分，不进 key 的话"改了名字但 hosts 没变"
-    //   就**不会重渲染**（表现是"点了保存没反应"，而数据其实已经改好了）。
-    siteNames,
+    rows.map((r) => [r.host, r.siteId, r.title, r.count, r.baseUrl, r.note]),
+    browserAccounts.map((a) => [a.id, a.tabName, a.box ?? '', a.siteHost]),
   ]);
   if (sitesKey !== lastSitesKey) {
     lastSitesKey = sitesKey;
-    renderSites(grantedHosts, blockedHosts, hiddenHosts);
-    /* ★★ v4.2.2 修：**改名后"添加账号"的站点下拉必须跟着更新**。
-     *
-     * 缺陷形态（实测抓到，30/32）：改完名字后站点卡片更新了，而 `#p-host` 的选项
-     * **仍然显示旧名字**。根因是两份缓存的**失效时机不一致**：
-     *   · `renderSites` 靠 `lastSitesKey`，上面刚把它算进去了 ⇒ 会重渲染 ✅
-     *   · `fillSiteOptions` 靠 `lastHostOptions`，而它的 key 是在**上一次**调用时
-     *     用**旧**的 `siteNames` 算出来的 ⇒ 这次比对发现"没变化" ⇒ **不重建** ❌
-     *
-     * ⇒ 既然 `siteNames` 变了（走到了这一支），就顺手让下拉的缓存失效。
-     *   放在这里而不是散在各调用点：**任何**让 `siteNames` 变化的路径都会经过这一支。
-     */
-    lastHostOptions = '';
+    renderSites(rows);
+    lastHostOptions = ''; // 同一批数据喂着"添加账号"的站点下拉，一起失效
   }
+
+  await purgeLegacyHostLists();
 }
+
+/**
+ * ★★ 2026-10-19：把"账号引用了、云端却没有"的站点**自动补建**。
+ *
+ * 用户要求：「同步数据应该是自动执行的，不用手动执行。」
+ * ⇒ 这是旧「同步到云端」按钮做的事，只是挪到了**每一次成功拉取站点列表之后**。
+ *
+ * 三条约束（缺一条就会造出新问题）：
+ *   1. **只在云端列表刚刚成功拉到之后调用**（调用点在 `loadSites` 里）——
+ *      拿不到列表时，所有账号站点都会被误判成"缺失"，抖动一次就建一堆重复站点。
+ *   2. **建盒参数传 `false`**：用户没有在这个动作里被问过"要不要建盒"，
+ *      替他把盒子建出来属于未确认的副作用（建站表单的勾选框才是那个入口）。
+ *   3. **失败后 60 秒内不重试**：`loadSites` 挂在 3 秒轮询上，不节流会离线时
+ *      每 3 秒打一次云端，把失败日志刷满而信息量不增。
+ *
+ * 返回 `true` = 至少补建成功一条（调用方据此重拉列表）。
+ */
+const siteAutoSyncAt = new Map<string, number>();
+const SITE_AUTOSYNC_RETRY_MS = 60_000;
+
+async function ensureMissingSites(): Promise<boolean> {
+  const known = new Set(cloudSites.map((s) => s.host));
+  const missing: string[] = [];
+  for (const a of browserAccounts) {
+    const host = a.siteHost?.trim();
+    if (!host || host.includes('*') || isCloudHost(host) || known.has(host) || missing.includes(host)) {
+      continue;
+    }
+    missing.push(host);
+  }
+  if (!missing.length) {
+    return false;
+  }
+  let created = false;
+  for (const host of missing) {
+    const last = siteAutoSyncAt.get(host) ?? 0;
+    if (Date.now() - last < SITE_AUTOSYNC_RETRY_MS) {
+      continue;
+    }
+    siteAutoSyncAt.set(host, Date.now());
+    const res = await send({
+      kind: 'par.upsertSite',
+      host,
+      name: siteTitleOf(host).title,
+      createBox: false,
+    }).catch(() => null);
+    if (res && res.kind === 'par.upsertSite' && res.result.ok) {
+      created = true;
+      log.info('站点 %s 不在云端账号库里，已自动补建', host);
+    } else {
+      const why = res && res.kind === 'par.upsertSite' && !res.result.ok ? res.result.error : '无响应';
+      log.warn('站点 %s 自动补建失败（60 秒内不再重试）：%s', host, why);
+    }
+  }
+  return created;
+}
+
+/**
+ * ★★ 一次性清理：旧版本那两个本地名单（`ql:blockedHosts` / `ql:hiddenHosts`）
+ * **已经没有读取方了**，但盘上还留着。
+ *
+ * 不清理的后果不是"占几字节"，而是**下一个读代码的人会以为它们还在生效** ——
+ * 本仓对"摆在那里没人用"的东西有明确态度（`docs/PITFALLS.md` #30：
+ * "接口摆在那里 ≠ 它被接上了"）。删掉读取方却不清理数据，等于把这个坑留给下一个人。
+ *
+ * ★ 幂等且**稳态零写**：`loadSites()` 挂在 `refreshAll()` 的 3 秒轮询上，
+ *   键已经是空的 / 不存在时一个字节都不写。
+ */
+async function purgeLegacyHostLists(): Promise<void> {
+  const keys = [LOCAL_KEYS.blockedHosts, LOCAL_KEYS.hiddenHosts];
+  const stored = await chrome.storage.local.get(keys);
+  const stale = keys.filter((k) => {
+    const v = stored[k];
+    return Array.isArray(v) ? v.length > 0 : v !== undefined;
+  });
+  if (!stale.length) {
+    return;
+  }
+  await chrome.storage.local.remove(stale);
+  log.info('已清理旧版本的本地站点名单（授权不再参与站点管理）：%s', stale.join(', '));
+}
+
 
 /** 站点名映射：host → { 用户设的名, **显示名** }。
  *
@@ -1620,28 +2097,129 @@ let siteNames: Record<string, { name: string; displayName: string }> | null = nu
  *   往 `siteNames` 里塞 id 会让"站点管理"那一栏的每一行都多带一个它不用的字段，
  *   而多带的字段迟早会被顺手用上（那处就成了新的耦合点）。
  */
-let cloudSites: { id: string; host: string; name: string; displayName: string }[] = [];
+let cloudSites: CloudSiteSummary[] = [];
 
 async function refreshSiteNames(): Promise<boolean> {
   try {
     const res = await send({ kind: 'par.sites' });
     if (res.kind === 'par.sites' && res.result.ok) {
       const rows = res.result.data;
-      // ★ 云端自己那条站点记录也过滤掉（v4.2.4）：它永远删不掉，
-      //   也不该出现在"可关联的站点"下拉里。
+      /* ★★ `ok:true` + `data:null` 是**离线**的约定形态（见 `par.sites` 的协议注释），
+       *   不是"拿到了一个空列表"。旧实现把它当空列表处理，于是每次离线都会
+       *   抹掉上一份站点、并把所有账号站点误判成"缺失"。⇒ 先认这一支。 */
+      if (rows === null) {
+        return false;
+      }
+      /* ★★ 2026-10-19：**`null` = 没拿到，不是一个字都没动** —— 这条修正的正是用户
+       *   报的「站点明明同步了，界面却写未同步」。
+       *
+       * 改前这里在失败分支里把 `cloudSites = []` / `siteNames = null` 一起清掉：
+       *   · 一次**瞬时**网络抖动（3 秒轮询里很常见）就会让站点列表退回"只有账号
+       *     引用、云端查不到"的兜底行 ⇒ 每行都拿到 `siteId = ''` ⇒ 渲染成「未同步」
+       *   · 而站点其实在云端好好的，下一次成功的轮询又会把标记去掉 ——
+       *     用户看到的是"它一会儿同步一会儿不同步"。
+       * ⇒ 与 `par.boxes` 同一约定（协议注释里也一直这么写着）：**拿不到就保持原样**。
+       *   只有真的拿到了空列表，才该显示"还没有站点"。
+       */
       const usable = (rows ?? []).filter((r) => !isCloudHost(r.host));
-      cloudSites = usable.map((r) => ({ id: r.id, host: r.host, name: r.name, displayName: r.displayName }));
-      siteNames = rows
-        ? Object.fromEntries(usable.map((r) => [r.host, { name: r.name, displayName: r.displayName }]))
-        : null;
-      return siteNames !== null;
+      cloudSites = usable;
+      siteNames = Object.fromEntries(
+        usable.map((r) => [r.host, { name: r.name, displayName: r.displayName }]),
+      );
+      return true;
     }
-  } catch {
-    // 消息层失败按"没拿到"处理（与离线同一条路）
+  } catch (e) {
+    log.warn('拉取站点清单失败（保持上一次的列表，不显示“未同步”）：%s',
+      e instanceof Error ? e.message : String(e));
   }
-  cloudSites = [];
-  siteNames = null;
+  // ★ 不清空 —— 见上面的说明。`false` 表示"这一轮没拿到新数据"。
   return false;
+}
+
+/**
+ * 站点管理里"这一行"的数据。
+ *
+ * ★★ v4.2.12：**站点管理的数据源收成一处** —— 云端的站点表。
+ *
+ * ## 改前的形态（以及它为什么让两端永远对不上）
+ *
+ * 原来的列表是**四个来源取并集**：
+ *   ① `chrome.permissions.getAll()` 的浏览器授权清单
+ *   ② 本地停用名单 `ql:blockedHosts`（有授权但在扩展里停用）
+ *   ③ 本地隐藏名单 `ql:hiddenHosts`（没有授权、用户不想看见）
+ *   ④ 云端站点记录 + 本地账号引用的 host
+ *
+ * 于是「站点管理」显示的根本**不是云端那个站点列表**：云端删掉的站点只要浏览器
+ * 授权还在就还在，而云端**有**的站点只要没授权就标成"缺授权"。用户实测到的正是这个：
+ * 两端站点管理对不上，且删了账号之后站点仍留在授权列表里。
+ *
+ * ## 改后的口径（用户 2026-10-13 的决定）
+ *
+ * > 「仅对站点进行增删改，无需关注浏览器是否对其进行授权。」
+ *
+ * ⇒ **云端是唯一的权威**：`GET /api/sites` 回来什么就显示什么，一一对应。
+ *   浏览器授权退化成**实现细节** —— 它仍然必须存在（Chrome 拿不到宿主权限就
+ *   不注入内容脚本、DNR 也改不了头），但界面上一处都不体现，也不再由它决定"有没有这一行"。
+ *   `ql:blockedHosts` / `ql:hiddenHosts` 两个本地名单随之**不再参与渲染**。
+ *
+ * ★ 唯一的并集是**兜底**：`browserAccounts` 里引用的、而云端站点表里没有的 host
+ *   仍然列出来（否则出现"账号看得见、站点看不见"的悬空引用）。
+ *   ★ 2026-10-19：这种行会被 `ensureMissingSites()` 在后台**自动补建**，
+ *   界面上不标任何"未同步" —— 用户没有可执行的动作，标了只会制造焦虑。
+ */
+interface SiteRow {
+  host: string;
+  /** 云端站点 id；空串 = 云端没有这条记录（兜底那一支） */
+  siteId: string;
+  /** 显示名（主标题）：用户设过名就用名，否则从地址推导 */
+  title: string;
+  /** 账号数量 */
+  count: number;
+  /** 服务端原样存的地址（编辑弹窗用；兜底行由 host + 协议拼出来） */
+  baseUrl: string;
+  /** 用户备注 */
+  note: string;
+}
+
+/** 站点管理的行（**唯一**构造点，见 `SiteRow` 的说明） */
+function buildSiteRows(): SiteRow[] {
+  const rows: SiteRow[] = [];
+  const seen = new Set<string>();
+  for (const s of cloudSites) {
+    if (!s.host || seen.has(s.host)) {
+      continue;
+    }
+    seen.add(s.host);
+    const title = s.displayName?.trim() || s.host;
+    rows.push({
+      host: s.host,
+      siteId: s.id,
+      title,
+      count: countAccountsFor(s.host),
+      baseUrl: s.baseUrl || `https://${s.host}`,
+      note: s.note ?? '',
+    });
+  }
+  // 兜底：账号引用了、而云端站点表里没有的 host（悬空引用）。
+  // ★ 2026-10-19：**不再标「未同步」** —— 自动同步会在本轮把它补进云端
+  //   （见 `ensureMissingSites`），补不上（离线）时也没有"说它没同步"的意义：
+  //   用户既不能手动同步、也不该为一次轮询抖动担责。
+  for (const a of browserAccounts) {
+    const host = a.siteHost;
+    if (!host || seen.has(host)) {
+      continue;
+    }
+    seen.add(host);
+    rows.push({
+      host,
+      siteId: '',
+      title: siteTitleOf(host).title,
+      count: countAccountsFor(host),
+      baseUrl: `${a.scheme ?? 'https'}://${host}`,
+      note: '',
+    });
+  }
+  return rows.sort((x, y) => x.title.localeCompare(y.title, 'zh-Hans-CN'));
 }
 
 /** 站点在某一行上显示的主标题与副标题 */
@@ -1652,109 +2230,47 @@ function siteTitleOf(host: string): { title: string; sub: string | null } {
   return { title, sub: title === host ? null : host };
 }
 
-function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] = []): void {
-  const hiddenSet = new Set(hidden);
+/**
+ * 渲染站点管理。
+ *
+ * ★★ v4.2.12：**签名从三个列表收成一个**。改前是
+ * `renderSites(hosts, blocked, hidden)` —— 三个来源各自带着一套"这个站点能不能用"
+ * 的判断，而它们彼此不一致（见 `SiteRow` 的长注释）。现在唯一的输入是
+ * `buildSiteRows()` 的结果，**授权状态一个字都不再出现在这一栏里**。
+ */
+function renderSites(rows: SiteRow[]): void {
   siteListEl.innerHTML = '';
 
-  /* ★★ v4.2.4 修（**这条让"一键授权"从死代码变成可达**）：
-   *
-   * 原来只遍历 `[...hosts, ...blocked]` —— 而"**缺授权**"的站点
-   * **两个都不在**（`hosts` 只收有浏览器授权的、`blocked` 只收被停用的）。
-   * ⇒ `needsGrant` 那一态**永远到不了**，上一版加的「授权」按钮是**死代码**。
-   *
-   * 触发场景正是用户描述的那个：**从云端同步下来的账号引用了某个站点，
-   * 而那个站点从没在本机授权过**（用户原话："当从云端同步账号时，站点并不会直接
-   * 同步过来，但是账号数据中存储得有站点数据"）。
-   * ⇒ 那些站点必须**出现在列表里**并带一个能授权的按钮 —— 否则用户看着
-   *   "账号列表里有这个站点的账号，站点管理里却没有它"，无从下手。
-   *
-   * ⇒ 数据源补齐为三个：有授权的 + 被停用的 + **有云端站点记录或本地账号引用的**。
-   */
-  /* ★★ v4.2.6（用户 2026-10-12 的反馈，纠正了我上一版的方向）：
-   *
-   * 用户要的是**删除**，不是"取消授权"这个动作本身。原话：
-   *   「例如站点 tonbridge-config.aksoegmp.com，假设我有一个账号用的是该站点，我也授权了
-   *     该站点，现在我把那个账号删除了，但是该站点仍然在授权列表里面，这就很不合理。」
-   *
-   * ★ 为什么"删了账号它还在"是**必然**的（不是 bug）：站点列表由三个来源并集而来，
-   *   而**浏览器授权**是其中最强的那个 —— 账号删了、云端记录删了，只要授权还在，它就在。
-   *   ⇒ 所以"删除站点"必须把**这一行的所有来源都去掉**，用户才会觉得它真的没了。
-   *
-   * ★ 用户同时点出的边界：「也存在个别情况，当第一次添加该站点时，是没有创建账号的」
-   *   ⇒ 删除**不能**依赖"这个站点有几个账号"来决定做不做 —— 零账号的站点
-   *     同样必须能删（"授权了但还没建账号"是正常状态，不是异常）。
-   *
-   * ★ 这里把用户主动删除的 host 从 `referenced` 里排除：否则一个**被云端记录引用**的
-   *   站点被删掉之后，下一轮刷新又会从 `siteNames` 冒出来（"删不掉"的第二种成因）。
-   */
-  const referenced = new Set<string>(
-    [
-      ...Object.keys(siteNames ?? {}),
-      ...browserAccounts.map((a) => a.siteHost).filter(Boolean),
-    ].filter((h) => !isCloudHost(h) && !hiddenSet.has(h)),
-  );
-  const allHosts = [...new Set([...hosts, ...blocked, ...referenced])];
-
-  // ★ v4.2.3：隐藏的行要一起算进"有没有东西可显示" —— 否则全部隐藏之后
-  //   页面会是一片**空白**（连"尚无授权站点"的提示都没有），用户只会以为界面坏了。
-  // ★ v4.2.4：这里必须用**补齐后的** `allHosts`（原来只看 `[...hosts, ...blocked]`，
-  //   于是"只有云端记录 / 只有账号引用"的站点会被判成空态，而实际有东西可显示）。
-  const visible = allHosts.filter((h) => !hiddenSet.has(h));
-  if (!visible.length) {
+  if (!rows.length) {
     const li = document.createElement('li');
     li.className = 'empty';
     const ico = document.createElement('div');
     ico.className = 'empty-ico';
-    ico.textContent = '🛡️';
+    ico.textContent = '🌐';
     const tip = document.createElement('div');
-    tip.textContent = '尚无授权站点。用上方表单输入站点地址，点「添加并授权」即可。';
+    tip.textContent = '还没有站点。在上面的输入框里填名称、粘贴站点地址即可。';
     li.append(ico, tip);
     siteListEl.appendChild(li);
     return;
   }
 
-  // ★ 补齐后的数据源已在函数开头算好（`allHosts`）—— 这里只负责遍历与渲染。
-  const seen = new Set<string>();
-  for (const host of allHosts) {
-    if (seen.has(host)) {
-      continue;
-    }
-    seen.add(host);
-    // ★ v4.2.3：用户主动隐藏的行直接跳过（它本来就没有授权、也没有规则动作）
-    if (hiddenSet.has(host)) {
-      continue;
-    }
-    /* ★★ v4.2.3：把"不生效"的**两种原因分开**（用户 2026-10-12 报"卡片显示未授权
-     * 已暂停，但浏览器其实已授权"）。原来是合成一句 `isBlocked`，于是：
-     *   · 用户在浏览器里授权了 → 卡片仍可能说"未授权"（进过停用名单，或缓存没失效）
-     *   · 用户看不出**该点哪个按钮**才能好
-     * ⇒ 现在拆成互斥状态，各自给一个能解决问题的动作：
-     *   `paused`     —— 进过停用名单（手动删除过 / Chrome 拒收过）⇒ 动作「恢复使用」
-     *   `needsGrant` —— 不在停用名单，但浏览器层就是没授权 ⇒ 动作「授权」
-     *   正常         —— 什么都不显示，动作是「更改名称 / 删除」
-     */
-    const inBlockedList = blocked.includes(host);
-    const hasGrant = hosts.includes(host);
-    const paused = inBlockedList;
-    const needsGrant = !inBlockedList && !hasGrant;
-    const isBlocked = paused || needsGrant;
-    const n = countAccountsFor(host);
-    // ★ 卡片里名称与域名各占一行 ⇒ 这里只要名称（`siteTitleOf` 的 `sub` 已不再需要）
-    const { title } = siteTitleOf(host);
+  for (const row of rows) {
+    const { host, title, count: n } = row;
 
     const li = document.createElement('li');
-    // ★★ v4.2.1 第五轮（要求 ④）：从"一行"改成**卡片**。
-    //   用户原话：「站点数据也以卡片形式展示，让用户能够直观的看到站点名称、站点域名、
-    //   站点下拥有的账号数量」。⇒ 三件事各占一个明确的视觉位置：
-    //     ① 站点名称（主标题，最大字重）
-    //     ② 站点域名（副标题，**始终显示** —— 它是账号绑定的身份键）
-    //     ③ **账号数量**（单独一块，不是混在说明句子里）
+    /* ★★ v4.2.1 第五轮（要求 ④）：从"一行"改成**卡片**。
+     *   用户原话：「站点数据也以卡片形式展示，让用户能够直观的看到站点名称、站点域名、
+     *   站点下拥有的账号数量」。⇒ 三件事各占一个明确的视觉位置：
+     *     ① 站点名称（主标题，最大字重）
+     *     ② 站点域名（副标题，**始终显示** —— 它是账号绑定的身份键）
+     *     ③ **账号数量**（单独一块，不是混在说明句子里） */
     li.className = 'site-card';
-    if (isBlocked) {
-      li.classList.add('is-blocked');
-    }
+    li.dataset.host = host;
 
-    // ① 名称（+ 状态标记）—— ★ 徽标必须区分原因，否则用户不知道该点哪个按钮
+    /* ① 名称。
+     * ★ 2026-10-19：这里**不再有「未同步」标记**。同步是自动的
+     *   （见 `ensureMissingSites`），而那个标记真正反映的是"上一轮拉取失败了"——
+     *   把一次网络抖动说成"你的站点没同步"，用户既无从处置、也无从分辨。 */
     const head = document.createElement('div');
     head.className = 'site-card-head';
     const alias = document.createElement('div');
@@ -1762,15 +2278,6 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     alias.textContent = title;
     alias.title = host; // 悬停能看到真实身份键
     head.appendChild(alias);
-    if (isBlocked) {
-      const off = document.createElement('span');
-      off.className = 'site-card-off';
-      off.textContent = paused ? '已停用' : '缺授权';
-      off.title = paused
-        ? '这个站点在 Akso Pass 里被停用过（改头规则不对它生效）⇒ 点右侧「恢复使用」'
-        : '浏览器还没有给这个站点授权 ⇒ 点右侧「授权」，然后在弹出的窗里点允许';
-      head.appendChild(off);
-    }
 
     // ② 域名
     const domain = document.createElement('div');
@@ -1783,204 +2290,51 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
     const num = document.createElement('b');
     num.textContent = String(n);
     const unit = document.createElement('span');
-    // ★ 措辞要指名**原因**：原来一律写"改头已暂停"，而"缺授权"其实是"从未生效"
-    unit.textContent = paused ? '个账号 · 已停用' : needsGrant ? '个账号 · 待授权' : '个账号';
+    unit.textContent = '个账号';
     count.append(num, unit);
-    if (isBlocked) {
-      count.classList.add('muted');
-    }
 
     const actions = document.createElement('div');
     actions.className = 'site-actions';
 
-    /* ★★ v4.2.3：**"缺授权"时给一个真正能授权的按钮**。
+    /* ★★★ 2026-10-19（用户要求）：「站点管理缺少对站点的编辑功能」。
      *
-     * 用户报的循环依赖：站点没账号 ⇒ 站点管理里看不到能点的授权入口 ⇒
-     * 只能等"快捷登录"时 Chrome 自己弹窗。而一旦那次弹窗被忽略/被拒，
-     * 就**再也回不到授权**了（卡片只说"未授权"，不给入口）。
-     *
-     * ★ 这里仍然在**用户手势里最先发起** `permissions.request`（AGENTS §2）——
-     *   它排在 `unblockHost` 之前，因为后者是异步的，会把手势耗掉。
+     * 改前这里只有一个「更改名称」（内联输入框）—— 地址填错了、备注想补，
+     * 都只能删站重建，而删站会**连带删掉它下面的账号**。
+     * ⇒ 改成与云端控制台同一个「编辑」入口（名称 / 地址 / 备注）。
+     * ★ 「同步到云端」按钮**整体撤掉**：云端没有这条记录时由 `loadSites`
+     *   自动补建（用户要求：同步应当自动执行）。
      */
-    if (needsGrant) {
-      const grantBtn = document.createElement('button');
-      grantBtn.className = 'btn-primary btn-sm';
-      grantBtn.type = 'button';
-      grantBtn.textContent = '授权';
-      grantBtn.title = `让浏览器把 ${host} 授权给本扩展（改头规则与隔离才会对它生效）`;
-      grantBtn.addEventListener('click', () => {
-        // ★ 授权请求必须**第一件事**就发（晚一步手势失效）
-        void chrome.permissions
-          .request({ origins: [patternOfHost(host)] })
-          .then(async (okc) => {
-            if (!okc) {
-              alert(`未完成授权：${host}\n\n（在弹出的窗里点「允许」才会生效）`);
-              return;
-            }
-            // ★ 授权成功 = 用户明确表示"我要用它" ⇒ 解封（否则删过就永远回不来）
-            await unhideHost(host);
-            await send({ kind: 'par.grantChanged' });
-            await refreshAll();
-          });
-      });
-      actions.appendChild(grantBtn);
-    }
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-ghost btn-sm';
+    editBtn.type = 'button';
+    editBtn.textContent = '编辑';
+    editBtn.title = '修改站点名称、地址与备注（不影响账号绑定的站点记录）';
+    editBtn.addEventListener('click', () => openSiteEditor(row));
+    actions.appendChild(editBtn);
 
-    if (!isBlocked) {
-      const renameBtn = document.createElement('button');
-      renameBtn.className = 'btn-ghost btn-sm';
-      renameBtn.type = 'button';
-      // ★★ v4.2.1 修（用户报"站点的名称无法更改，出现报错"）：
-      //   站点的名字存在**云端**。只在浏览器里授权过、而云端没有这条站点记录的
-      //   （例如 127.0.0.1、没有并行账号的 www.dragonrain.top），
-      //   改名必然以"云端找不到站点"失败 —— 而按钮照样显示 ⇒ 用户看到的就是**报错**。
-      //   ⇒ 云端**没有**这条记录时按钮改成「添加到云端」，走的正是 par.upsertSite
-      //     （它容忍不存在：先建再写名）。**让按钮的承诺与它能做到的事一致。**
-      const inCloud = Boolean(siteNames?.[host]);
-      renameBtn.textContent = inCloud ? '更改名称' : '添加到云端';
-      renameBtn.title = inCloud
-        ? '给这个站点起一个好记的名字（只影响显示，不影响账号绑定的域名）'
-        : '云端还没有这个站点。点它把站点与名称存到云端账号库（会先创建）';
-      renameBtn.addEventListener('click', () => {
-        // 预填**用户设的名**（而不是显示名）—— 显示名可能是从地址推导的，
-        // 预填它等于把推导结果写死成"用户起过的名"。
-        beginRename(li, actions, host, siteNames?.[host]?.name ?? '', !inCloud);
-      });
-      actions.appendChild(renameBtn);
-    }
-
-    const actionBtn = document.createElement('button');
-    /* ★★★ v4.2.6：**统一点是"这一行会不会消失"，不是"调了哪个 API"。**
+    /* ★★★ v4.2.12：删除 = **云端那一行的删除**，不再有"撤销浏览器授权"这一层。
      *
-     * 用户 2026-10-12 纠正了我上一版的方向（原话）：
-     *   「你的方向有偏差，我要的不是取消授权，而是删除……我删除了那个账号，但是该站点仍然
-     *     在授权列表里面，这就很不合理。当然，也存在个别情况，当第一次添加该站点时，
-     *     是没有创建账号的，需要注意这种特殊情况。」
+     * 用户原话：「仅对站点进行增删改，无需关注浏览器是否对其进行授权。」
      *
-     * ⇒ 所以现在**所有**状态下的删除都保证"这一行消失"：
-     *   `needsGrant`（没有授权）      → 落"已删除"标记，行消失
-     *   `paused`（有授权但被停用）    → 解除停用 + 撤销授权 + 落标记，行消失
-     *   正常（有授权）                → 撤销授权 + 落标记，行消失
-     * ★ 而"撤销授权失败"（Chrome 拒收）时**不能假装删掉了** —— 那种情况进停用名单并
-     *   如实告知（`revokeHost` 里那两条分支），因为"它还在改写鉴权头"是事实，必须说。
+     * 语义与云端控制台**逐条一致**（用户选定："级联删除，但删之前把账号名单摊开"）：
+     *   · 零账号        ⇒ 直接删（没有任何连带后果，不为它加摩擦）
+     *   · 有账号        ⇒ 服务端回 409，把**具体是哪些账号**带回来 ⇒ 摊开给人看，
+     *                     确认后带 `?force=true` 再删一次
+     *   · 云端没有这条  ⇒ 只把这一行从界面去掉（本地本来就没有它的记录）
      *
-     * ★ 用户点出的边界情况（"第一次添加该站点时没有创建账号"）在这里被**天然覆盖**：
-     *   删除**不看**账号数量 —— 零账号的站点走的是同一条路径。
-     *   （反过来，`needsGrant` 那一态本来就多半是"零账号 + 被云端记录引用"。）
+     * ★★ 服务端才是拦截点，**不是**这里的 `n > 0` 判断：`n` 是本机列表渲染那一刻的
+     *    数字，页面开着时别处（网页控制台 / 另一台机器）加了账号它就是旧的 ——
+     *    于是弹窗会说"0 个账号，直接删吧"，而服务端**真的**删掉了 12 个。
+     *    让**服务端**回答"现在有几个"，那个数字不可能过期。
+     *    （同一条纪律在 `akso-cloud/app/web/static/site.js` 的删除分支里也写着。）
      */
-    if (needsGrant) {
-      actionBtn.className = 'btn-ghost btn-sm';
-      actionBtn.textContent = '删除';
-      actionBtn.title = '把这一行从站点管理里去掉，并删掉云端那条站点记录（它本来就没有浏览器授权，所以权限无变化）';
-      actionBtn.addEventListener('click', () => {
-        /* ★★ v4.2.7 补：这一态**也必须**能删云端记录。
-         *
-         * 缺陷形态（判据 E3 抓到的）：原来这里只 `hideHost(host)` 然后 `continue`，
-         * 于是**走不到 `revokeHost`**，云端那条站点记录就留下了 ——
-         * 而这恰恰是用户第 ② 条报的主要场景：
-         * 「当我在扩展中添加了一个站点时，云端也会同步增加一个站点，
-         *   但是当我删除一个站点时，云端不会删除站点。」
-         * （新加的站点多半是"零账号、还没授权"⇒ 正好落在这一态。）
-         *
-         * ★ 它**没有**浏览器授权 ⇒ 不需要撤销，也不该进"停用"名单
-         *   （那会给一个从未生效的站点留下"已停用"的假状态，见 `LOCAL_KEYS.hiddenHosts`）。
-         *   ⇒ 所以这里只做两件事：落"已删除"标记 + 删云端记录。
-         */
-        if (!confirm(`删除站点「${title}」？\n\n`
-          + '· 它本来就没有浏览器授权，所以浏览器权限不会有任何变化\n'
-          + '· 这一行会从站点管理里消失\n'
-          + '· **云端那条站点记录也会一起删掉**')) {
-          return;
-        }
-        void (async () => {
-          await hideHost(host);
-          const res = await send({ kind: 'par.deleteSite', host }).catch(() => null);
-          const r = res && res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
-          if (r?.kind === 'offline') {
-            alert(`「${title}」已从本机删除，但**云端那条站点记录没能删掉**（当前连不上云端）。\n\n`
-              + '换一台电脑登录时它还会出现。联网后可以再删一次。');
-          } else if (r?.kind === 'deleted' && (r.accountsDeleted ?? 0) > 0) {
-            alert(`注意：云端同时删掉了该站点下的 ${r.accountsDeleted} 个账号。`);
-          }
-          await refreshAll();
-        })();
-      });
-      actions.appendChild(actionBtn);
-      li.append(head, domain, count, actions);
-      siteListEl.appendChild(li);
-      continue;
-    }
-
-    actionBtn.className = isBlocked ? 'btn-ghost' : 'btn-danger';
-    /* ★ 文案回到「删除」（v4.2.6）—— 因为现在它**真的会删掉这一行**。
-     *   v4.2.4 我把它改成「取消授权」是因为当时它只能做到那一步；现在
-     *   `revokeHost` 结尾会落"已删除"标记 ⇒ 承诺与效果重新一致。
-     *   ★ 而 `paused` 那一态仍然是「恢复使用」—— 那是另一个动作（解除停用），
-     *     把它和"删除"混在一个按钮上会让用户没法表达"我要恢复"。
-     */
-    actionBtn.textContent = isBlocked ? '恢复使用' : '删除';
-    actionBtn.title = isBlocked
-      ? '解除本地停用（改头规则对它重新生效）'
-      : `删除这个站点：撤销浏览器授权 + 从站点管理里去掉 + 删掉云端那条站点记录`;
-    actionBtn.addEventListener('click', () => {
-      if (isBlocked) {
-        void unblockHost(host);
-        return;
-      }
-      /* ★★ v4.2.7（用户要求「删除站点时云端也要删」）：
-       *
-       * 云端那条 `DELETE /api/sites/{id}` **会级联删掉该站点下的所有账号** ——
-       * 所以首页必须先看账号数：
-       *   · 有账号 ⇒ **拒绝删云端**，明确让用户先处理账号（不能替他删掉 N 个账号）
-       *   · 零账号 ⇒ 本机与云端一起删
-       *
-       * ★ 确认框按"云端会不会被删"分两套文案 —— 同一个「删除」按钮在不同状态下
-       *   后果不同，那就必须让用户在**点之前**看到差别（这正是前几轮反复栽的那类：
-       *   承诺与效果不一致）。
-       */
-      /* ★★★ v4.2.10（用户补的那条不变式）：
-       *   「一定要确保，账号中心中涉及的站点，一定要在站点管理中存在。」
-       *
-       * 缺陷形态（我上一版造的洞）：有账号时我**不删云端记录**，但仍然 `hideHost(host)`
-       * ⇒ 那一行从站点管理里**消失**，而账号中心还引用着它
-       * ⇒ **破坏了用户要的那条不变式**：账号引用的站点在站点管理里看不到，
-       *   于是用户既看不到它，也无法在界面上理解"为什么账号还在"。
-       *
-       * ⇒ 有账号时**什么都不做**（不撤销授权、不隐藏、不删云端）：
-       *   那一行留在原地，站点管理继续满足"账号引用的站点都在这里"。
-       *   ★ 这也让「删除」的语义在两种情况下都诚实：
-       *     零账号 ⇒ **真的删掉**（本机 + 云端）；
-       *     有账号 ⇒ **拒绝**，并说清要先删账号（而不是留下"半删"状态）。
-       */
-      const hasAccounts = n > 0;
-      if (hasAccounts) {
-        const go = confirm(
-          `「${title}」下面还有 ${n} 个账号，**不能删除**。\n\n`
-            + '原因：账号绑定在站点上，站点是它们的归属；先删站点会让那些账号失去归属。\n'
-            + '（云端删站点会**连带删掉**它下面的所有账号，那是不可恢复的。）\n\n'
-            + `要删除这个站点，请先到「并行账号」里删掉这 ${n} 个账号，再回来删站点。\n`
-            + '★ 站点这一行会**留在原处** —— 账号引用的站点必须在站点管理里看得到。\n\n'
-            + '现在去「并行账号」吗？',
-        );
-        if (go) {
-          showTab('accounts');
-        }
-        return;
-      }
-      if (
-        !confirm(
-          `删除站点「${title}」？\n\n`
-            + `· 撤销浏览器对 ${host} 的授权，该站点的鉴权改写立即失效\n`
-            + '· 这一行会从站点管理里消失（以后要用，重新授权即可）\n'
-            + '· **云端那条站点记录也会一起删掉**（云端同站点下没有账号）\n'
-            + '· 浏览器内已打开页签的登录态不受影响',
-        )
-      ) {
-        return;
-      }
-      void revokeHost(host);
-    });
-    actions.appendChild(actionBtn);
+    const del = document.createElement('button');
+    del.className = 'btn-danger btn-sm';
+    del.type = 'button';
+    del.textContent = '删除';
+    del.title = '从站点管理与云端账号库里删掉这个站点（账号绑定在站点上，删站点会一并删掉它的账号）';
+    del.addEventListener('click', () => void deleteSiteRow(row));
+    actions.appendChild(del);
 
     li.append(head, domain, count, actions);
     siteListEl.appendChild(li);
@@ -1988,389 +2342,351 @@ function renderSites(hosts: string[], blocked: string[] = [], hidden: string[] =
 }
 
 /**
- * 就地编辑站点名（**不用 `window.prompt`**）。
+ * 删除站点：**与云端控制台同一条两段式路径**（先请求 → 409 带名单 → 摊开确认 → force）。
  *
- * ★ 为什么不用 prompt：① 它在扩展页里是浏览器模态框，样式不可控、移动端体验差；
- *   ② **无法用自动化验证**（Playwright 只能靠 dialog 事件间接驱动，写不出可靠判据）——
- *   而"判据不可写"在这个仓里等于"这条路径不会被验"。
- * ★ 交互：Enter 保存 / Esc 取消 / 失焦保存（与"改页签名"的习惯一致）。
- *   空串是**合法输入**，语义 = 恢复显示域名（服务端也有同样的回落口径）。
+ * ★ 为什么"先请求再弹窗"而不是按本地的账号数判断：见调用点那段注释。
  */
-function beginRename(
-  row: HTMLLIElement,
-  actions: HTMLDivElement,
-  host: string,
-  currentName: string,
-  createIfMissing = false,
-): void {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'site-rename-input';
-  // 预填用户设的名；**不要**预填推导名（那会把"从地址截出来的"写死成用户输入）
-  input.value = currentName === host ? '' : currentName;
-  input.placeholder = '例如 通桥医疗（留空 = 用地址推导）';
-  input.maxLength = 120; // 与云端 `SitePatch.name` 的上限一致，别让用户打完才被 422 拒
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'btn-primary btn-sm';
-  saveBtn.type = 'button';
-  saveBtn.textContent = '保存';
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'btn-ghost btn-sm';
-  cancelBtn.type = 'button';
-  cancelBtn.textContent = '取消';
-
-  // ★★ v4.2.1 第五轮：卡片化之后名称那一格是 `.site-card-name`（不再是 `.alias`）。
-  //   ★ 这里**必须**保留"取不到就 return"的守卫：这一版的第一次改动我漏改了选择器，
-  //     于是 `beginRename` **在点按钮后静默返回** —— 编辑器不出现、也没有任何报错，
-  //     看起来就像"按钮点不动"。守卫生效时至少是**不做事**，而不是做一半。
-  const alias = row.querySelector('.site-card-name');
-  if (!(alias instanceof HTMLElement)) {
-    log.warn('beginRename：找不到名称节点（选择器与卡片结构不一致）⇒ 放弃进入编辑态');
+async function deleteSiteRow(row: SiteRow): Promise<void> {
+  const { host, siteId, title } = row;
+  if (!siteId) {
+    // 云端本来就没有这条记录（兜底列出来的悬空引用）：没有东西可删，如实说清
+    alert(
+      `「${title}」在云端账号库里没有站点记录，所以没有可删除的云端数据。\n\n`
+        + '它出现在这里是因为有账号在引用它。删掉那些账号之后这一行会自动消失。',
+    );
     return;
   }
-  // 编辑态：名字那格换成输入框；按钮组换成 保存/取消
-  alias.replaceWith(input);
-  actions.replaceChildren(saveBtn, cancelBtn);
-  input.focus();
-  input.select();
-
-  let settled = false;
-  const restore = (): void => {
-    if (settled) {
+  const res = await send({ kind: 'par.deleteSite', host }).catch(() => null);
+  const r = res && res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
+  if (!r) {
+    const err = res && res.kind === 'par.deleteSite' && !res.result.ok ? res.result.error : '未知错误';
+    alert(`删除站点失败：${err}`);
+    return;
+  }
+  if (r.kind === 'offline') {
+    alert(`「${title}」没能删掉：当前连不上云端。\n\n联网后再删一次即可（这次没有任何改动）。`);
+    return;
+  }
+  if (r.kind === 'missing') {
+    await refreshAll();
+    return;
+  }
+  if (r.kind === 'blocked') {
+    // 服务端说"这个站点下面还有账号"，并把**具体是哪些**带了回来 ⇒ 把话说具体
+    const names = r.usernames ?? [];
+    const shown = names.slice(0, 12).join('、') + (names.length > 12 ? ` …等共 ${names.length} 个` : '');
+    if (
+      !confirm(
+        `删除站点「${title}」？\n\n`
+          + `该站点下的 ${r.accountCount} 个账号会被一并删除，且无法恢复：\n`
+          + `${shown}\n\n`
+          + '确定要连这些账号一起删除吗？（浏览器里已打开页签的登录态不受影响）',
+      )
+    ) {
       return;
     }
-    settled = true;
-    /* ★★★ v4.2.9 修（用户实测"点击保存和取消都没有任何反馈，怀疑功能失效"）：
-     *
-     * 缺陷形态：这里原来只 `void loadSites()` —— 而**取消**时名字没有变化
-     * ⇒ `sitesKey` 与 `lastSitesKey` **完全相同** ⇒ `renderSites` **根本不执行**
-     * ⇒ 输入框与「保存 / 取消」**永远留在卡片上**，用户看到的就是"点了没反应"。
-     *
-     * ★ 对照：**保存**那条路径是对的（`renameSiteRow` 里有 `lastSitesKey = ''`），
-     *   所以**只有"取消"是坏的** —— 而这正是用户截图里的状态（两个按钮都还在）。
-     *   ⇒ 两条路径必须**用同一个机制**退出编辑态，否则迟早只有一条是对的。
-     *
-     * ★ 为什么不改成"直接删掉输入框、把按钮换回来"：那会多出**第二条渲染路径**，
-     *   而"两条路径迟早不一致"是本仓反复出现的形态（见二级导航那段注释）。
-     *   让缓存键失效走的是**唯一的渲染路径**。
-     */
-    lastSitesKey = '';
-    void loadSites();
-  };
-  const commit = async (): Promise<void> => {
-    if (settled) {
+    const res2 = await send({ kind: 'par.deleteSite', host, force: true }).catch(() => null);
+    const r2 = res2 && res2.kind === 'par.deleteSite' && res2.result.ok ? res2.result.data : null;
+    if (!r2 || r2.kind === 'offline') {
+      alert('删除失败：云端没有答复。请稍后重试。');
       return;
     }
-    settled = true;
-    await renameSiteRow(host, input.value, saveBtn, cancelBtn, createIfMissing);
-  };
-
-  saveBtn.addEventListener('click', () => void commit());
-  cancelBtn.addEventListener('click', restore);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void commit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      restore();
+    if (r2.kind === 'deleted' && (r2.accountsDeleted ?? 0) > 0) {
+      flashBanner(`已删除站点「${title}」与其中 ${r2.accountsDeleted} 个账号。`, 'ok');
+    } else {
+      flashBanner(`已删除站点「${title}」。`, 'ok');
     }
-  });
-  // 失焦保存：但点"取消"也会先触发 blur ⇒ 用 `relatedTarget` 排除按钮自身
-  input.addEventListener('blur', (e) => {
-    const to = e.relatedTarget;
-    if (to === saveBtn || to === cancelBtn) {
-      return;
-    }
-    void commit();
-  });
-}
-
-/**
- * 改名并落到云端。
- *
- * ★ 成功后**重新拉一次**站点清单再渲染 —— 不本地"猜"结果：服务端对空名有回落口径
- *   （空名 = 恢复成 host），本地猜会把一个服务端并不认的名字显示出来。
- * ★ 失败时**明确报错**并保持原样：静默失败会让用户以为改成功了。
- */
-async function renameSiteRow(
-  host: string,
-  name: string,
-  saveBtn: HTMLButtonElement,
-  cancelBtn: HTMLButtonElement,
-  createIfMissing = false,
-): Promise<void> {
-  saveBtn.disabled = true;
-  cancelBtn.disabled = true;
-  saveBtn.textContent = '保存中…';
-  try {
-    // ★ 云端还没有这条记录时走 `upsertSite`（先建再写名）；否则走 `renameSite`
-    //   （找不到就报错 —— 那是对的，用户不该以为给一个不存在的站点改了名）。
-    const res = createIfMissing
-      ? await send({ kind: 'par.upsertSite', host, name })
-      : await send({ kind: 'par.renameSite', host, name });
-    const failedKind = createIfMissing ? 'par.upsertSite' : 'par.renameSite';
-    if (res.kind === failedKind && !res.result.ok) {
-      throw new Error(res.result.error);
-    }
-    await refreshSiteNames();
-    lastSitesKey = ''; // 强制重渲染（名字变了，但 hosts 没变 ⇒ 原 key 不变）
-    await loadSites();
-  } catch (e) {
-    // ★ 报错要给出**下一步**，不能只说"失败了" —— 用户看到的原话是"出现报错"，
-    //   而"云端找不到站点"本身不是他能理解的措辞。
-    const raw = e instanceof Error ? e.message : String(e);
-    const hint = /找不到站点/.test(raw)
-      ? '\n\n这个站点在云端账号库里还没有记录。请改用「添加到云端」，或先登录云端账号库。'
-      : '';
-    alert(`保存站点名称失败：${raw}${hint}`);
-    lastSitesKey = ''; // 还原成非编辑态（否则输入框会留在页面上）
-    await loadSites();
-  }
-}
-
-/**
- * 移除某 host 的全部授权（尽力而为）+ 本地停用兜底 + **删掉云端那条站点记录**。
- *
- * Chrome 的 `permissions.remove` 只能回收「可选授权」，且模式串必须与授予时一致；
- * 若浏览器拒绝（required 权限 / 站点访问模式限制），则把该 host 写入本地停用名单，
- * 后台不再对其安装任何改头规则 —— 效果等价于功能层撤销，且不与 Chrome 的内部状态搏斗。
- *
- * ★★ v4.2.10：**去掉了 `opts.deleteCloudRecord` 参数**。它曾经取过两种值
- *   （"有账号 ⇒ 留着云端记录"），而现在**有账号根本不会走到这里**（调用点先拦住）。
- *   一个只有一个取值的可选参数是**假的灵活性** —— 读代码的人会以为存在另一条路径，
- *   于是可能据此写出错的推断（本仓对"没人读的参数"有明确态度，见 PITFALLS #30）。
- */
-async function revokeHost(displayHost: string): Promise<void> {
-  const all = await chrome.permissions.getAll();
-  const raws = (all.origins ?? []).filter((o) => originToHost(o) === displayHost);
-  const errors: string[] = [];
-
-  for (const raw of raws) {
-    try {
-      const okc = await chrome.permissions.remove({ origins: [raw] });
-      if (!okc) {
-        errors.push(`浏览器拒绝移除：${raw}`);
-      }
-    } catch (e) {
-      errors.push(`${raw} → ${e instanceof Error ? e.message : String(e)}`);
+  } else if (r.kind === 'deleted') {
+    if ((r.accountsDeleted ?? 0) > 0) {
+      flashBanner(`已删除站点「${title}」与其中 ${r.accountsDeleted} 个账号。`, 'ok');
+    } else {
+      flashBanner(`已删除站点「${title}」。`, 'ok');
     }
   }
-
-  /* ★★ v4.2.3 修（2026-10-12 用户实测"删除站点时弹框"）：**残留判定不能拿
-   * 扩展自己声明的通配项来算**。
-   *
-   * 缺陷形态：原判据是"host 归属相等 **或** origin 里含通配"，
-   * 而那个通配**正是 manifest 里可选 host 权限的声明本身** ——
-   * 它会**恒定出现**在 `getAll().origins` 里（`originToHost` 对它是 null，
-   * 所以前半永远匹配不上，后半却总是为真）。
-   * ⇒ `stillCovers` **恒真** ⇒ **删任何站点都判"未能回收"并弹框**。
-   *
-   * ⇒ 现在只问一件事：**这个 host 是否仍被某个真实授权覆盖**。
-   *   独占的通配项与它的大写别名都跳过 —— 它们不是"这个站点的授权"。
-   *   ★ 但"被通配覆盖着"这件事本身要**如实告知**（下面单独判），因为它意味着
-   *     删了这个站点，鉴权改写对它**仍然生效**（本仓 isEnforceable 有"更宽泛的
-   *     通配授权也算可用"的分支，见 `parallel-session.ts`）。那是另一件事，
-   *     不能和"回收失败"混成一句话。
-   *   ★★ 本段注释里**不能**写出那两个标记的字面量 —— 这是我第六次踩它，
-   *     而这次连累 `tsc` 报了 10 个错（判据本身第一版还漏掉了，见 PITFALLS #43）。
-   */
-  const allOrigins = (await chrome.permissions.getAll()).origins ?? [];
-  const hostOrigins = allOrigins.filter((o) => originToHost(o) === displayHost);
-  const broadGrant = allOrigins.find((o) => o === '<all_urls>' || o === '*://*/*');
-  const stillCovers = hostOrigins.length > 0;
-
-  const blockedStored = await chrome.storage.local.get(LOCAL_KEYS.blockedHosts);
-  const blocked = new Set<string>((blockedStored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
-
-  // ★ 只要"这个 host 的授权没能回收"，就必须进停用名单 —— 无论原因是
-  //   Chrome 拒绝（`errors` 非空）还是它压根不在自己的授权里（被通配覆盖着）。
-  //   停用名单是**唯一**能让"删掉它"在功能上真正生效的机制（`isEnforceable` 先看它）。
-  if (stillCovers || broadGrant) {
-    blocked.add(displayHost);
-    await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
-    /* ★★ v4.2.8（用户要求）：「可以，你别再弹"未能回收"的提示了。」
-     *
-     * 原来这里会弹一个模态框，把 Chrome 的原话（`You cannot remove required permissions`）
-     * 与"请到 chrome://extensions 手动移除"的操作指引都摊给用户。
-     *
-     * ★ 为什么去掉是对的（不是为了少一次点击）：
-     *   ① **那个框不改变任何结果** —— 用户看完点确定，权限照样还在。它只让人重读一遍
-     *      他已经知道的事（而且他上一轮就是**自己**发现要手动移除的）。
-     *   ② 它出现在**每一次**删除上，于是"删除"这个动作长期带着一个吓人的框 ⇒
-     *      用户会开始避免用它（规则 27 的同类：**噪音会让功能被绕开**）。
-     *   ③ 它的信息是**可自查的**，不该用模态框拦人：站点卡片上就写着「已停用」，
-     *      而权限现状随时能在 `chrome://extensions` 看到。
-     *
-     * ⇒ 现在：**功能照做**（进停用名单，改头规则立刻不再对它生效），
-     *   **痕迹留到通道里**（`log.warn`），**不打断用户**。
-     *   ★ 留痕不能省：否则"删了但权限还在"变成静默事实，而它是排障时要看的。
-     *   ★★ 这里**只能**用 `log.warn`：`diag()` 是 background 的函数
-     *     （`parallel-session.ts` 里的环形埋点），UI 上下文里没有它 ——
-     *     我第一版顺手写了 `diag(...)`，`tsc` 直接报 `Cannot find name 'diag'`。
-     *     UI 的日志经 `shared/log.ts` 进 `appLogs`，诊断包里同样看得到。
-     */
-    log.warn(
-      '站点 %s 的浏览器授权未能回收（已在本地停用；如需彻底移除请到 chrome://extensions）：%s',
-      displayHost,
-      errors.join(' | ') || (broadGrant ? `被宽泛授权 ${broadGrant} 覆盖` : '(无明细)'),
-    );
-  } else if (blocked.has(displayHost)) {
-    blocked.delete(displayHost);
-    await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
-  }
-
-  /* ★★ v4.2.6：**授权回收成功也要落"已删除"标记** —— 否则这一行会再冒出来。
-   *
-   * 站点列表有三个来源：有授权的 + 被停用的 + **被云端站点记录或本地账号引用的**。
-   * 只把授权删掉的话，第三条来源仍然成立 ⇒ **下一轮刷新它又回来了**，
-   * 而用户看到的是"删了没用"（这是"删不掉"的第二种成因，与权限回收失败不同）。
-   */
-  await hideHost(displayHost);
-
-  /* ★★ v4.2.7：**云端那条站点记录**（用户要求「删除站点时云端也要删」）。
-   *
-   * ★★ v4.2.10：这里**不再有条件** —— 调用点已经保证"走到这里就说明这个站点没有账号"
-   *   （有账号会被拦在前面，且那一行**不会**被隐藏）。所以无条件删云端是对的。
-   * ★ 结果**如实告知**，三种情况对用户的意思完全不同：
-   *     `deleted` —— 云端也干净了（服务端还会回报级联删了几个账号，一并说出来）
-   *     `missing` —— 云端本来就没有这条记录（可能是从没同步过）⇒ 也算干净
-   *     `offline` —— **本机删了、云端还在** ⇒ 必须说，否则换台电脑它又出现
-   */
-  {
-    try {
-      const res = await send({ kind: 'par.deleteSite', host: displayHost });
-      const r = res.kind === 'par.deleteSite' && res.result.ok ? res.result.data : null;
-      if (!r) {
-        log.warn('云端站点删除没有拿到结果：%s', displayHost);
-      } else if (r.kind === 'offline') {
-        alert(
-          `「${displayHost}」已从本机删除，但**云端那条站点记录没能删掉**（当前连不上云端）。\n\n`
-            + `换一台电脑登录时它还会出现。联网后可以再删一次，或在云端账号库里删。`,
-        );
-      } else if (r.kind === 'deleted' && (r.accountsDeleted ?? 0) > 0) {
-        // ★ 级联删除是静默的 —— 服务端特意把它作为返回值给出来，这里必须转达
-        alert(`注意：云端同时删掉了该站点下的 ${r.accountsDeleted} 个账号。`);
-      }
-    } catch (err) {
-      log.warn('云端站点删除失败（本机已删除）：%s', err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  await send({ kind: 'par.grantChanged' });
-  await refreshAll();
-}
-
-/** 恢复此前手动停用的站点（仅解除 Akso Pass 内部封锁） */
-async function unblockHost(host: string): Promise<void> {
-  const stored = await chrome.storage.local.get(LOCAL_KEYS.blockedHosts);
-  const blocked = new Set<string>((stored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
-  blocked.delete(host);
-  await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: Array.from(blocked).sort() });
-  await send({ kind: 'par.grantChanged' });
-  await refreshAll();
-}
-
-/**
- * ★ v4.2.3：「删除 / 不再显示」一个站点的**最后一件事**：把它从列表里去掉。
- *
- * ★ 与 `unblockHost` 的分工（两者的语义完全不同，存储键也不同）：
- *   · `unblockHost`  —— 解除"停用"（那是有权限但被我们主动停用）
- *   · `hideHost`     —— 只是不显示（不再出现在站点管理里）
- *   ⇒ **只能动 `hiddenHosts`，绝不能顺手写 `blockedHosts`** ——
- *     那会给一个从未生效的站点留下"已停用"的假状态（见 `LOCAL_KEYS.hiddenHosts` 注释）。
- *
- * ★★ v4.2.6：**去掉了我一度想加的 `silent` 参数**。理由值得记下来：
- *   我当时的想法是"`revokeHost` 调它时不该再弹窗"，于是加了个 `silent` ——
- *   但写完之后发现**没有任何地方会读它**（`revokeHost` 那条路径本来就不弹窗，
- *   它只在**撤销失败**时弹，而那与这个函数无关）。
- *   ⇒ 一个"存了但没人读"的参数正是本仓记过的那类假接口（`docs/PITFALLS.md` #30：
- *     "接口摆在那里 ≠ 它被接上了"）。**没用的参数比没有参数更坏** ——
- *     它会让下一个读代码的人以为存在一条静默通路。
- */
-async function hideHost(host: string): Promise<void> {
-  const stored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
-  const hidden = new Set<string>((stored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? []);
-  hidden.add(host);
-  await chrome.storage.local.set({ [LOCAL_KEYS.hiddenHosts]: Array.from(hidden).sort() });
-  lastSitesKey = ''; // 强制重渲染（hosts 没变，但这一行要消失）
-  await loadSites();
-}
-
-/**
- * ★★ v4.2.6：**撤销"已删除"标记** —— 没有它，"删除"就是一个单向陷阱。
- *
- * ## 缺陷形态（我在写 v4.2.6 时自查发现的）
- *
- * `hiddenHosts` **只加不减**（`hideHost` 只 `add`），而 `renderSites` 会跳过名单里的 host。
- * ⇒ 用户删掉一个站点之后，**即使重新授权，它也永远不会再出现** ——
- *   而"授权成功"是用户能表达"我要用它"的**最明确**信号。
- *   ★ 用户点出的那个边界情况（"第一次添加该站点时，是没有创建账号的"）正走这条路：
- *     先授权、后建账号 —— 如果先删过一次，这条路就被自己堵死了。
- *
- * ## 判据
- *
- * **凡"授权成功"的地方都必须解封**（两处：站点管理表单提交、卡片上的「授权」按钮）。
- * 反过来：**只有"用户显式删除"才写这个名单** —— 别的地方一处都不该碰它。
- * `tmp/verify-delete-site.mjs` 的 F 组断言"删掉 → 重新添加 → 它能回来"。
- */
-async function unhideHost(host: string): Promise<void> {
-  const stored = await chrome.storage.local.get(LOCAL_KEYS.hiddenHosts);
-  const hidden = new Set<string>((stored[LOCAL_KEYS.hiddenHosts] as string[] | undefined) ?? []);
-  if (!hidden.has(host)) {
-    return; // 不在名单里就一个字节都不写（稳态下 `ql:hiddenHosts` 的写入次数应为 0）
-  }
-  hidden.delete(host);
-  await chrome.storage.local.set({ [LOCAL_KEYS.hiddenHosts]: Array.from(hidden).sort() });
   lastSitesKey = '';
+  /* 顺手回收这个 host 的宿主权限（**尽力而为，不承诺**）。
+   * ★ 为什么值得做：授权不会随云端记录消失，而"删掉一个和我无关的站点之后，
+   *   浏览器还在往它的页面里注入内容脚本"是用户无从发现的事。
+   * ★ 为什么**不能**承诺：在"全网通配"这种宽授权下，Chrome 会拒收针对具体 origin 的
+   *   回收请求 —— 那是正常的，不是失败。所以这里既不弹窗也不改文案。 */
+  void revokeHostPermissions(host);
+  await refreshAll();
 }
+
+/**
+ * ★★★ 2026-10-19（用户要求）：「站点管理缺少对站点的编辑功能」。
+ *
+ * 与云端控制台的「编辑站点」弹窗**同一条端点、同一组字段**：
+ * 站点名称 / 地址 / 备注（`PATCH /api/sites/{id}`，`SitePatch` 三个字段都可选）。
+ *
+ * ★ 为什么不用 `prompt`（旧「更改名称」的路子）：
+ *   ① 它只能收一个值，而"地址填错了"是用户真会遇到的事 —— 改地址只能删站重建，
+ *      而删站会**连带删掉账号**；
+ *   ② 它在扩展页里是浏览器模态框，样式不可控；
+ *   ③ **无法写自动化判据**（Playwright 只能靠 dialog 事件间接驱动）。
+ *
+ * ★ 改地址要**二次确认**：账号绑定的是 `site_id`，站点地址一变，那些账号下一次
+ *   打开时就会去新域名 —— 而已经开着的页签还停在旧域名上。这不是阻止用户改，
+ *   而是让他知道"这个动作会波及 N 个账号"。
+ */
+function openSiteEditor(row: SiteRow): void {
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  const h = document.createElement('h3');
+  h.textContent = '编辑站点';
+
+  const form = document.createElement('form');
+  form.className = 'form';
+
+  /** 一个「标签 + 控件 + 可选说明」的行（与账号编辑弹窗同一形状） */
+  const field = (label: string, control: HTMLElement, hint?: string): HTMLLabelElement => {
+    const wrap = document.createElement('label');
+    wrap.className = 'field';
+    const span = document.createElement('span');
+    span.textContent = label;
+    wrap.append(span, control);
+    if (hint) {
+      const small = document.createElement('small');
+      small.textContent = hint;
+      wrap.append(small);
+    }
+    return wrap;
+  };
+
+  // 预填**用户设的名**（不是显示名）—— 显示名可能是从地址推导的，
+  // 预填它等于把推导结果写死成"用户起过的名"。
+  const originalName = siteNames?.[row.host]?.name ?? row.title;
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = originalName;
+  nameInput.maxLength = 120; // 与云端 `SitePatch.name` 的上限一致
+  nameInput.placeholder = '例如 通桥医疗（留空 = 用地址推导）';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.value = row.baseUrl;
+  urlInput.maxLength = 300;
+  urlInput.placeholder = 'https://example.com 或 10.100.0.105:8080';
+
+  const noteInput = document.createElement('input');
+  noteInput.type = 'text';
+  noteInput.value = row.note;
+  noteInput.maxLength = 500;
+
+  form.append(
+    field('站点名称', nameInput, '只影响显示；留空则用地址推导'),
+    field('站点地址', urlInput, `账号绑定的是站点记录，改地址会影响该站点下的 ${row.count} 个账号`),
+    field('备注', noteInput),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-ghost';
+  cancel.type = 'button';
+  cancel.textContent = '取消';
+  const save = document.createElement('button');
+  save.className = 'btn-primary';
+  save.type = 'submit';
+  save.textContent = '保存';
+  actions.append(cancel, save);
+  form.append(actions);
+
+  card.append(h, form);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal';
+  overlay.append(card);
+  accountModalRoot.append(overlay);
+
+  const close = (): void => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      close();
+    }
+  };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  cancel.addEventListener('click', close);
+  nameInput.focus();
+  nameInput.select();
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    void (async () => {
+      const name = nameInput.value.trim();
+      const baseUrl = urlInput.value.trim();
+      const note = noteInput.value;
+      if (!baseUrl) {
+        alert('站点地址不能为空。');
+        urlInput.focus();
+        return;
+      }
+      const parsedUrl = parseSiteInput(baseUrl);
+      if (!parsedUrl.host) {
+        alert('站点地址解析不出来。请填成 example.com 或 https://example.com 这样的形式。');
+        urlInput.focus();
+        return;
+      }
+      if (parsedUrl.host !== row.host) {
+        if (!confirm(
+          `把站点地址从 ${row.host} 改成 ${parsedUrl.host}？\n\n`
+            + `该站点下的 ${row.count} 个账号仍属于这条站点记录，但它们下一次打开时会去新地址。\n`
+            + '已经打开的页签不受影响。',
+        )) {
+          return;
+        }
+      }
+
+      // ★ 与账号编辑弹窗同一条口径：**什么都没改就不发请求**
+      //   （服务端每次 PATCH 都会推 revision，空保存会让别的客户端白拉一次全量快照）。
+      if (
+        row.siteId
+        && name === originalName
+        && baseUrl === row.baseUrl
+        && note === row.note
+      ) {
+        close();
+        return;
+      }
+
+      /* ★ 只提交**真的改了**的字段（与账号编辑弹窗同一条口径）。
+       * 无脑全量提交会让一次"只改名"也重新归一化地址、并多推一次 revision。 */
+      const sitePatch: { name?: string; baseUrl?: string; note?: string } = {};
+      if (name !== originalName) {
+        sitePatch.name = name;
+      }
+      if (baseUrl !== row.baseUrl) {
+        sitePatch.baseUrl = baseUrl;
+      }
+      if (note !== row.note) {
+        sitePatch.note = note;
+      }
+
+      save.disabled = true;
+      cancel.disabled = true;
+      save.textContent = '保存中…';
+
+      const res = row.siteId
+        ? await send({ kind: 'par.updateSite', siteId: row.siteId, ...sitePatch })
+        : await send({
+            kind: 'par.upsertSite',
+            host: parsedUrl.host,
+            name: name || parsedUrl.host,
+            createBox: false,
+          });
+      if (!res.result.ok) {
+        save.disabled = false;
+        cancel.disabled = false;
+        save.textContent = '保存';
+        alert(`保存失败：${res.result.error}`);
+        return;
+      }
+      close();
+      lastSitesKey = '';
+      // 地址可能变了 ⇒ 站点下拉也要重建
+      lastHostOptions = '';
+      await refreshAll();
+    })();
+  });
+}
+
+/**
+ * 撤销某 host 的浏览器授权（**尽力而为**）。
+ *
+ * ★★ v4.2.12：这个函数从"删除站点时顺带做的一堆事"降级成**一个纯粹的清理动作**。
+ *
+ * ## 为什么它还被保留
+ *
+ * 用户的要求是「站点管理只做增删改，无需关注浏览器是否授权」，所以**界面上**
+ * 一处都不再体现授权状态。但 Chrome 的约束没变：`optional_host_permissions` 是
+ * 用户一条条授出去的，**授权不会随云端记录消失**。删掉站点却留着授权，后果不是
+ * "看着不干净"，而是：
+ *   · Chrome 会继续把内容脚本注入那个域（用户以为这个站已经和我无关了）；
+ *   · 站点访问范围在 `chrome://extensions` 里越积越多，而那里是用户唯一能自查授权的地方。
+ * ⇒ 所以删除时**顺手回收**，但不向用户承诺任何事、失败也不打断（回收不掉就记一条痕迹）。
+ *
+ * ## 为什么不再需要 `blockedHosts` 兜底
+ *
+ * 旧实现里"Chrome 拒绝回收"要落一个本地停用名单，否则改头规则会继续生效。
+ * 现在 `isEnforceable()` 走的是 `chrome.permissions.contains()` **实查**
+ * （见 `background/core/parallel-session.ts`），权限真被回收了它自己就知道了 ——
+ * 那个本地名单是**同一事实的第二处声明**，而它已经造成了用户实测到的
+ * "卡片说未授权、浏览器其实已授权"。⇒ 名单连同它的界面一起删除。
+ */
+async function revokeHostPermissions(host: string): Promise<void> {
+  try {
+    const all = await chrome.permissions.getAll();
+    const raws = (all.origins ?? []).filter((o) => originToHost(o) === host);
+    for (const raw of raws) {
+      const okc = await chrome.permissions.remove({ origins: [raw] }).catch(() => false);
+      if (!okc) {
+        // ★ 不打断用户、不弹窗。Chrome 对 `*://*/*` 这种宽授权会拒收具体 origin 的
+        //   回收请求 —— 那是正常的（宽授权本来就不该被逐条回收），不是缺陷。
+        log.info('浏览器未回收 %s 的授权（多半已被更宽的授权覆盖）：授权仍然可用', raw);
+      }
+    }
+    await send({ kind: 'par.grantChanged' });
+  } catch (e) {
+    log.warn('回收 %s 的浏览器授权失败（不影响删除结果）：%s', host, e instanceof Error ? e.message : String(e));
+  }
+}
+
 
 /* ==================== 下拉填充（防闪烁：选项未变化不重建） ==================== */
 
 async function fillSiteOptions(): Promise<void> {
-  // ★ v4.2.1：选项内容里现在带**站点名称**，所以 key 要含 siteNames ——
-  //   只按 hosts 判"没变化"的话，改了名字下拉不会更新（表现是"改名没生效"）。
-  const key = `${grantedHosts.join('|')}::${JSON.stringify(siteNames ?? null)}`;
+  // ★ 选项内容带**站点名称**，所以 key 要含名字 —— 只按 host 判"没变化"的话，
+  //   改了名字下拉不会更新（表现是"改名没生效"，v4.2.2 实测抓到过）。
+  // ★★ v4.2.12：数据源从"浏览器授权清单"换成"站点管理的行" —— 两处必须是**同一份**
+  //   数据，否则会出现"站点管理里有、下拉里没有"（或反过来）这种无从解释的差异。
+  const rows = buildSiteRows();
+  const key = JSON.stringify(rows.map((r) => [r.host, r.title]));
   if (key === lastHostOptions && pHostSelect.options.length) {
     return;
   }
   lastHostOptions = key;
   pHostSelect.innerHTML = '';
 
-  if (!grantedHosts.length) {
+  if (!rows.length) {
     const empty = document.createElement('option');
     empty.value = '';
     empty.disabled = true;
     empty.selected = true;
-    empty.textContent = '（暂无已授权站点 —— 请在「站点管理」添加）';
+    empty.textContent = '（还没有站点 —— 请在「站点管理」添加）';
     pHostSelect.append(empty);
     return;
   }
 
-  for (const h of grantedHosts) {
+  for (const r of rows) {
     const opt = document.createElement('option');
-    opt.value = h;
-    // ★ 用户要求 2：选站点时按**名称**认，而不是认域名。
-    //   但域名不能丢 —— 它是账号真正绑定的东西，出问题时要靠它定位。
-    //   原生 `<option>` 不能富文本，所以用 `名称（域名）` 这个折中；
+    opt.value = r.host;
+    // ★ 选站点时按**名称**认，而不是认域名。但域名不能丢 —— 它是账号真正绑定的东西，
+    //   出问题时要靠它定位。原生 option 不能富文本，所以用 `名称（域名）` 这个折中；
     //   名字为空时退化成只显示域名（此时两者相同，不必重复）。
-    const { title, sub } = siteTitleOf(h);
-    opt.textContent = sub ? `${title}（${sub}）` : title;
-    opt.title = h;
+    opt.textContent = r.title === r.host ? r.host : `${r.title}（${r.host}）`;
+    opt.title = r.host;
     pHostSelect.append(opt);
   }
 
   const stored = await chrome.storage.local.get(LAST_HOST_KEY);
   const last = stored[LAST_HOST_KEY] as string | undefined;
+  const hosts = rows.map((r) => r.host);
   const preferred =
-    last && grantedHosts.includes(last)
+    last && hosts.includes(last)
       ? last
-      : grantedHosts.includes(PREFERRED_HOST)
+      : hosts.includes(PREFERRED_HOST)
         ? PREFERRED_HOST
-        : grantedHosts[0];
+        : hosts[0];
   pHostSelect.value = preferred;
 }
+
 
 async function fillBoxOptions(): Promise<void> {
   const key = boxes.join('|');
@@ -2401,115 +2717,71 @@ boxForm.addEventListener('submit', (e) => {
   void createBoxFromForm();
 });
 
+/* ★★★ v4.2.12（用户 2026-10-13 的决定）：**添加站点就是一次普通的新增**。
+ *
+ * ## 改前它是什么
+ *
+ * 这个处理器有 70 行，其中 60 行在处理"浏览器授权要不到怎么办"：
+ * 先 `contains()` 探一次 → 未覆盖则 `request()` → 要不到就**弹一个确认框教用户去
+ * `chrome://extensions` 手动添加网页**（还把模式串复制到剪贴板）。
+ *
+ * 用户原话：「仅对站点进行增删改，无需关注浏览器是否对其进行授权。」
+ * ⇒ 上面那一整套都不该出现在用户的视野里。授权改由 `ensureHostPermission()` 在
+ * **用户看不见的地方**处置（登录云端时一次要通配，之后永不再问）。
+ *
+ * ## 改后它是什么
+ *
+ * ① 解析地址（解析失败就报错 —— 那是**输入**问题，用户必须知道）
+ * ② 把名称落到云端（**这一步才是"新增"的实质**：站点记录的权威在云端）
+ * ③ 顺手补授权（同步发起，保住手势；成败都不拦）
+ * ④ 刷新
+ *
+ * ★ 顺序：`ensureHostPermission` 必须在**任何 `await` 之前**发起 ——
+ *   这是本仓栽过两次的坑（v4.2.7 / v4.2.9：晚一步手势失效，Chrome
+ *   **不弹窗、不报错、返回 false**，表现为"点了没反应"）。
+ */
 siteForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  // v3.10.9：支持粘贴完整 URL——scheme 解析存 hint（账号创建时采用），host 用于授权
   const parsed = parseSiteInput(sHost.value);
   const host = parsed.host;
   if (!host) {
+    alert('站点地址解析不出来。请填成 example.com 或 https://example.com 这样的形式。');
     return;
   }
-  // ★ v4.2.1：名称留空 ⇒ **用站点地址填**（用户要求的回落口径）。
-  //   注意这里用的是 `host` 而不是用户原样输入 —— 用户可能粘的是
-  //   `https://a.com/x`，拿整串当名字会很难看。
+  // ★ 名称留空 ⇒ **用站点地址填**（用户要求的回落口径）。这里用的是归一化后的 `host`
+  //   而不是用户原样输入 —— 用户可能粘的是 `https://a.com/x`，拿整串当名字会很难看。
   const name = sName.value.trim() || host;
+
+  // ① 先发授权请求（**手势里最先**，见上面那段说明）；不 await，成败都不拦。
+  void ensureHostPermission(host);
+
   void (async () => {
-    /* ★★★ v4.2.7 修（用户实测"根本没弹窗"）：**`permissions.request` 之前不能有任何 `await`**。
-     *
-     * 缺陷形态：这里原来先 `await writeSchemeHint(...)`，**然后**才 request。
-     * 而下面那句注释写着"必须在用户手势里最先发起" —— **注释是对的，代码没做到**。
-     * 一次 `await` 之后用户手势就没了，`permissions.request` 在扩展页里会**静默失败**
-     * （不弹窗、不抛错、返回 false）⇒ 用户看到的现象正是"添加成功了，但站点是未授权"。
-     *
-     * ★★ 为什么这条特别难自查：**失败形态是静默的**（没有异常、没有日志、页面正常），
-     *   而且 `catch(() => false)` 把它转成一个普通的 `false`，与"用户点了取消"不可分。
-     *   ⇒ 所以现在**先发请求、再 await**（`request` 返回 promise，同步发起即可保住手势），
-     *     并且下面**实查一次 `contains()`** 来确认授权真的生效，而不是只信返回值。
-     */
-    /* ★★★ v4.2.9（用户两次实测"根本没弹窗"）：**已被更宽授权覆盖时不要请求**。
-     *
-     * 现象：v4.2.7 把手势问题修掉之后**仍然不弹窗**。⇒ 说明拦路的不是手势，而是
-     * **Chrome 认为这个 host 已经拿到了**：内容脚本声明了 `matches: ["<all_urls>"]`，
-     * 于是每个站点都落在授权范围内 ⇒ 请求一个"已被覆盖"的 host 时 Chrome
-     * **不弹窗、直接 resolve**，而那个具体 origin **不会**出现在 `getAll().origins` 里。
-     *
-     * ★ 这与用户在 `chrome://extensions` 看到的一致：站点访问是「在特定网站上」，
-     *   而列表里只有那几条**扩展显式申请过**的 origin。
-     *   ★ 也与 PITFALLS #44 的实验一致：`<all_urls>` 派生自内容脚本的 matches。
-     *
-     * ⇒ 先 `contains()` 探一次：
-     *    · 已覆盖 ⇒ **不请求**，直接当作已授权往下走（"手动添加站点后它就能用"这个
-     *      诉求在两种情况下都成立，而不是只在弹窗那条路径上成立）；
-     *    · 未覆盖 ⇒ 才发请求（此时 Chrome 会弹窗）。
-     */
-    const before = await chrome.permissions
-      .contains({ origins: [patternOfHost(host)] })
-      .catch(() => false);
-
-    let ok = before;
-    if (before) {
-      log.info('站点 %s 已被更宽的授权覆盖（无需再请求浏览器授权）', host);
-    } else {
-      const grantedPromise = chrome.permissions
-        .request({ origins: [patternOfHost(host)] })
-        .catch(() => false);
-      ok = await grantedPromise;
-    }
-
-    if (!ok) {
-      /* ★ 走到这里 = Chrome 既没覆盖、也没给弹窗（或用户拒了）。
-       *   ⇒ 给一条**能真正做完**的路：打开本扩展的设置页 + 把要填的模式复制到剪贴板。
-       *     用户实测过"在扩展管理页手动移除"那条路是通的 ⇒ "手动添加"同样通。 */
-      const pat = patternOfHost(host);
-      let copied = true;
-      try {
-        await navigator.clipboard.writeText(pat);
-      } catch {
-        copied = false; // 剪贴板不可用不算失败，下面照样把模式打在框里让用户手抄
-      }
-      if (
-        confirm(
-          `浏览器没有给出「${host}」的授权窗。\n\n`
-            + '可以手动加：在接下来的扩展设置页里找到「网站访问权限」→'
-            + '「在特定网站上」→「添加新网页」，粘贴这个模式：\n\n'
-            + `    ${pat}\n\n`
-            + (copied ? '★ 已经帮你复制到剪贴板。\n\n' : '（剪贴板不可用，请手动复制上面这行）\n\n')
-            + '现在打开扩展设置页吗？',
-        )
-      ) {
-        // `chrome://extensions/?id=…` 直接打开本扩展的详情页（那个开关就在那里）
-        await chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }).catch(() => undefined);
-      }
+    // ★ 2026-10-19：`createBox` 跟着勾选框走（默认勾选 = 原行为）。
+    // ★ 同时修掉一个静默缺陷：`send()` 的契约是**永不抛**、失败也以
+    //   `{ok:false,error}` 返回 —— 所以旧代码外面那个 `try/catch` **永远进不去**，
+    //   云端拒绝时界面照样清空输入框、假装保存成功。现在显式读 `result.ok`。
+    const res = await send({
+      kind: 'par.upsertSite',
+      host,
+      name,
+      // ★ `?.` 是给"页面是旧版 HTML、JS 已是新版"的错配兜底：缺元素时按默认「建盒」。
+      createBox: sCreateBox?.checked !== false,
+    });
+    if (res.kind === 'par.upsertSite' && !res.result.ok) {
+      log.warn('站点未保存到云端：%s', res.result.error);
+      alert(`站点「${name}」没能保存到云端：${res.result.error}`);
       return;
-    }
-    /* ★ 只信返回值不够，再实查一次。但**覆盖式授权**（`<all_urls>`）不会让具体 origin
-     * 出现在 `getAll()` 里 —— 那不是错误，也**不该弹框**拦住用户（他什么也做不了）。
-     * ⇒ 只留痕。 */
-    const really = await chrome.permissions.contains({ origins: [patternOfHost(host)] }).catch(() => false);
-    if (!really) {
-      log.warn('站点 %s 的授权未落到具体 origin（多半被更宽的授权覆盖着）：授权实际可用', host);
     }
     if (parsed.scheme) {
       await writeSchemeHint(host, parsed.scheme);
     }
-    // ★ v4.2.6：授权成功 ⇒ 解封（否则"删过这个站点"会让它永远加不回来）
-    await unhideHost(host);
-    // 授权成功后再把名称落到云端。**失败不阻断**：授权已经生效，
-    // 名只是显示信息，为它回滚一次成功的授权是本末倒置。
-    try {
-      await send({ kind: 'par.upsertSite', host, name });
-    } catch (err) {
-      // ★ 用 `log`（转发 logger）而不是裸 `console.*`：本仓规则 21 要求一切日志走打码通道，
-      //   而裸 console 只证明"没绕过 A 通道"，不证明"没有 B 通道"（verify-log-redaction 会红）。
-      log.warn('站点名称未保存到云端（授权已生效，不影响使用）：%s', err instanceof Error ? err.message : String(err));
-    }
     sHost.value = '';
     sName.value = '';
-    await loadSites(); // 立刻把新站点（含名字）画出来
-    await send({ kind: 'par.grantChanged' });
+    lastSitesKey = '';
     await refreshAll();
   })();
 });
+
 
 /* ==================== 二级导航栏（切换功能块，v4.2.1 第五轮）====================
  *
@@ -2623,6 +2895,22 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeCloudMenu();
   }
+});
+
+/* ★★★ 2026-10-19（用户要求 ⑧）：身份菜单里加「打开 Akso Cloud」。
+ *
+ * 用户原话：「在图示位置增加一个按钮，『打开akso-cloud』，便于用户直接打开管理网站。」
+ * ⇒ 在同一个菜单里（用户截图那个位置）多一项，直接打开当前登录的云端地址。
+ * ★ 地址用 `cloudBaseUrl`（云端会话回报的**实际** baseUrl），不写死常量 ——
+ *   这个服务从 8443 迁到 443 过一次，写死就会在迁移后打开一个错端口。
+ */
+cloudMenuOpen.addEventListener('click', () => {
+  closeCloudMenu();
+  if (!cloudBaseUrl) {
+    alert('还没拿到云端地址：请先登录云端账号库，或稍等片刻再试。');
+    return;
+  }
+  void chrome.tabs.create({ url: cloudBaseUrl });
 });
 
 cloudMenuSync.addEventListener('click', () => {
@@ -2819,6 +3107,20 @@ function renderCloudBanner(): void {
     return;
   }
   bannerFlash = null;
+  /* ★★★ 2026-10-14：把"这一轮有哪些步骤没刷新成功"说出来。
+   *
+   * 优先级**最低**（放在最后）：上面三条更具体的原因（未登录 / 离线副本 / 闪报）都优先。
+   * 为什么非说不可：一次版本错配曾让"账号刷新"这一步**静默地永不执行**，
+   * 而界面看起来完全正常 —— 那种形态用户无从归因，只能报"数据不同步"。
+   * ★ 文案里给出**可执行的下一步**（重新加载扩展），而不是只说"出错了"。 */
+  if (lastRefreshFailures.length) {
+    cloudBannerEl.textContent =
+      `有 ${lastRefreshFailures.length} 项没能刷新（${lastRefreshFailures.join('、')}），其余部分照常。`
+      + '若反复出现，请在 chrome://extensions 重新加载扩展（改了扩展代码后必须重载，'
+      + '否则页面与后台可能跑着两个版本）。';
+    cloudBannerEl.className = 'notice warn';
+    return;
+  }
   cloudBannerEl.textContent = '';
   cloudBannerEl.className = 'notice hidden';
 }
@@ -2929,6 +3231,41 @@ deviceUserCodeOpen.addEventListener('click', () => {
 });
 
 authReloginBtn.addEventListener('click', () => void retryDeviceLogin());
+
+/* ★★★ v4.2.12：**把"站点授权"这件事在这里一次解决掉**。
+ *
+ * 用户在点「登录 / 重新登录」时已经明确表达了"我要用这个扩展"，所以这是要通配授权的
+ * 最自然、也是**最后一次**会弹窗的时机 —— 之后 `ensureHostPermission()` 探到已被覆盖，
+ * 一个窗都不会再弹。用户从此不必知道"授权"这个概念存在（这正是他的要求：
+ * 「仅对站点进行增删改，无需关注浏览器是否对其进行授权」）。
+ *
+ * ★ 为什么单独一个监听器、而不是写进 `retryDeviceLogin()` 里：
+ *   那个函数内部第一句就是 `await ensureCloudOriginPermission()` ——
+ *   **一次 await 之后用户手势就没了**，Chrome 对 `permissions.request` 会
+ *   **不弹窗、不报错、直接 resolve(false)**（本仓 v4.2.7 / v4.2.9 连着栽过两次）。
+ *   在这个监听器里**同步**发起，是唯一能保住手势的位置。
+ *
+ * ★ 与设备流那一路的关系：`requestWideHostPermission()` 里已经含了云端域
+ *   （通配覆盖它），所以两件事不冲突、顺序也不重要。捕获阶段先跑，只是为了"最先"。
+ *
+ * ★ 结果是 false 时**什么都不做**：那是用户点了拒绝（或 Chrome 不给这个窗）。
+ *   站点仍然能用，只是每换一个站点会多一次具体站点的弹窗，而那个窗用户看得懂。
+ */
+authReloginBtn.addEventListener(
+  'click',
+  () => {
+    void requestWideHostPermission().then((ok) => {
+      if (ok) {
+        log.info('已获得全网通配授权：后续站点不再需要单独授权');
+        // 授权变了 ⇒ 后台的 enforcement 缓存必须失效，否则卡片状态会慢一拍
+        void send({ kind: 'par.grantChanged' }).catch(() => undefined);
+      } else {
+        log.info('用户未授予全网通配授权：退回按站点请求（每个新站点会弹一次）');
+      }
+    });
+  },
+  { capture: true },
+);
 
 // 页面被关掉/刷新：把设备授权会话也收掉（deviceCode 不该在后台多留一分钟）
 window.addEventListener('pagehide', () => {
@@ -3218,21 +3555,61 @@ document.addEventListener('click', (e) => {
 
 /* ==================== 统一刷新（轮询与操作后共用；各渲染层自带 diff 防闪烁） ==================== */
 
+/**
+ * 上一轮里**没刷新成功**的步骤名（供 `renderCloudBanner` 说出去）。
+ * ★ 它是"静默少刷新一块"的唯一出口 —— 没有它，这类故障在界面上完全看不出来。
+ */
+let lastRefreshFailures: string[] = [];
+
+/**
+ * ★★★ 2026-10-14：**每一步都必须被隔离** —— 这是"两端数据不同步"那次事故的结构性修复。
+ *
+ * ## 缺陷形态（实测，不是推测）
+ *
+ * 改前这里是一条**裸串行链**：`await loadCloudState()` → `loadBoxes()` →
+ * `loadBrowserAccounts()` → `loadSites()` → …，任何一步抛异常，`refreshAll()`
+ * 整体 reject，**排在它后面的步骤一次都不会跑**。
+ *
+ * 实测代价：`par.boxes` 的载荷形状改动之后，"**新页面 + 旧 Service Worker**"
+ * 这种版本错配（只刷新了页面、没在 `chrome://extensions` 点「重新加载」）
+ * 让 `loadBoxes()` 抛了一次 ⇒ **`loadBrowserAccounts()` 从此永不执行** ⇒
+ * 界面永远停在账号的旧副本上（用户报的正是"账号/盒子/站点数据不同步"），
+ * 而**没有任何一处报错**：轮询照跑、盒子照拉、界面照渲染。
+ *
+ * ## 口径
+ *
+ * **一个子系统的故障不许饿死其它子系统。** 每一步独立 `try/catch` + 留痕，
+ * 失败清单交给 `renderCloudBanner()` 说出来 —— 这类"少刷新了一块"是用户最难归因的形态。
+ *
+ * ★ 顺序仍然刻意固定：`cloud.state` 在最前（下面各层的文案按它分叉）、
+ *   盒子在账号之前（账号卡片要显示盒名，先拿到默认盒名才不会首绘成回退名）。
+ */
 async function refreshAll(): Promise<void> {
+  const failures: string[] = [];
+  const step = async (name: string, fn: () => unknown): Promise<void> => {
+    try {
+      await fn();
+    } catch (e) {
+      failures.push(name);
+      log.warn('refreshAll：%s 这一步失败，其余步骤继续 → %s', name, (e as Error)?.message ?? String(e));
+    }
+  };
+
   // 数据源在最前：下面各层的文案/错误提示都要按它分叉
-  await loadCloudState();
-  renderAuthBar();
+  await step('cloud.state', loadCloudState);
+  await step('authBar', renderAuthBar);
   // 先取盒子配置（含默认盒显示名），再渲染账号列表，避免首绘用回退名
-  await loadBoxes();
-  await loadBrowserAccounts();
-  await loadSites();
-  renderBoxChips();
-  renderBoxLedger();
-  fillBoxSiteOptions();
-  await fillSiteOptions();
-  await fillBoxOptions();
-  syncBatchBar();
-  renderCloudBanner();
+  await step('盒子', loadBoxes);
+  await step('账号', loadBrowserAccounts);   // ★ 这一步必须**无论如何**都跑到
+  await step('站点', loadSites);
+  await step('盒子芯片', renderBoxChips);
+  await step('盒子台账', renderBoxLedger);
+  await step('盒子站点下拉', fillBoxSiteOptions);
+  await step('站点下拉', fillSiteOptions);
+  await step('盒子下拉', fillBoxOptions);
+  await step('批量条', syncBatchBar);
+  lastRefreshFailures = failures;
+  await step('横幅', renderCloudBanner);
 }
 
 /* ==================== 诊断包导出（v3.12.2：一键取证） ==================== */
@@ -3380,3 +3757,32 @@ void loadFavoritesEditor();
 // 轻量轮询：绑定/在线状态/计数可能被后台事件改变（标签关闭、token 捕获）；
 // 各渲染函数自带 diff 守卫，数据未变化时不重建 DOM（消除 3s 轮询闪烁）
 setInterval(() => void refreshAll(), 3000);
+
+/* ★★★ 2026-10-14：**回到前台立刻同步一次**。
+ *
+ * ## 为什么必需（用户报的"登录后两端不能及时同步"的主要来源）
+ *
+ * 上面那个 3 秒轮询在**后台标签页**里会被 Chrome **节流到约一分钟一次** ——
+ * 实测证据：服务端访问日志里，扩展的 `GET /api/boxes` 正是**每 60 秒一条**
+ * （而它号称是 3 秒轮询）。⇒ 用户从别的标签切回来时，看到的可能是
+ * **最长一分钟前**的数据；若此前网络抖过，还会继续显示只读副本。
+ *
+ * ## 为什么连 diff 缓存一起清
+ *
+ * 各渲染层按 `lastListKey` / `lastSitesKey` / `lastChipsKey` / `lastLedgerKey`
+ * 判断"数据没变就不重建 DOM"。切回前台时这几个 key 可能仍是上一轮的值，
+ * 于是**即使数据已经变了也不会重画** ⇒ 清了它们，下一轮必定真重画一次。
+ */
+function refreshOnForeground(): void {
+  if (document.visibilityState !== 'visible') {
+    return;
+  }
+  lastListKey = '';
+  lastSitesKey = '';
+  lastChipsKey = '';
+  lastBoxOptions = '';
+  lastLedgerKey = '';
+  void refreshAll();
+}
+document.addEventListener('visibilitychange', refreshOnForeground);
+window.addEventListener('focus', refreshOnForeground);

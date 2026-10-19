@@ -191,7 +191,15 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
   //   ★ 它解决的问题是"消息到底有没有到 SW"。
   //     在此之前这个问题**无法回答**：UI 点了、没反应、日志空白，
   //     于是你分不清是"消息没发出去"、"SW 没醒"、还是"分支走错了"。
-  //   排障时：`Site.setLogLevel('debug')` 或看诊断包的 `appLogs`。
+  //
+  //   ★★ 2026-10-16 更正排障指引：~~`Site.setLogLevel('debug')`~~ **那个函数在产物里不存在**。
+  //     实测 `dist/background.js` 里 `setLogLevel` 出现 **0 次** —— esbuild 会把
+  //     "导出了但没人 import" 的函数摇树删掉，而全仓唯一的"调用者"是**人在控制台手敲**。
+  //     ⇒ 正确做法是在**控制台**直接写全局级别（它是 `globalThis` 上的属性，摇不掉）：
+  //
+  //         globalThis.__qlLogLevel = 'debug'    // SW 的 DevTools 控制台；立刻生效
+  //
+  //     完整原因与证据见 `shared/log.ts` 里 `setLogLevel()` 的注释（PITFALLS #44）。
   log.debug('dispatch kind=%s', String((req as { kind?: unknown }).kind));
   switch (req.kind) {
     // ★★ 2026-10-12 删：`site.grants.list` / `site.grant.add` 两个 kind 在这里
@@ -363,35 +371,44 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       });
       return { kind: 'par.sites', result: r };
     }
-    case 'par.renameSite': {
-      const r = await tryRun(async () => {
-        await parallelStore.renameSite(req.host, req.name);
-        // ★ 回传**归一化后**的名字而不是回显入参：服务端对空名有回落口径
-        //   （空名 = 恢复成 host），回显入参会让 UI 显示一个服务端并不认的名字。
-        const rows = await parallelStore.listSites(true);
-        const hit = rows.find((s) => s.host === req.host.trim().toLowerCase());
-        return { host: req.host, name: hit?.name ?? req.name, displayName: hit?.displayName ?? req.name };
-      });
-      return { kind: 'par.renameSite', result: r };
-    }
     /* 添加站点时顺带落名（站点可能还不存在于云端 ⇒ 先建再写）。
-     * ★ 与 `par.renameSite` 的差别是**语义**：这个容忍"站点不存在"（建它），
-     *   而改名遇到不存在必须报错（否则用户会以为给一个不存在的站点改了名）。 */
+     * ★ 2026-10-19：站点改名改走 `par.updateSite`（支持名称/地址/备注一起改），
+     *   旧的"只改名"kind 已删除 —— 留一条零发送方的协议只会让人以为它还在用。 */
     case 'par.upsertSite': {
       const r = await tryRun(async () => {
-        await parallelStore.upsertSite(req.host, req.name);
+        // ★ 2026-10-19：`createBox` 由站点表单的勾选框决定（缺省 true = 原行为）。
+        await parallelStore.upsertSite(req.host, req.name, req.createBox !== false);
         const rows = await parallelStore.listSites(true);
         const hit = rows.find((s) => s.host === req.host.trim().toLowerCase());
         return { host: req.host, name: hit?.name ?? req.name, displayName: hit?.displayName ?? req.name };
       });
       return { kind: 'par.upsertSite', result: r };
     }
+    /* ★ 2026-10-19（用户要求）：编辑站点。与云端控制台同一条 PATCH，
+     *   只转发调用方**真的**给了的字段（`undefined` = 不动）。 */
+    case 'par.updateSite': {
+      const r = await tryRun(() =>
+        parallelStore.updateSite(req.siteId, {
+          ...(req.name !== undefined ? { name: req.name } : {}),
+          ...(req.baseUrl !== undefined ? { baseUrl: req.baseUrl } : {}),
+          ...(req.note !== undefined ? { note: req.note } : {}),
+        }),
+      );
+      return { kind: 'par.updateSite', result: r };
+    }
     /* ★ v4.2.7（用户要求"删除站点时云端也要删"）：删云端站点记录。
-     * ★ 服务端会**级联删掉该站点下的账号** —— UI 已经先确认过"这个站点没有账号"
-     *   才发这条；这里不重复判断（同一件事判断放两处迟早不一致），
-     *   但把服务端回报的 `accountsDeleted` 原样透传，让 UI 能如实告知。 */
+     * ★★ v4.2.12：**这里不再替 UI 判断"能不能删"** —— 判断权交给服务端。
+     *
+     * 改前这里的注释写着"UI 已经先确认过'这个站点没有账号'才发这条；这里不重复判断
+     * （同一件事判断放两处迟早不一致）"，而 UI 那边的判断依据是**列表渲染那一刻的**
+     * 账号数 ⇒ 页面开着时别处加了账号，它就过期了。这正是 `akso-cloud` 那边
+     * `site.js` 的注释里写着的同一条教训（"让服务端回答现在有几个，那个数字不可能过期"）。
+     *
+     * ⇒ 现在：不传 `force` 时服务端会在"有账号"时回 409，`cloud-store` 把它翻成
+     *   `blocked` 四态里的一支（带 `accountCount` 与 `usernames`），UI 摊开给人看，
+     *   确认后再带 `force: true` 发一次。级联删除因此**不可能静默发生**。 */
     case 'par.deleteSite': {
-      const r = await tryRun(async () => parallelStore.deleteSite(req.host));
+      const r = await tryRun(() => parallelStore.deleteSite(req.host, req.force === true));
       return { kind: 'par.deleteSite', result: r };
     }
     case 'par.create': {
@@ -445,13 +462,32 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       const r = await tryRun(() => parallelStore.bindBoxSite(req.name, req.siteId));
       return { kind: 'par.bindBoxSite', result: r };
     }
+    /* ★★★ v4.2.12：账号编辑（六样字段，与云端控制台的编辑弹窗一一对应）。
+     * ★ 页签名变了要顺手刷新绑定页签的标题 —— 否则用户改完页签名，
+     *   已经开着的那个标签页标题还是旧的，看起来像"改了没生效"。 */
     case 'par.update': {
       const r = await tryRun(async () => {
-        const account = await parallelStore.updateTabName(req.id, req.patch.tabName ?? '');
-        await parallelSession.refreshTitle(req.id);
+        const account = await parallelStore.updateAccount(req.id, req.patch);
+        if (req.patch.tabName !== undefined) {
+          await parallelSession.refreshTitle(req.id);
+        }
         return account;
       });
       return { kind: 'par.update', result: r };
+    }
+    /* ★★★ v4.2.12：批量删除账号。
+     * ★ 两步的分工**不能合并**（见 `closeAccountTabs` 的注释）：
+     *   本机会话清理逐个做，**云端删除只发一次**（`POST /api/accounts/batch-delete`）。 */
+    case 'par.batchDelete': {
+      const r = await tryRun(async () => {
+        const ids = [...new Set(req.ids.filter(Boolean))];
+        for (const id of ids) {
+          await parallelSession.closeAccountTabs(id).catch(() => undefined);
+        }
+        const deleted = await parallelStore.batchDelete(ids);
+        return { deleted };
+      });
+      return { kind: 'par.batchDelete', result: r };
     }
     case 'par.delete': {
       const r = await tryRun(() => parallelSession.deleteAccount(req.id));
@@ -566,21 +602,13 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
     case 'status.change':
       return { kind: req.kind, result: fail('状态轮盘只在目标页签内可用（缺少页面上下文）') };
 
-    /* ---- 常用页面书签（v3.16，Alt+1） ---- */
+    /* ---- 常用页面书签（v3.16，Alt+1） ----
+     * ★ 2026-10-19：`favorites.open` 的**打开动作**搬到 `onMessage` 前置分流 ——
+     *   它需要 `sender.tab` 来判断"当前页属于哪个账号"（见那里）。
+     *   这里只留读取清单。 */
     case 'favorites.list': {
       const r = await tryRun(() => listFavorites());
       return { kind: 'favorites.list', result: r };
-    }
-    case 'favorites.open': {
-      const r = await tryRun(async () => {
-        const url = await resolveFavoriteUrl(req.path, req.baseOrigin);
-        if (!url) {
-          throw new Error('无法确定要打开的地址：相对路径需要一个「基准域名」，请先打开一个平台页面，或在书签里填完整网址');
-        }
-        await chrome.tabs.create({ url, active: true });
-        return { url };
-      });
-      return { kind: 'favorites.open', result: r };
     }
 
     /* ---------------- 数据源：本地 ↔ 云端（v3.14） ---------------- */
@@ -705,6 +733,63 @@ function originHostOf(raw: string | undefined): string | undefined {
   }
 }
 
+/**
+ * ★★ 2026-10-19（用户要求）：**常用页面跟随当前页的账号**。
+ *
+ * ## 缺陷形态
+ *
+ * 用户在一个已登录账号 A 的平台页上按 `Alt+1` 打开书签，旧实现一律
+ * `chrome.tabs.create({url})` —— 那是一个**没有被绑定**的普通页签：
+ *   · 没有 `bindings` 记录 ⇒ 不装 DNR 的 AUTH / COOKIE 规则
+ *   · 不注入壳（`shield`）⇒ 存储命名空间、Cookie 袋、缓存分区全部缺失
+ * ⇒ 新页签看到的是浏览器**共享 jar**（会话卫生刻意把它清干净了）⇒ **未登录**。
+ * 用户要的是"已经登录了的那个身份"，而不是"再登录一次"。
+ *
+ * ## 判据（为什么必须看 sender.tab）
+ *
+ * "我是哪个账号"不能由页面自报 —— 那等于把身份交给被注入的页面决定。
+ * 唯一可信的来源是后台的绑定表：`sender.tab.id → bindings[tabId].accountId`。
+ *
+ * ★ 未绑定的页（用户直接在平台上开的页签）保持原行为：新建普通页签。
+ *   那种页没有账号上下文，硬套一个账号只会**串号**。
+ */
+async function openFavoriteFromTab(
+  sender: chrome.runtime.MessageSender,
+  req: { path?: unknown; baseOrigin?: unknown },
+): Promise<{ url: string }> {
+  const url = await resolveFavoriteUrl(
+    typeof req.path === 'string' ? req.path : '',
+    typeof req.baseOrigin === 'string' ? req.baseOrigin : undefined,
+  );
+  if (!url) {
+    throw new Error('无法确定要打开的地址：相对路径需要一个「基准域名」，请先打开一个平台页面，或在书签里填完整网址');
+  }
+  const tabId = sender.tab?.id;
+  const accountId = tabId !== undefined ? parallelSession.boundAccountOf(tabId) : undefined;
+  /* ★ 只对**同一站点**的书签套用账号上下文：书签允许填完整外链网址，
+   *   把一个别的域名的页面绑进账号 A 的命名空间/规则里，属于把隔离平面
+   *   用在一个它不认识的站点上 —— 那既帮不上登录，也放大了接触面。
+   *   ⇒ 跨域书签保持原来的"普通新页签"行为。 */
+  let sameHost = false;
+  const boundHost = tabId !== undefined ? parallelSession.boundHostOf(tabId) : undefined;
+  if (boundHost) {
+    try {
+      sameHost = hostNoPortOf(new URL(url).host) === hostNoPortOf(boundHost);
+    } catch {
+      sameHost = false;
+    }
+  }
+  if (accountId && sameHost) {
+    // ★ 新页签走与 `par.open` **同一条**绑定/建规则/推送种子的路径，
+    //   只是落地页换成书签地址、且**不下发待登录明文凭证**（那不是登录页）。
+    await parallelSession.open(accountId, true, { targetUrl: url, stageCredentials: false });
+    void forensics('favorite-open', { accountId, tabId, url });
+    return { url };
+  }
+  await chrome.tabs.create({ url, active: true });
+  return { url };
+}
+
 chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   // 0. shield 桥上行：绑定查询 / token 捕获上报（先于通用分流）
   if (
@@ -795,6 +880,25 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     void statusChangeFor(sender.tab, r.code ?? '', r.name ?? '').then((result) =>
       sendResponse({ kind: 'status.change', result }),
     );
+    return true;
+  }
+
+  // 1.95 常用页面：**跟随来源页签的账号**（2026-10-19，见 `openFavoriteFromTab` 的说明）
+  if (req && typeof req === 'object' && (req as { kind?: string }).kind === 'favorites.open') {
+    const r = req as { path?: unknown; baseOrigin?: unknown };
+    void tryRun(() => openFavoriteFromTab(sender, r)).then((result) =>
+      sendResponse({ kind: 'favorites.open', result }),
+    );
+    return true;
+  }
+
+  // 1.96 账号轮盘的起始盒子（2026-10-19）：小窗自己传 host，页内浮层用 sender.tab。
+  if (req && typeof req === 'object' && (req as { kind?: string }).kind === 'par.wheelContext') {
+    const r = req as { host?: unknown };
+    void tryRun(() => wheelContextFor(
+      typeof r.host === 'string' ? r.host : '',
+      sender.tab,
+    )).then((result) => sendResponse({ kind: 'par.wheelContext', result }));
     return true;
   }
 
@@ -967,6 +1071,21 @@ let wheelWinId: number | null = null;
 /** 触发去抖：命令重放/系统连击不会开后又立刻关 */
 let lastToggleAt = 0;
 
+/**
+ * ★ 2026-10-19：小窗/标签页模式的轮盘 URL —— 把**当前页 host** 带过去。
+ *
+ * 为什么必须带：轮盘窗口自己是"活动页"，后台再 `tabs.query({active:true})`
+ * 查到的是它自己（扩展页，没有站点语义）。⇒ 偏好必须在**打开之前**从用户
+ * 真正在看的那个页签上取好，随 URL 一起传。
+ */
+function wheelPageUrl(host: string): string {
+  const url = new URL(chrome.runtime.getURL(WHEEL_PAGE));
+  if (host) {
+    url.searchParams.set('host', host);
+  }
+  return url.toString();
+}
+
 chrome.windows.onRemoved.addListener((winId) => {
   if (winId === wheelWinId) {
     wheelWinId = null;
@@ -1019,6 +1138,83 @@ chrome.permissions.onRemoved.addListener((perms) => {
   onBrowserPermissionsChanged(`removed ${(perms.origins ?? []).join(',') || '(无 origins)'}`);
 });
 
+/**
+ * ★★ 2026-10-19（用户要求 ⑦）：`Alt+Q` 的**起始盒子** = 当前页所属站点关联的盒子。
+ *
+ * 规则：
+ *   1. 从当前页签 URL 取 host（小窗模式由调用方显式传，因为它自己的页签没有上下文）
+ *   2. 云端盒子列表里找 `siteId` 指向的站点 host 与当前 host 相同的盒子（跳过默认盒/禁用盒）
+ *   3. 若当前页签**已绑定账号**且该账号就在其中一个候选盒里 ⇒ 优先它
+ *      （多个盒子可能关联同一个站点，用户当前在哪个盒里就用哪个）
+ *   4. 没有候选 ⇒ `preferredBox=''`，轮盘从第一页开始（通常是默认盒）
+ *
+ * ★ 匹配用 `hostNoPortOf`：云端站点地址可能带端口（内网 `10.100.0.105:8080`），
+ *   而 `location.host` / 账号 `siteHost` 的端口形态并不总是一致 ——
+ *   不剥端口就会"看起来有关联盒子，却永远匹配不上"（本仓反复记过的坑）。
+ * ★ 拿不到云端数据（离线）⇒ 返回空偏好，**不猜**一个盒子。
+ */
+async function wheelContextFor(
+  hostHint: string,
+  tab?: chrome.tabs.Tab,
+): Promise<{ host: string; preferredBox: string; matched: boolean }> {
+  let host = hostHint.trim();
+  if (!host && tab?.url) {
+    try {
+      host = new URL(tab.url).host;
+    } catch {
+      host = '';
+    }
+  }
+  if (!host) {
+    return { host: '', preferredBox: '', matched: false };
+  }
+  const bare = hostNoPortOf(host);
+
+  const cloud = await fetchCloudBoxes(false);
+  if (!cloud) {
+    // 离线：没有权威盒子/站点数据，不猜（调用方会用本机记住的默认盒兜底）
+    return { host, preferredBox: '', matched: false };
+  }
+  const siteHosts = new Map<string, string>();
+  try {
+    for (const s of await parallelStore.listSites(false)) {
+      siteHosts.set(s.id, s.host);
+    }
+  } catch {
+    // 站点清单拿不到 ⇒ 无法判断关联关系。用户要求"没有关联盒子时用默认盒"，
+    // 这里的默认盒是云端权威值（`cloud.default`）。
+    return { host, preferredBox: cloud.default, matched: false };
+  }
+
+  const candidates = cloud.boxes.filter((b) => {
+    if (!b.bindable || !b.siteId || b.disabled) {
+      return false;
+    }
+    const siteHost = siteHosts.get(b.siteId);
+    return Boolean(siteHost) && hostNoPortOf(siteHost!) === bare;
+  });
+  if (!candidates.length) {
+    // ★ 用户要求：**没有关联盒子时用默认盒** —— 不是"停在第一页"（第一页可能是别的盒子）
+    return { host, preferredBox: cloud.default, matched: false };
+  }
+
+  let preferred = candidates[0].name;
+  const tabId = tab?.id;
+  const accountId = tabId !== undefined ? parallelSession.boundAccountOf(tabId) : undefined;
+  if (accountId) {
+    try {
+      const account = await parallelStore.get(accountId);
+      const box = account.box?.trim() || cloud.default;
+      if (candidates.some((b) => b.name === box)) {
+        preferred = box;
+      }
+    } catch {
+      // 取不到账号就退回第一个候选（不影响"优先"这个目标）
+    }
+  }
+  return { host, preferredBox: preferred, matched: true };
+}
+
 async function toggleAccountWheel(): Promise<void> {
   const now = Date.now();
   if (now - lastToggleAt < 300) {
@@ -1027,6 +1223,13 @@ async function toggleAccountWheel(): Promise<void> {
   lastToggleAt = now;
 
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // 轮盘小窗/标签页模式的"当前站点"——必须在切走焦点之前取好
+  let wheelHost = '';
+  try {
+    wheelHost = tab?.url ? new URL(tab.url).host : '';
+  } catch {
+    wheelHost = '';
+  }
 
   // 机制一（主）：普通网页 → 页面内无框浮层（再次触发 = 脚本自关闭）
   try {
@@ -1068,7 +1271,7 @@ async function toggleAccountWheel(): Promise<void> {
 
   try {
     const win = await chrome.windows.create({
-      url: chrome.runtime.getURL(WHEEL_PAGE),
+      url: wheelPageUrl(wheelHost),
       type: 'popup',
       width: WHEEL_W,
       height: WHEEL_H,
@@ -1082,7 +1285,7 @@ async function toggleAccountWheel(): Promise<void> {
   }
 
   // 机制三（最终）：普通标签页打开轮盘
-  await chrome.tabs.create({ url: chrome.runtime.getURL(WHEEL_PAGE) });
+  await chrome.tabs.create({ url: wheelPageUrl(wheelHost) });
 }
 
 chrome.commands.onCommand.addListener((command) => {

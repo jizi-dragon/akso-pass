@@ -19,15 +19,15 @@
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  padding: 6px 13px;
-  border-radius: 999px;
+  gap: var(--sp-2);
+  font-size: var(--fs-12);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--sb-radius-pill);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
   color: var(--sb-text-secondary);
@@ -46,10 +46,10 @@
   box-shadow: 0 4px 12px rgba(30, 111, 255, 0.28);
 }
 .chip .chip-n {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   background: rgba(23, 42, 84, 0.08);
-  border-radius: 999px;
-  padding: 1px 7px;
+  border-radius: var(--sb-radius-pill);
+  padding: var(--sp-hair) var(--sp-2);
   font-weight: 700;
 }
 .chip.active .chip-n {
@@ -77,7 +77,7 @@
 /* ---- 头部小按钮（导出/导入） ---- */
 .head-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
 }
 
@@ -86,15 +86,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  padding: 10px 14px;
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--sb-radius);
   background: var(--sb-brand-soft);
   border: 1px solid color-mix(in srgb, var(--sb-brand) 22%, transparent);
 }
 .batch-info {
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text);
 }
 .batch-info b {
@@ -104,7 +104,7 @@
 }
 .batch-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -115,7 +115,7 @@
   padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
-  gap: 12px;
+  gap: var(--sp-3);
 }
 .account-grid .empty {
   grid-column: 1 / -1;
@@ -125,10 +125,10 @@
   background: var(--sb-surface-2);
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius-lg);
-  padding: 13px 14px;
+  padding: var(--sp-3) var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: var(--sp-3);
   position: relative;
   overflow: hidden;
   transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
@@ -167,13 +167,13 @@
   display: block;
 }
 .batch-on .badge {
-  margin-right: 22px;
+  margin-right: var(--sp-5);
 }
 
 .ac-head {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 
@@ -182,11 +182,11 @@
   width: 40px;
   height: 40px;
   flex: none;
-  border-radius: 13px;
+  border-radius: var(--sb-radius);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: var(--fs-15);
   font-weight: 800;
   color: var(--ring, var(--sb-brand));
   background: color-mix(in srgb, var(--ring, var(--sb-brand)) 10%, #ffffff);
@@ -213,34 +213,34 @@
 }
 .account-card .alias {
   font-weight: 650;
-  font-size: 14px;
+  font-size: var(--fs-13);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .account-card .sub {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: var(--sp-0);
 }
 .account-card .sub .box-tag {
   display: inline-block;
-  font-size: 10px;
-  padding: 1px 6px;
-  margin-right: 5px;
-  border-radius: 999px;
+  font-size: var(--fs-11);
+  padding: var(--sp-hair) var(--sp-2);
+  margin-right: var(--sp-1);
+  border-radius: var(--sb-radius-pill);
   background: var(--sb-brand-soft);
   color: var(--sb-brand);
   vertical-align: 1px;
 }
 
 .badge {
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: 999px;
+  font-size: var(--fs-11);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--sb-radius-pill);
   white-space: nowrap;
   flex: none;
   font-variant-numeric: tabular-nums;
@@ -268,14 +268,14 @@
 
 .ac-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .ac-actions .btn-ghost,
 .ac-actions .btn-danger {
-  font-size: 12px;
-  padding: 5px 10px;
-  border-radius: 8px;
+  font-size: var(--fs-12);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--sb-radius-sm);
 }
 
 .btn-danger {
@@ -297,14 +297,14 @@
 .form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .btn-group {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
-  margin-top: 2px;
+  margin-top: var(--sp-0);
 }
 .btn-group button {
   white-space: nowrap;
@@ -314,56 +314,56 @@
 .import-panel {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 13px;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
   border-radius: var(--sb-radius);
   background: var(--sb-brand-soft-2);
   border: 1.5px dashed var(--sb-border-strong);
 }
 .import-panel textarea {
   font-family: ui-monospace, Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   resize: vertical;
   min-height: 110px;
 }
 .import-panel code {
   background: var(--sb-brand-soft);
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 11px;
+  padding: var(--sp-hair) var(--sp-2);
+  border-radius: var(--sb-radius-sm);
+  font-size: var(--fs-11);
   color: var(--sb-brand);
 }
 
 /* ---- 常用页面书签编辑器（v3.16）---- */
 #fav-text {
   font-family: ui-monospace, Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   resize: vertical;
   min-height: 120px;
 }
 .block .desc code {
   background: var(--sb-brand-soft);
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 11px;
+  padding: var(--sp-hair) var(--sp-2);
+  border-radius: var(--sb-radius-sm);
+  font-size: var(--fs-11);
   color: var(--sb-brand);
 }
 .block .desc kbd {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 5px;
+  padding: var(--sp-hair) var(--sp-2);
+  border-radius: var(--sb-radius-sm);
   border: 1px solid var(--sb-border-strong);
   border-bottom-width: 2px;
   background: var(--sb-surface, #fff);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--sb-text-sub, #5b6b8f);
 }
 .save-tip {
   color: var(--sb-ok, #16a34a);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 
@@ -375,7 +375,7 @@
 .site-grid {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
 }
 
@@ -394,7 +394,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 /* ★★ v4.2.1 第五轮（要求 ④）：站点从"一行"改成**卡片**。
@@ -416,11 +416,11 @@
     'name   count actions'
     'domain count actions';
   align-items: center;
-  gap: 2px 14px;
-  padding: 11px 13px;
+  gap: var(--sp-0) var(--sp-3);
+  padding: var(--sp-3) var(--sp-3);
   background: var(--sb-surface-2);
   border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
+  border-radius: var(--sb-radius-lg);
   transition: border-color 0.14s ease, box-shadow 0.14s ease;
 }
 .site-list .site-card:hover {
@@ -436,12 +436,12 @@
   grid-area: name;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .site-card-name {
   font-weight: 700;
-  font-size: 13.5px;
+  font-size: var(--fs-13);
   color: var(--sb-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -449,16 +449,16 @@
 }
 .site-card-off {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   font-weight: 600;
   color: #C2410C;
   background: color-mix(in srgb, #C2410C 12%, transparent);
-  border-radius: 999px;
-  padding: 1px 7px;
+  border-radius: var(--sb-radius-pill);
+  padding: var(--sp-hair) var(--sp-2);
 }
 .site-card-domain {
   grid-area: domain;
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -470,18 +470,18 @@
   grid-area: count;
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--sp-1);
   flex: none;
-  padding: 0 4px;
+  padding: 0 var(--sp-1);
 }
 .site-card-count b {
-  font-size: 17px;
+  font-size: var(--fs-18);
   font-weight: 800;
   color: var(--sb-brand);
   font-variant-numeric: tabular-nums;
 }
 .site-card-count span {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
   white-space: nowrap;
 }
@@ -493,7 +493,7 @@
 .site-list .site-actions {
   grid-area: actions;
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   align-items: center;
   flex: none;
   white-space: nowrap;
@@ -515,8 +515,8 @@
 .site-list .site-rename-input {
   width: 100%;
   max-width: 340px;
-  padding: 5px 9px;
-  font-size: 13px;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 
@@ -524,11 +524,11 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 26px 14px;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-3);
   text-align: center;
   color: var(--sb-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   background:
     radial-gradient(220px 90px at 50% 0%, rgba(30, 111, 255, 0.05), transparent 70%),
@@ -537,7 +537,7 @@
   border-radius: var(--sb-radius-lg);
 }
 .empty .empty-ico {
-  font-size: 22px;
+  font-size: var(--fs-18);
 }
 
 /* ---- 移入盒子选择弹窗 ---- */
@@ -559,20 +559,20 @@
   border: 1px solid var(--sb-border);
   border-radius: var(--sb-radius-lg);
   box-shadow: var(--sb-shadow-lg);
-  padding: 20px;
+  padding: var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 .modal-card h3 {
   margin: 0;
-  font-size: 15.5px;
+  font-size: var(--fs-15);
   font-weight: 700;
 }
 .box-options {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-2);
   max-height: 260px;
   overflow-y: auto;
 }
@@ -581,11 +581,11 @@
   align-items: center;
   justify-content: space-between;
   text-align: left;
-  padding: 10px 13px;
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--sb-radius);
   border: 1.5px solid var(--sb-border);
   background: var(--sb-surface-2);
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--sb-text);
   transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
@@ -599,10 +599,10 @@
   color: var(--sb-brand);
 }
 .box-option .chip-n {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   background: rgba(23, 42, 84, 0.08);
-  border-radius: 999px;
-  padding: 1px 7px;
+  border-radius: var(--sb-radius-pill);
+  padding: var(--sp-hair) var(--sp-2);
   font-weight: 700;
   color: var(--sb-text-secondary);
   font-variant-numeric: tabular-nums;
@@ -614,7 +614,7 @@
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 /* ---- 数据源：? 帮助气泡（v3.14.1）---- */
@@ -622,7 +622,7 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .cloud-help {
   flex: none;
@@ -633,7 +633,7 @@
   border: 1px solid var(--sb-border-strong);
   background: var(--sb-surface);
   color: var(--sb-text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   font-weight: 700;
   line-height: 1;
   display: inline-flex;
@@ -654,23 +654,23 @@
   right: 0;
   z-index: 70;
   width: min(360px, 86vw);
-  padding: 14px 15px;
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--sb-radius);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
   box-shadow: var(--sb-shadow-lg);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .help-pop h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 700;
 }
 .help-pop p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   color: var(--sb-text-secondary);
 }
@@ -678,16 +678,16 @@
   color: var(--sb-text);
 }
 .help-pop .help-foot {
-  padding-top: 8px;
+  padding-top: var(--sp-2);
   border-top: 1px dashed var(--sb-border-strong);
-  font-size: 11.5px;
+  font-size: var(--fs-12);
 }
 .link-btn {
   padding: 0;
   border: none;
   background: none;
   color: var(--sb-brand);
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   font-weight: 600;
   text-decoration: underline;
   cursor: pointer;
@@ -705,7 +705,11 @@
 .cloud-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  /* ★ 2026-10-19：身份块在**页头最右侧**，菜单必须右对齐 ——
+     原来 `left: 0` 会让 210px 宽的菜单伸出视口右缘（新加的
+     「打开 Akso Cloud」说明文字正好被裁掉）。 */
+  right: 0;
+  left: auto;
   z-index: 30;
   min-width: 210px;
   background: var(--sb-surface);
@@ -719,8 +723,8 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 9px 12px;
+  gap: var(--sp-hair);
+  padding: var(--sp-2) var(--sp-3);
   border: none;
   background: transparent;
   cursor: pointer;
@@ -730,12 +734,12 @@
   background: var(--sb-brand-soft-2);
 }
 .cloud-menu-item b {
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--sb-text);
 }
 .cloud-menu-item i {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   font-style: normal;
   color: var(--sb-text-secondary);
 }
@@ -752,9 +756,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
-  padding: 4px 11px;
-  border-radius: 999px;
+  font-size: var(--fs-12);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--sb-radius-pill);
   border: 1px solid color-mix(in srgb, var(--sb-success) 32%, transparent);
   background: color-mix(in srgb, var(--sb-success) 10%, var(--sb-surface));
   color: color-mix(in srgb, var(--sb-success) 62%, var(--sb-text));
@@ -781,11 +785,11 @@
 .device-status {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 .device-status-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--sb-text);
 }
@@ -812,10 +816,10 @@
 }
 .device-manual {
   border-top: 1px dashed var(--sb-border-strong);
-  padding-top: 10px;
+  padding-top: var(--sp-2);
 }
 .device-manual summary {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   cursor: pointer;
 }
@@ -823,13 +827,13 @@
   color: var(--sb-brand);
 }
 .device-manual .desc {
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 .device-manual-row {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 .device-manual-row input {
   flex: 1;
@@ -838,8 +842,8 @@
   font-variant-numeric: tabular-nums;
 }
 .device-manual-msg {
-  margin: 7px 0 0;
-  font-size: 11.5px;
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--sb-text-secondary);
 }
@@ -851,8 +855,8 @@
 .check-row {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  font-size: 12.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--sb-text);
   cursor: pointer;
@@ -861,12 +865,12 @@
   flex: none;
   width: 15px;
   height: 15px;
-  margin: 1px 0 0;
+  margin: var(--sp-hair) 0 0;
   accent-color: var(--sb-brand);
 }
 .check-hint {
-  margin-top: -4px;
-  font-size: 11.5px;
+  margin-top: -var(--sp-1);
+  font-size: var(--fs-12);
 }
 
 /* 「已登录谁」胶囊里的头像。形态与网站控制台、桌面账号页三处保持一致 ——
@@ -878,7 +882,7 @@
 .cloud-account {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   cursor: pointer;
   font-family: inherit;
   color: inherit;
@@ -888,13 +892,13 @@
 }
 .cloud-caret {
   flex: none;
-  font-size: 9px;
+  font-size: var(--fs-11);
   opacity: 0.65;
 }
 .cloud-av {
   width: 20px; height: 20px; border-radius: 50%; flex: none;
   display: inline-grid; place-items: center;
-  font-size: 10.5px; font-weight: 700;
+  font-size: var(--fs-11); font-weight: 700;
   background: var(--sb-brand-soft); color: var(--sb-brand); overflow: hidden;
 }
 .cloud-av img { width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -21,7 +21,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
 }
 
@@ -29,8 +29,8 @@
 .t-power {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--sb-radius-lg);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
@@ -54,17 +54,17 @@
 .t-power-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
   min-width: 0;
 }
 
 .t-power-text b {
-  font-size: 14px;
+  font-size: var(--fs-13);
   line-height: 1.2;
 }
 
 .t-power-text small {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   line-height: 1.35;
 }
@@ -76,15 +76,15 @@
 .t-inline-switch {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-2);
   cursor: pointer;
   user-select: none;
 }
 
 .t-inline-switch {
-  gap: 7px;
-  margin-top: 8px;
-  font-size: 12px;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--sb-text-secondary);
 }
@@ -104,7 +104,7 @@
   flex: none;
   width: 42px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--sb-radius-pill);
   background: var(--sb-disabled);
   transition: background-color 0.16s ease;
 }
@@ -154,14 +154,14 @@
 .t-paths {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .t-path {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
   border-radius: var(--sb-radius);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface-2);
@@ -170,12 +170,12 @@
 .t-path-key {
   flex: 0 0 auto;
   min-width: 62px;
-  padding-top: 1px;
+  padding-top: var(--sp-hair);
   text-align: center;
 }
 
 .t-path-key-icon {
-  font-size: 18px;
+  font-size: var(--fs-18);
   line-height: 1.4;
 }
 
@@ -184,15 +184,15 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
 }
 
 .t-path-body b {
-  font-size: 13.5px;
+  font-size: var(--fs-13);
 }
 
 .t-path-body > span {
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   line-height: 1.6;
 }
@@ -208,9 +208,9 @@
 .t-preview {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin: 14px 0 6px;
-  padding: 14px;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0 var(--sp-2);
+  padding: var(--sp-3);
   border-radius: var(--sb-radius);
   background: var(--sb-surface-2);
   border: 1px solid var(--sb-border);
@@ -220,13 +220,13 @@
 .t-preview-out {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
 .t-preview-in > span,
 .t-preview-label {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   letter-spacing: 0.04em;
 }
@@ -237,12 +237,12 @@
 
 .t-preview-out code {
   display: block;
-  padding: 9px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--sb-radius);
   background: var(--sb-surface);
   border: 1px solid var(--sb-border-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   color: var(--sb-brand);
   word-break: break-all; /* 60 字符上限，窄屏必溢出，不换行会撑破卡片 */
   min-height: 38px;
@@ -259,8 +259,8 @@
 .t-adv-summary {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -279,18 +279,18 @@
 }
 
 .t-adv-title {
-  font-size: 15px;
+  font-size: var(--fs-15);
   font-weight: 700;
 }
 
 /* summary 上直接回显当前配置 —— 折叠状态下也能读到"现在配的是什么" */
 .t-adv-current {
   margin-left: auto;
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--sb-radius-pill);
   background: var(--sb-brand-soft);
   color: var(--sb-brand);
   max-width: 45%;
@@ -310,17 +310,17 @@
 }
 
 .t-adv-body {
-  padding: 4px 20px 20px;
+  padding: var(--sp-1) var(--sp-5) var(--sp-5);
   border-top: 1px solid var(--sb-border);
 }
 
 .t-sub + .t-sub {
-  margin-top: 18px;
+  margin-top: var(--sp-4);
 }
 
 .t-sub h3 {
-  margin: 18px 0 8px;
-  font-size: 13px;
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-13);
   color: var(--sb-text-secondary);
   letter-spacing: 0.04em;
   font-weight: 700;
@@ -329,7 +329,7 @@
 .t-sub .t-field {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .t-sub .t-field > span {
@@ -345,14 +345,14 @@
 .t-engines {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .t-engine {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3);
   border-radius: var(--sb-radius);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
@@ -371,7 +371,7 @@
 }
 
 .t-engine input {
-  margin: 2px 0 0;
+  margin: var(--sp-0) 0 0;
   flex: none;
   accent-color: var(--sb-brand);
 }
@@ -379,30 +379,30 @@
 .t-engine-body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
 .t-engine-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .t-engine-desc {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   line-height: 1.55;
 }
 
 .t-tag {
-  font-size: 10.5px;
+  font-size: var(--fs-11);
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: var(--sp-hair) var(--sp-2);
+  border-radius: var(--sb-radius-pill);
   background: var(--sb-brand-soft);
   color: var(--sb-brand);
 }
@@ -420,24 +420,24 @@
 /* ────────────────────────── 合规告知 ────────────────────────── */
 
 .t-privacy {
-  margin-top: 18px;
+  margin-top: var(--sp-4);
   line-height: 1.65;
 }
 
 /* ────────────────────────── ⑤ 统计（压小，别抢主开关的注意力） ────────────────────────── */
 
 .t-stats-card .block-head h2 {
-  font-size: 14px;
+  font-size: var(--fs-13);
 }
 
 .t-stats {
   display: flex;
-  gap: 30px;
+  gap: var(--sp-7);
   flex-wrap: wrap;
 }
 
 .t-stats .stat b {
-  font-size: 22px;
+  font-size: var(--fs-18);
   font-variant-numeric: tabular-nums;
 }
 
@@ -451,7 +451,7 @@
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  gap: 18px;
+  gap: var(--sp-4);
   min-height: 0;
 }
 
@@ -459,8 +459,8 @@
   margin-top: auto;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 20px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
   border-radius: var(--sb-radius-lg);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
@@ -468,14 +468,14 @@
 }
 
 .t-savebar-hint {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .t-feedback {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--sb-success);
   flex: 0 0 auto;

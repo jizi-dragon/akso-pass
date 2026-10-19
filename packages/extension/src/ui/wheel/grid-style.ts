@@ -28,27 +28,27 @@ export const ACCT_GRID_CSS = `/* ⚠️ 本文件由 scripts/build.mjs 从 ui/wh
 
 /* ---- 入场（调用方给根元素加 .in）---- */
 .ag-wrap {
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: var(--sp-2, 8px);
   opacity: 0; transform: translateY(10px) scale(0.985);
   transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.22, 1.2, 0.36, 1);
 }
 .acct-grid.in .ag-wrap { opacity: 1; transform: none; }
 
 /* ---- 标题栏 ---- */
-.ag-head { display: flex; align-items: center; gap: 10px; padding: 0 2px; }
+.ag-head { display: flex; align-items: center; gap: var(--sp-2, 8px); padding: 0 var(--sp-0, 2px); }
 .ag-nav {
-  flex: none; width: 30px; height: 30px; border-radius: 9px;
+  flex: none; width: 30px; height: 30px; border-radius: var(--sb-radius-sm, 8px);
   border: 1px solid #e4eaf6; background: #fff; color: #4a5a7d;
-  font-size: 17px; line-height: 1; cursor: pointer;
+  font-size: var(--fs-18, 18px); line-height: 1; cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 .ag-nav:hover { border-color: var(--acc, #1e6fff); color: var(--acc, #1e6fff); background: #f5f9ff; }
-.ag-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.ag-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--sp-2, 8px); }
 .ag-box {
-  font-size: 15px; font-weight: 700; color: #1b2a4a; letter-spacing: 0.02em;
+  font-size: var(--fs-15, 15px); font-weight: 700; color: #1b2a4a; letter-spacing: 0.02em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ag-meta { flex: none; font-size: 11.5px; color: #66759b; font-variant-numeric: tabular-nums; }
+.ag-meta { flex: none; font-size: var(--fs-12, 12px); color: #66759b; font-variant-numeric: tabular-nums; }
 
 /* ---- 定尺网格：5 列 × 4 行 = 20 格 ----
    列宽随容器均分、**行高固定** ⇒ 名字长短不影响格高。
@@ -57,17 +57,17 @@ export const ACCT_GRID_CSS = `/* ⚠️ 本文件由 scripts/build.mjs 从 ui/wh
   display: grid;
   grid-template-columns: repeat(var(--ag-cols, 5), minmax(0, 1fr));
   grid-auto-rows: 74px;
-  gap: 8px;
+  gap: var(--sp-2, 8px);
   max-height: 66vh;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 2px;
+  padding: var(--sp-0, 2px);
 }
 
 .ag-cell {
   position: relative; display: flex; flex-direction: column; justify-content: center;
-  align-items: flex-start; gap: 5px; padding: 9px 9px 9px 12px;
-  border: 1px solid #e8eef8; border-radius: 11px; background: #fff;
+  align-items: flex-start; gap: var(--sp-1, 4px); padding: var(--sp-2, 8px) var(--sp-2, 8px) var(--sp-2, 8px) var(--sp-3, 12px);
+  border: 1px solid #e8eef8; border-radius: var(--sb-radius, 12px); background: #fff;
   text-align: left; cursor: pointer; font: inherit; overflow: hidden;
   transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -89,24 +89,24 @@ export const ACCT_GRID_CSS = `/* ⚠️ 本文件由 scripts/build.mjs 从 ui/wh
 .ag-cell-disabled:hover { border-color: #e8eef8; transform: none; box-shadow: none; }
 
 /* ---- 占位格：项数不足 20 时补齐，让几何恒定 ---- */
-.ag-slot { border: 1px dashed #e6ecf6; border-radius: 11px; background: #fbfdff; }
+.ag-slot { border: 1px dashed #e6ecf6; border-radius: var(--sb-radius, 12px); background: #fbfdff; }
 
 .ag-name {
-  max-width: 100%; font-size: 13px; font-weight: 650; color: #1b2a4a; letter-spacing: 0.01em;
+  max-width: 100%; font-size: var(--fs-13, 13px); font-weight: 650; color: #1b2a4a; letter-spacing: 0.01em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.ag-status { font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; }
+.ag-status { font-size: var(--fs-11, 11px); letter-spacing: 0.02em; white-space: nowrap; }
 .ag-status.on { color: #16a34a; }
-.ag-status.on::before { content: '●'; margin-right: 3px; font-size: 8px; vertical-align: 1px; }
+.ag-status.on::before { content: '●'; margin-right: var(--sp-1, 4px); font-size: var(--fs-11, 11px); vertical-align: 1px; }
 .ag-status.wait { color: #b26a00; }
 .ag-status.idle { color: #94a3b8; }
 .ag-status.off { color: #dc2626; }
 
 .ag-key {
-  position: absolute; right: 7px; bottom: 7px; min-width: 15px; padding: 0 4px;
-  border-radius: 5px; border: 1px solid #e4eaf6; background: #fafcff; color: #8494b4;
-  font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
+  position: absolute; right: 7px; bottom: 7px; min-width: 15px; padding: 0 var(--sp-1, 4px);
+  border-radius: var(--sb-radius-sm, 8px); border: 1px solid #e4eaf6; background: #fafcff; color: #8494b4;
+  font-size: var(--fs-11, 11px); font-weight: 700; line-height: 15px; text-align: center;
   font-variant-numeric: tabular-nums; pointer-events: none;
 }
 .ag-cell:hover .ag-key { border-color: var(--acct, #1e6fff); color: var(--acct, #1e6fff); }
@@ -114,25 +114,25 @@ export const ACCT_GRID_CSS = `/* ⚠️ 本文件由 scripts/build.mjs 从 ui/wh
 .ag-cell-current .ag-key { right: 8px; bottom: 8px; }
 
 /* ---- 空态 ---- */
-.ag-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 44px 16px 34px; }
-.ag-empty-t { font-size: 14px; font-weight: 600; color: #4a5a7d; }
-.ag-empty-s { font-size: 12px; color: #8494b4; }
+.ag-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2, 8px); padding: var(--sp-9, 48px) var(--sp-4, 16px) var(--sp-8, 40px); }
+.ag-empty-t { font-size: var(--fs-13, 13px); font-weight: 600; color: #4a5a7d; }
+.ag-empty-s { font-size: var(--fs-12, 12px); color: #8494b4; }
 .ag-empty-btn {
-  padding: 9px 20px; border: 0; border-radius: 10px; background: var(--acc, #1e6fff);
-  color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: var(--sp-2, 8px) var(--sp-5, 20px); border: 0; border-radius: var(--sb-radius, 12px); background: var(--acc, #1e6fff);
+  color: #fff; font: inherit; font-size: var(--fs-13, 13px); font-weight: 600; cursor: pointer;
 }
 .ag-empty-btn:hover { filter: brightness(0.94); }
 
 /* ---- 页脚：页码点 + 提示 ---- */
-.ag-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 16px; padding: 0 2px; }
-.ag-dots { display: flex; align-items: center; gap: 5px; }
+.ag-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2, 8px); min-height: 16px; padding: 0 var(--sp-0, 2px); }
+.ag-dots { display: flex; align-items: center; gap: var(--sp-1, 4px); }
 .ag-dot {
   width: 7px; height: 7px; padding: 0; border: 0; border-radius: 50%;
   background: #cfd9ea; cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 }
 .ag-dot.on { background: var(--acc, #1e6fff); transform: scale(1.35); }
-.ag-tip { margin-left: auto; font-size: 11px; color: #8494b4; letter-spacing: 0.02em; }
+.ag-tip { margin-left: auto; font-size: var(--fs-11, 11px); color: #8494b4; letter-spacing: 0.02em; }
 `;
 
 /**
@@ -145,7 +145,7 @@ export const OVERLAY_CHROME_CSS = `
         font-family: system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
     :host {
       position:fixed; inset:0; z-index:2147483646;
-      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--sp-4, 16px);
       background:rgba(241,245,252,.66);
       backdrop-filter:blur(10px) saturate(1.15);
       opacity:0; transition:opacity .18s ease;
@@ -161,10 +161,10 @@ export const OVERLAY_CHROME_CSS = `
     .wheel-root:not(.in){opacity:.35;transform:scale(.985)}
 
     .hint{
-      display:flex; align-items:center; gap:9px;
-      font-size:11.5px; color:#5b6b8f; letter-spacing:.05em;
+      display:flex; align-items:center; gap:var(--sp-2, 8px);
+      font-size: var(--fs-12, 12px); color:#5b6b8f; letter-spacing:.05em;
       background:rgba(255,255,255,.82); border:1px solid rgba(228,234,246,.9);
-      padding:6px 14px; border-radius:999px;
+      padding:var(--sp-2, 8px) var(--sp-3, 12px); border-radius:var(--sb-radius-pill, 999px);
       box-shadow:0 2px 10px rgba(23,42,84,.06);
       opacity:0; transform:translateY(6px);
       transition:opacity .3s ease .25s, transform .3s ease .25s;
@@ -172,13 +172,13 @@ export const OVERLAY_CHROME_CSS = `
     :host(.show) .hint{opacity:1;transform:none}
     .hint i{width:3px;height:3px;border-radius:50%;background:#c3cede}
     .hint b{font-weight:700;color:#1b2a4a}
-    .hint kbd{display:inline-block;min-width:15px;padding:1.5px 6px;border-radius:5px;
+    .hint kbd{display:inline-block;min-width:15px;padding:var(--sp-hair, 1px) var(--sp-2, 8px);border-radius: var(--sb-radius-sm, 8px);
       border:1px solid #d4ddf0;border-bottom-width:2px;background:#fff;color:#5b6b8f;
-      font-family:inherit;font-size:10px;text-align:center}
+      font-family:inherit;font-size: var(--fs-11, 11px);text-align:center}
 
     .toast{
       position:fixed; left:50%; bottom:26px; transform:translate(-50%,10px);
-      max-width:70vw; padding:9px 18px; border-radius:10px; font-size:13px; font-weight:600;
+      max-width:70vw; padding:var(--sp-2, 8px) var(--sp-4, 16px); border-radius: var(--sb-radius, 12px); font-size: var(--fs-13, 13px); font-weight:600;
       background:#1b2a4a; color:#fff; box-shadow:0 8px 26px rgba(23,42,84,.28);
       opacity:0; pointer-events:none; transition:opacity .2s ease, transform .2s ease;
     }

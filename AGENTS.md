@@ -15,7 +15,7 @@
 > |---|---|
 > | ★ **规则的正文（判据 + 出处叙事）** | [docs/RULES.md](docs/RULES.md) |
 > | **隔离平面总表（权威口径）** | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) §Architecture |
-> | **踩过的坑（45 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | **踩过的坑（49 条，只增不改，含判据）** | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 功能清单与使用说明（给人看的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
 > | 现状快照与安全边界 | [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) |
 > | 现场排障与诊断埋点怎么读 | [docs/DIAG-GUIDE.md](docs/DIAG-GUIDE.md) |
@@ -130,8 +130,9 @@ npm run build             # esbuild → dist/
 npm run check-deps        # 幽灵依赖门禁（三方裸模块必须已声明）
 
 # 打码通道 + 闭环：**四个**脚本，秒级，都**不需要浏览器**
-node tools/verify/verify-log-redaction.mjs           # 日志通道（**121 条**）
-node tools/verify/verify-falsify-logredaction.mjs    # ↑ 的反证（**23/23**）
+node tools/verify/verify-log-redaction.mjs           # 日志通道（**144 条**，含第 16 节）
+node tools/verify/verify-falsify-logredaction.mjs    # ↑ 的反证（**28/28**）
+node tools/verify/verify-falsify-loglevel.mjs        # ↑ 第 16 节的反证（**6/6**，要重新构建）
 node tools/verify/verify-forensics-redaction.mjs     # 取证/诊断通道（25 条）
 node tools/verify/verify-falsify-forensics.mjs       # ↑ 的反证（3/3）
 
@@ -161,6 +162,29 @@ node tools/verify/verify-css-vars.mjs                # **34 条**
 #   ★ 三处独立定义必须逐字等价；TS/JS 里品牌色硬编码**只减不增**（冻结基线 15）。
 node tools/verify/verify-brand.mjs                   # **10 条**
 
+# ★★ 字号刻度（v4.2.12，与 akso-cloud 的**同一套 7 档**）
+#   ① 那 7 档的名字与值都等于约定值（跨仓逐字比；akso-cloud 不在同级就 SKIP）
+#   ② `font-size` **不许有裸 px 字面量**（改前是 99 处、18 种取值）
+#   ③ 每一处都必须引用那 7 档之一
+#   ④ ≥13px 的档之间相差 ≥2px（防"近似档并存"这个病）
+#   ⑤ ★★ **注入宿主页 Shadow DOM 的那份样式必须带兜底值** ——
+#      在那里 `:root` 拿不到（`@host { all: initial }` 还会重置），
+#      没有兜底的 `var(--fs-13)` 会让**整条声明被丢弃**、字号静默退回继承值，
+#      而 `verify-css-vars.mjs` **抓不到**（它按**页面**的解析链算，而那条链是通的）。
+node tools/verify/verify-type-scale.mjs              # **14 条**
+node tools/verify/verify-falsify-typescale.mjs       # ↑ 的反证（**9/9**）
+
+# ★★ 间距刻度（v4.2.12，与 akso-cloud 的**同一套 14 档**）
+#   ① 14 档的名字与值都等于约定值（跨仓逐字比）
+#   ② 间距声明的**绝大多数**在刻度上（阈值与 akso-cloud **同为 75%**）——
+#      ★ 是"比例"不是"零裸 px"：`margin-left: auto` / `padding: 0` 是合法的裸值，
+#        而"零裸 px"会逼出"把某个值凑到刻度上只为达标"的假改动。本仓实测 **100%**。
+#   ③ `1px` 只允许以 **`--sp-hair`** 出现 —— 它是**描边**不是留白，
+#      换成 `--sp-0`（2px）会让徽章胖一圈、基线歪一像素（肉眼能看出来）。
+#   ④⑤ Shadow DOM 那份必须带兜底，且兜底值等于令牌值（与字号那两条同一个理由）。
+node tools/verify/verify-spacing.mjs                 # **14 条**
+node tools/verify/verify-falsify-spacing.mjs         # ↑ 的反证（**9/9**）
+
 # 规则入口的体积与一致性（静态、秒级）
 #   ★ AGENTS.md < 48 KB；规则索引与 RULES.md 正文的编号集合**双向相等**且连续。
 node tools/verify/verify-agents-budget.mjs           # **11 条**
@@ -186,6 +210,9 @@ npm run verify:list       # 列出回归脚本（不跑）
 
 | 你改了什么 | 必须额外验证 |
 |---|---|
+| **`src/ui/**/*.css` 里的字号**（或 `tokens.css` 的 `--fs-*`） | `node tools/verify/verify-type-scale.mjs` + 它的反证。★★ **改 `ui/wheel/grid-style.ts` 时那 14 处必须保持"带兜底"的写法**（`var(--fs-N, Npx)`）：它有**两个消费者**，而**三个页内浮层是把它内联进宿主页的 Shadow DOM** —— 那里 `:root` 拿不到、`@host { all: initial }` 还会重置 ⇒ 没有兜底就**整条声明被丢弃**、字号静默退回继承值。★ 而 `verify-css-vars.mjs` **抓不到这个**（它按**页面**的解析链算，而 `wheel.html` 那条链是通的）—— 这正是规则 36 那条"CSS 变量要按页面的依赖链验"的边界 |
+| **`src/ui/**/*.css` 里的间距**（或 `tokens.css` 的 `--sp-*`） | `node tools/verify/verify-spacing.mjs` + 它的反证。★ 三条与本仓别处不同的口径：① 判据是**比例（≥75%）不是"零裸 px"**——`margin-left: auto` / `padding: 0` 是合法裸值，硬套刻度会逼出假改动；② `1px` 必须走 **`--sp-hair`**（它是**描边**不是留白）；③ **`grid-style.ts` 里那 21 处同样必须带兜底**（理由同上一条）。★★ 改完要**同时改 `grid-style.ts`（唯一源）**，产物 `acct-grid.css` 由 `npm run build` 重新生成 —— 只改产物会被下次 build 抹掉（规则 11 的同族） |
+| **`src/ui/**/*.css` 里的圆角**（`--sb-radius-sm` / `--sb-radius` / `--sb-radius-lg` / `--sb-radius-pill`） | `node tools/verify/verify-radius.mjs` + 它的反证。★ 四档是 **8 / 12 / 16 / 999px**，与 `akso-cloud` 的 `--r-s/-m/-l/-full` **同值不同名**（跨仓只比值的次序，见 `verify_two_ends_tokens.py`）。★ 两条刻意的口径：**卡片 16px 不许动**（那是用户看得最熟的那个圆角）；**`50%` 允许裸写**（它是"做成圆"，与尺寸成比例、没有第二个合理值）而 **`999px` 不许裸写**（它是胶囊弧度的设计选择 ⇒ 必须有令牌）。★★ **改档位前先看判据里那份"名字 → 档"的小名单**（`.card`=大 / `.import-panel`=中 / `button`=中 …）：它是 `akso-cloud/tools/verify_two_ends_roles.py` 的**另一端**，而那份跨仓判据只做**测量**（同名选择器逐个比）。★ 我自己在这里犯过错：**看名字猜"角色是卡片"**，把另一端的 5 处元件提到 16px 而本仓是 12px —— 「判断会漂，测量不会」。 |
 | `src/ui/wheel/**` 或 `src/content/wheel-overlay.ts`（**账号选择器**） | `node tools/verify/verify-acct-grid.mjs`（真起 Chromium）。★ 两个表面共用一套类名契约：小窗走 `acct-grid.css`、页内浮层走 Shadow DOM **内联**样式 —— **改样式必须两处都改**，判据会比对类名集合 |
 | `src/background/core/tab-rules.ts`（DNR 规则） | `npm run verify -- --only v310` + **手工确认规则是逐条安装的**（`updateSessionRules` 是原子批量，一批被拒会连坐） |
 | `src/content/shield-main.ts`（平面补丁） | 至少跑 `--only defect` 与 `--only jarhygiene`（这两个覆盖串号与会话卫生） |
@@ -200,10 +227,23 @@ npm run verify:list       # 列出回归脚本（不跑）
 
 ```powershell
 npm run verify:list                 # ★ 先看有几个、都是谁（数量以它为准，别在文档里写死）
-npm run verify                      # 跑全部（几分钟：编排器统一要求 --browser）
-npm run verify -- --only v310       # 只跑名字含 v310 的
+node tools/verify/run-all.mjs --static         # 24 个静态脚本，≈58 s（日常最常用）
+node tools/verify/run-all.mjs --browser-only   # 13 个真起 Chromium，≈62 s
+npm run verify -- --only v310       # 只跑名字含 v310 的（最快）
 npm run verify -- --only jarhygiene
 ```
+
+★★ **提交前的最快完整跑法**（2026-10-18 实测）：
+`akso-cloud/tools/acceptance.py`（≈44 s）**已经跑了本仓 14 个静态脚本**，
+而它跑的那 14 个**全部不需要浏览器** —— 所以配上 `--browser-only` 就是全覆盖、零重复：
+
+| 跑法 | 耗时 | 有重复吗 |
+|---|---|---|
+| `acceptance.py` + `run-all.mjs --browser` | ≈44 + 110 = **154 s** | ★ 有（14 个静态脚本跑两遍） |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | ≈44 + 62 = **106 s** | ✅ 没有 |
+
+★ 这个"不重叠"是**判据**（`acceptance.py` §10），不是约定 —— 谁把其中某个脚本改成要浏览器，
+  那条判据当场红。详见 `tools/verify/README.md` 的同名小节。
 
 ★ **本行曾写"跑全部 12 个"，而实际早已是 27 个**（脚本是 `readdirSync` 自动发现的）。
 ⇒ 数字一律用 `npm run verify:list` 取，不要在文档里抄第二份（规则 12 的同类风险）。
@@ -216,7 +256,11 @@ npm run verify -- --only jarhygiene
 于是"批量验证"这件事会重新退化（规则 13 的同类风险）。
 ★ 但要说准它拦的是什么：**它拦的是"批量"这个动作，不是"每个脚本都要浏览器"**。
 只有 `verify-load.mjs` 与那几个浏览器回归（`v310` / `jarhygiene` / `defect` / `autologin` /
-`dynsnap` / `fillrhythm` / `httpscheme` / `adopt` / `boxmgmt` / `defbox` / `track`）真起 Chromium；
+`dynsnap` / `fillrhythm` / `httpscheme` / `adopt` / `boxmgmt` / `defbox` / `acct-grid`）真起 Chromium；
+★ 而 `run-all.mjs` 现在把这个划分写成了**可核对的名单**（`BROWSER_SCRIPTS`）并**双向自证**：
+凡源码里加载 `playwright-core` 的必须在名单里、名单里的必须真的加载它
+⇒ 新加一个起浏览器的脚本却忘了登记，会**当场报错**（`--static` / `--browser-only` 两个开关依赖它）。
+★ **`--static` 是日常入口**（2026-10-18 实测：24 个静态脚本 **58 秒**），`--browser` 才是全量（**110 秒**）；
 打码、图标、CSS 变量、品牌色、文档、盒子对账、本轮新增的缺陷回归**都是纯静态、秒级**的
 ⇒ 它们**可以直接单独跑**，不必为了改一行等几分钟。
 （原文写"每个脚本都真起一个带扩展的 Chromium（数十秒）并往 `tmp/` 写档案"，
@@ -228,7 +272,7 @@ npm run verify -- --only jarhygiene
   与服务器端统一。
 - **每修一个"看起来正常但其实是坏的"缺陷，就把它的判据写进脚本注释或
   [`docs/PITFALLS.md`](docs/PITFALLS.md)。**
-  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **45 条**）——在此之前这类教训
+  ★ 本仓 **2026-10-09 起有 `docs/PITFALLS.md` 了**（当前 **49 条**）——在此之前这类教训
   只散在 `CHANGELOG.md` 里，而两者的分工不同：
   `CHANGELOG.md` 记"每次发布改了什么"（历史），
   `PITFALLS.md` 记"**哪些错会静默发生、怎么一眼认出来**"（可复用的判据）。

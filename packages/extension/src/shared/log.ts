@@ -57,15 +57,64 @@ export const NS_PREFIX = 'ql';
 
 // ---------------------------------------------------------------- 级别
 
-let currentLevel: LogLevel = 'info';
+/**
+ * 全局最低级别。**存在 `globalThis` 上，而不是模块局部变量里** ——
+ * 理由见 `setLogLevel()` 的注释（这是一个被摇树删掉过一次的真实缺陷）。
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __qlLogLevel: LogLevel | undefined;
+}
 
-/** 设置全局最低级别。`debug` 只在排障时开。 */
+/**
+ * ★★ 2026-10-16：级别**必须挂在 `globalThis` 上**，不能是模块局部变量。
+ *
+ * ## 为什么（这是一个"文档承诺了、而产物里不存在"的真实缺陷）
+ *
+ * 原先 `setLogLevel()` 是 `export function`，而 `src/` 里**一个调用点都没有** ——
+ * 唯一的调用者是**排障时人在控制台手敲**（`docs/PITFALLS.md` 的排障指引与
+ * `service-worker.ts` 的注释都这么写）。
+ *
+ * 而 esbuild 会**摇树删掉"导出了但没人 import"的函数** ⇒ 实测
+ * **`dist/background.js` 里 `setLogLevel` 出现 0 次**：
+ *
+ * | 谁 | 以为 | 实际 |
+ * |---|---|---|
+ * | 排障的人 | 敲 `Site.setLogLevel('debug')` 就能看到 debug 轨迹 | 那个函数**不存在** |
+ * | 读代码的人 | 所有 `log.debug(...)` 是"可开启的轨迹" | 那些行**结构性不可达**（永远是 info） |
+ *
+ * ★ 这正是本仓 AGENTS 规则 30 那条：「**接口摆在那里 ≠ 它被接上了**」，
+ *   以及规则 32：「**工具不可用会伪装成没人用**」——
+ *   "没人开过 debug" 读起来像"不需要"，实际是"打不开"。
+ *
+ * ## 修法：把级别放到 `globalThis` 上
+ *
+ * 访问 `globalThis.__qlLogLevel` 是**有副作用的形式**，摇树不能删；
+ * 而且排障的人可以在 **DevTools 控制台**里直接写：
+ *
+ * ```js
+ * globalThis.__qlLogLevel = 'debug'   // 后台页 / 任意扩展页面的控制台
+ * ```
+ *
+ * 服务号 `Site.setLogLevel` 也保留（见 `service-worker.ts` 的 handler），
+ * 但**即使那条路也没接线，控制台这条路一定通** —— 这是"排障开关"该有的冗余。
+ */
 export function setLogLevel(level: LogLevel): void {
-  currentLevel = level;
+  globalThis.__qlLogLevel = level;
 }
 
 export function getLogLevel(): LogLevel {
-  return currentLevel;
+  return globalThis.__qlLogLevel ?? 'info';
+}
+
+/** 当前级别（读 `globalThis`，不缓存）—— `log()` 每次都问它，所以控制台里的改动**立刻生效**。 */
+function levelNow(): LogLevel {
+  return globalThis.__qlLogLevel ?? 'info';
+}
+
+/** 这条记录该不该输出。★ 用 `levelNow()` 而不是闭包里的常量 ⇒ 控制台改了立刻生效。 */
+export function shouldLog(level: LogLevel): boolean {
+  return LEVEL_ORDER[level] >= LEVEL_ORDER[levelNow()];
 }
 
 // ---------------------------------------------------------------- 环形缓冲
@@ -177,7 +226,9 @@ export function setSink(fn: ((r: LogRecord) => void) | null): void {
 // ---------------------------------------------------------------- 出口
 
 function log(level: LogLevel, ns: string, args: unknown[]): void {
-  if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return;
+  // ★ 走 `shouldLog()`（它每次读 `globalThis`）⇒ 在控制台里改级别**立刻生效**，
+  //   而不是"要重新加载扩展"。见 `setLogLevel()` 的注释。
+  if (!shouldLog(level)) return;
 
   const msg = formatArgs(args);
   const record: LogRecord = { t: Date.now(), level, ns, msg };
@@ -323,7 +374,7 @@ export function getForwardingLogger(name: string): Logger {
     // 先按本环境规则产出（打码 + 级别过滤都在 log() 里）
     log(level, ns, a);
     // 再转发**已打码的文本**
-    if (forwarder && LEVEL_ORDER[level] >= LEVEL_ORDER[currentLevel]) {
+    if (forwarder && shouldLog(level)) {
       try {
         forwarder({ t: Date.now(), level, ns, msg: redact(formatArgs(a)) });
       } catch {

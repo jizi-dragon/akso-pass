@@ -23,8 +23,8 @@ body {
   flex: 0 0 208px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 18px 12px;
+  gap: var(--sp-1);
+  padding: var(--sp-4) var(--sp-3);
   background: var(--sb-surface);
   border-right: 1px solid var(--sb-border);
   position: sticky;
@@ -36,9 +36,9 @@ body {
 .sb-side .sb-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 8px 16px;
-  margin-bottom: 8px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) var(--sp-4);
+  margin-bottom: var(--sp-2);
   border-bottom: 1px solid var(--sb-border);
 }
 
@@ -64,7 +64,7 @@ body {
 }
 
 .sb-side .sb-brand-text h1 {
-  font-size: 15px;
+  font-size: var(--fs-15);
   font-weight: 700;
   margin: 0;
   color: var(--sb-text);
@@ -72,8 +72,8 @@ body {
 }
 
 .sb-side .sb-brand-text p {
-  font-size: 11px;
-  margin: 2px 0 0;
+  font-size: var(--fs-11);
+  margin: var(--sp-0) 0 0;
   color: var(--sb-text-secondary);
 }
 
@@ -81,16 +81,16 @@ body {
 .sb-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 
 .sb-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--sb-radius);
-  font-size: 13.5px;
+  font-size: var(--fs-13);
   font-weight: 600;
   color: var(--sb-text-secondary);
   text-decoration: none;
@@ -119,13 +119,13 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--fs-15);
   line-height: 1;
 }
 
 .sb-nav-item .sb-nav-badge {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-weight: 600;
   color: var(--sb-text-secondary);
   font-variant-numeric: tabular-nums;
@@ -137,14 +137,14 @@ body {
 
 .sb-side-foot {
   margin-top: auto;
-  padding: 10px 8px 0;
+  padding: var(--sp-2) var(--sp-2) 0;
   border-top: 1px solid var(--sb-border);
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--sb-text-secondary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 /* ── 内容区：把原来的 .wrap 变成右侧一栏 ── */
@@ -165,15 +165,15 @@ body {
     position: static;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
     border-right: none;
     border-bottom: 1px solid var(--sb-border);
     overflow-x: auto;
   }
   .sb-side .sb-brand {
-    padding: 0 10px 0 0;
-    margin: 0 6px 0 0;
+    padding: 0 var(--sp-2) 0 0;
+    margin: 0 var(--sp-2) 0 0;
     border-bottom: none;
     border-right: 1px solid var(--sb-border);
   }

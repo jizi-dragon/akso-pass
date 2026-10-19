@@ -11,7 +11,7 @@
  * 跑法：node tools/verify/verify-log-redaction.mjs
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -459,11 +459,56 @@ console.log('\n=== 9. SW 入口：消息分流不许静默落空 ===');
   check('`dispatch` 入口有 `log.debug` trace', /log\.debug\(/.test(d));
 
   // ---------- 契约与实现同步（用**原始**源码：kind 名是字符串字面量） ----------
+  /*
+   * ★★ v4.2.12：这一段**返工了两次，两次都是"锚点自己坏了"**，值得完整记下来。
+   *
+   * ## 第一次：行尾（CRLF）
+   *
+   * 原来的正则结尾写作 `;\n`，而 `messages.ts` 是 **CRLF** ⇒ `;\r\n` 匹配不上
+   * ⇒ `reqUnion === null` ⇒ kind 集合**恒为空** ⇒
+   * 「契约里的每个 kind 都有处理分支」在空集上 `every()` **恒真**（假绿）。
+   * 屏幕上只有三条读起来像"脚本自己坏了"的红。
+   * ⇒ 我先加了 `replace(/\r\n/g, '\n')`，变成"10 个 kind"。
+   *
+   * ## 第二次：**注释里的一句分号**
+   *
+   * 归一化之后只剩 10 个 kind，而实际有 35 个。根因：正则是**非贪婪**的
+   * `([\s\S]*?);\n` —— 它停在**第一个** "分号 + 换行" 处，而那个位置是
+   * 我刚写进 `par.deleteSite` 的 JSDoc 里的一句普通文字（`…先建再写名）。`）。
+   * ⇒ 联合被从注释中间截断。
+   *
+   * ★ 两次的**同一个病根**：**用"文本形态"去圈定一段类型定义**。
+   *   而 `messages.ts` 这个文件里，注释本来就可能包含任何字符
+   *   （它甚至大量引用 `kind: 'x'` 这种字面量来讲解协议）。
+   *
+   * ⇒ 定稿：**不再用正则圈范围，改用 TypeScript 自己的解析器**
+   *   （`typescript` 已是本仓 devDependency，与 `tsc` 用的是同一个版本）。
+   *   它按**语法**取联合成员，注释、行尾、缩进、成员顺序一概不影响。
+   *   ★ 这也让下面那条"契约 kind 集合非空"的自证变得**真的有意义**：
+   *     以前它在"解析宽度漂了但恰好非空"时会照样绿。
+   */
+  const ts = await import('typescript');
   const msgsRaw = readFileSync(join(SRC, 'shared', 'messages.ts'), 'utf8');
-  const reqUnion = /export type RuntimeRequest =([\s\S]*?);\n/.exec(msgsRaw);
+  const sf = ts.createSourceFile('messages.ts', msgsRaw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let reqUnionType = null;
+  sf.forEachChild((n) => {
+    if (ts.isTypeAliasDeclaration(n) && n.name.text === 'RuntimeRequest') {
+      reqUnionType = n.type;
+    }
+  });
+  const reqUnion = reqUnionType ? { 1: msgsRaw.slice(reqUnionType.pos, reqUnionType.end) } : null;
   check('判据前提：取到了 `RuntimeRequest` 联合', reqUnion !== null);
   const reqKinds = new Set(
-    (reqUnion ? reqUnion[1] : '').match(/kind:\s*'[^']+'/g)?.map((s) => /'([^']+)'/.exec(s)[1]) ?? [],
+    (reqUnionType && ts.isUnionTypeNode(reqUnionType) ? reqUnionType.types : [])
+      .map((t) => {
+        // 成员形如 `{ kind: 'par.list' }`；取那个 kind 属性的**字面量文本**
+        const m = ts.isTypeLiteralNode(t)
+          ? t.members.find((x) => ts.isPropertySignature(x) && x.name?.getText(sf) === 'kind')
+          : undefined;
+        const lit = m?.type;
+        return lit && ts.isLiteralTypeNode(lit) && ts.isStringLiteral(lit.literal) ? lit.literal.text : null;
+      })
+      .filter(Boolean),
   );
   const caseKinds = new Set(
     (swSrc.match(/case\s*'[^']+':/g) ?? []).map((s) => /'([^']+)'/.exec(s)[1]),
@@ -848,11 +893,52 @@ console.log('\n=== 13. 静默失败必须留痕（"失败与成功长得一样"�
       why: '两个 scheme 探测都失败 ⇒ 静默按 https 兜底 ⇒ '
         + '用户只看到"页签打开后一片错误页"，没有别的信号',
     },
+    /* ══════════ ★★ 2026-10-16 新增的 5 条：**审计时发现"该点名却没点名"的站点**
+     *
+     * 判据取法：拿**已在白名单里的那几条**当模板，去找"**逐字同形**却没进名单"的地方。
+     * 下面每一条都能在名单里找到它的"同形兄弟"（写在 `why` 里）——
+     * 这说明**白名单当时是按印象挑的，不是按形态扫的**。
+     * ★ 现在补进来，判据从 5 条变 10 条；再加新站点时请**顺手说出它的同形兄弟是谁**。
+     */
+    {
+      file: 'background/core/parallel-session.ts',
+      fn: 'schemeOfAccount',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '读账号失败 ⇒ 按 https 兜底，而**内网平台是纯 http**（10.100.0.105）'
+        + '⇒ 页签按 https 打开 = 打不开。'
+        + '★ 与 `site-auth.ts::probeScheme`（上面那条）**逐字同形**，当时却没被点名',
+    },
+    {
+      file: 'background/core/parallel-session.ts',
+      fn: 'terminateLoginState',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '最后页签关闭时 jar 清扫失败 ⇒ **该账号的 Cookie 仍留在真实 jar 里**，'
+        + '而"真实 jar 不驻留扩展账号的会话"是规则 4 / 隔离平面 4 的核心不变量。'
+        + '★ 失败与成功在日志里完全一样（`diag` 只写在入口）',
+    },
+    {
+      file: 'ui/translate/translate.ts',
+      fn: 'init',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '读翻译设置失败 ⇒ 回落硬编码默认 ⇒ 用户看到"**我的设置被重置了**"，'
+        + '而不是"读失败了"。★ 与 `favorites.listFavorites`（上面那条）**逐字同形**',
+    },
   ];
 
-  /** 取出 `function <name>(...)` 之后**配对**的花括号体（不靠缩进，靠计数）。 */
+  /** 取出 `function <name>(...)` **或类方法** `<name>(...) {` 之后配对的花括号体。
+   *
+   *  ★★ 2026-10-16：第一版只认 `function name(`，于是我对**类方法**白名单时
+   *    `前提：取到了 … 的 restore()` 直接红了 —— 而 `restore` 是
+   *    `class TabRules { async restore(...) }`，源码里**没有** `function restore`。
+   *    ★ 那一次红是**判据的提取器不够宽**，不是被测代码有问题。
+   *    ⇒ 改成"两种形态都认"，并且**保留自证**（取不到就红）：
+   *      取不到时红是对的，它逼着下一个人把提取器改宽，而不是悄悄跳过这条。
+   */
   const fnBody = (src, name) => {
-    const m = new RegExp(`function\\s+${name}\\s*\\(`).exec(src);
+    const m = new RegExp(`(?:function\\s+|async\\s+|^\\s*)${name}\\s*\\(`, 'm').exec(src);
     if (!m) return null;
     const open = src.indexOf('{', m.index);
     if (open < 0) return null;
@@ -914,6 +1000,115 @@ console.log('\n=== 13. 静默失败必须留痕（"失败与成功长得一样"�
         catchBodies(body).length === 0);
       check(`${c.fn}() 内有 ≥${c.minLevel} 级留痕 —— ${short}…`, hasLog(body, minIdx));
     }
+  }
+
+  /* ══════════ ★★ 追加：**锚点 + 邻域**口径（2026-10-16）
+   *
+   * ## 为什么还要第二种口径（而不是把 `fnBody` 改到能认所有形态）
+   *
+   * `fnBody` 靠"从名字往后数配对花括号"，它对"这个函数到底从哪开始"很敏感 ——
+   * 实测踩了两次：
+   *   · 类方法 `class X { async restore() }` 里**没有** `function restore`（第一版红）；
+   *   · 把匹配放宽成 `(?:function|async|^\s*)name\s*\(` 之后，
+   *     它匹配到了**调用点**（体里没有 catch）⇒ 又红。
+   * ⇒ "猜函数边界"这条路**每加一条白名单就要再猜一次**，而每次猜错都表现为
+   *   "判据红了"，读起来像被测代码坏了。
+   *
+   * ## 换成"锚点 + 邻域"，它只依赖两件可核对的事实
+   *
+   * | 事实 | 怎么核 |
+   * |---|---|
+   * | 那段**失败处理**的代码在哪 | 一个**唯一**的锚点字符串（必须恰好命中 1 次） |
+   * | 它有没有留痕 | 锚点往后 `WINDOW` 字符内出现 ≥`minLevel` 的 `log.*` |
+   *
+   * ★ 它比"取函数体"**更弱**（不做语法分析），但**更能红**：
+   *   把留痕删掉就一定红，而"取不到函数体"不会再来干扰。
+   * ★ 锚点要求**唯一**（命中次数 ≠ 1 就报前提失败）——
+   *   否则"改错地方"会被当成"判据通过"（本仓 `poke()` 那条注释的同一条教训）。
+   */
+  /* ★ `WINDOW` 是**按最坏情况量的**，不是随手写的：
+   *   `tab-rules.ts` 那条的留痕离锚点约 **700 字符** —— 中间隔着一段解释
+   *   "为什么这条必须记、不记会怎样"的注释（本仓要求留痕处说明后果，规则 25）。
+   *   ⇒ 取 **900** 留余量。
+   * ★ 窗口越大判据越弱（可能"蹭"到别处的 log）⇒ 它**不替代** `CASES` 那套
+   *   "catch 块内"的严格口径，只用于"函数边界取不到"的那几条。
+   *   两条口径都在，各自写清了自己覆盖什么。 */
+  const WINDOW = 900;
+  const ANCHORED = [
+    {
+      file: 'background/core/parallel-session.ts',
+      // ★ 锚点用**那个 catch 本身**（它在文件里唯一），留痕在它后面约 500 字符处。
+      //   ★★ 我在这里连错两次，两次都表现为"反证下仍绿"，值得记下来：
+      //      ① 先用 `const jarNow = …` 当锚点 —— 留痕在它后面 **957** 字符，
+      //         超出 900 的窗口 ⇒ 窗口里**根本没有** log ⇒ 断言恒假；
+      //      ② 改用 `delete snap.token;` —— 那个字符串在文件里**出现两次**
+      //         （另一处在 `evictJarCookie`），我匹配到了**后面那个**（44279 vs 21587）
+      //         ⇒ 又一次恒假。
+      //   ⇒ 教训：**锚点必须唯一、且必须贴着被断言的东西**。
+      //     ★ 最终用的是**反向窗口**（`before: true`）：锚点 = 留痕那行自己的**前缀**
+      //       `log.warn('terminateLoginState(%s) jar` —— 它唯一、单行，
+      //       而窗口取它**前面** 900 字符 ⇒ 正好覆盖整条留痕语句。
+      //     ★ 为什么不用别处的代码行当锚点：实测这一段周围的行**大量重复**
+      //       （`const attr = cookieAttribution.get(…)` 与 `accountId, e instanceof Error …`
+      //       各出现 **2 次**），而换行锚点在 CRLF 上**匹配 0 次** ⇒
+      //       唯一 + 单行这两条同时满足的只有"留痕自己的前缀"。
+      //     ★ "窗口里本来就有留痕"那条自证会让任何一次挑错**当场暴露**。
+      anchor: "log.warn('terminateLoginState(%s) jar",
+      before: true,
+      minLevel: 'warn',
+      why: '最后页签关闭时 jar 清扫失败 ⇒ **该账号的 Cookie 仍留在真实 jar 里**，'
+        + '而"真实 jar 不驻留扩展账号的会话"是规则 4 / 隔离平面 4 的核心不变量。'
+        + '★ 失败与成功在日志里完全一样（`diag` 只写在入口）',
+    },
+    {
+      file: 'background/core/tab-rules.ts',
+      anchor: 'existing = await chrome.declarativeNetRequest.getSessionRules();',
+      minLevel: 'error',
+      why: '读 session 规则失败 ⇒ ① 孤儿 DNR 规则**永久留在浏览器里**；'
+        + '② 规则 id 从 BASE 重新分配而旧规则还活着 ⇒ `updateSessionRules`（原子批量）'
+        + '整批被拒 ⇒ **AUTH 与 COOKIE 两个平面一起失效**，而运维只看到下游那句"addRule 失败"',
+    },
+    {
+      file: 'ui/wheel/wheel.ts',
+      anchor: 'const failed = [a, b, c].filter((r) => r.status ===',
+      minLevel: 'warn',
+      why: '三处盒子配置读失败 ⇒ 轮盘按默认值渲染：盒子可能少、**已停用的盒子重新出现** ⇒ '
+        + '用户看到"我停用的盒子又回来了"',
+    },
+  ];
+  for (const c of ANCHORED) {
+    const src = readFileSync(join(SRC, c.file), 'utf8');
+    const hits = src.split(c.anchor).length - 1;
+    check(`前提：锚点在 ${c.file} 里唯一（命中 ${hits} 次）`, hits === 1);
+    if (hits !== 1) continue;
+    const at = src.indexOf(c.anchor);
+    /* ★★ 方向必须显式声明：`before: true` = 留痕在锚点**前面**。
+     *
+     * ## 为什么（一次真实的"空断言"，2026-10-16 实测）
+     *
+     * `terminateLoginState` 那条我一开始把锚点放在 `const jarNow = …` 上，
+     * 而留痕在它**后面 957 字符**（中间的 `for` 循环把距离拉长了）
+     * ⇒ 窗口 `[at, at+900)` **根本不含**任何 log
+     * ⇒ **反证器注入"拆掉留痕"时判据仍然绿**，而报出来的话是
+     *   "缺陷版下仍绿" —— 读起来像**判据**坏了，实际是**窗口取错了方向**。
+     *
+     * ★★ 而 `before` 的**末端必须含锚点自己**（`at + anchor.length`）：锚点是
+     *    "留痕那行的前缀"，不含它的话窗口里连那条留痕都看不到 ——
+     *    实测就是这么又红了一次（"窗口里本来就有留痕"那条自证第二次立功）。
+     * ⇒ 现在：方向写在用例里，并且**多一条自证**（见下面 `前提：窗口里本来就有留痕`）——
+     *   窗口如果一开始就不含留痕，那就成了一条**恒假**的断言，
+     *   必须**当场报出来**，而不是等反证器去发现。
+     */
+    const window = c.before
+      ? src.slice(Math.max(0, at - WINDOW), at + c.anchor.length)
+      : src.slice(at, at + WINDOW);
+    const minIdx = LEVELS.indexOf(c.minLevel);
+    // ★ 自证：这条断言**有机会为真**吗？—— 先看窗口里有没有任何留痕调用。
+    //   没有 ⇒ 它是一条恒假断言（不是"被测代码没留痕"，而是"窗口取错了"）。
+    check(`前提：${c.file} 的窗口里本来就有留痕调用（否则断言恒假）`,
+      /\blog\.(debug|info|warn|error)\s*\(/.test(window) || /\b(diag|forensics)\s*\(/.test(window));
+    check(`${c.file} 的失败处理处有 ≥${c.minLevel} 级留痕 —— ${c.why.slice(0, 30)}…`,
+      hasLog(window, minIdx));
   }
 }
 
@@ -1095,6 +1290,49 @@ console.log('\n=== 15. 前端日志必须能到落盘通道（跨环境转发）
       if (levels.indexOf(mm[1]) >= minIdx) hit = true;
     }
     check(`${c.fn}() 内有 ≥${c.minLevel} 级留痕 —— ${c.why.slice(0, 30)}…`, hit);
+  }
+}
+
+// ---------------------------------------------------------------- 16. 级别开关
+console.log('\n=== 16. 级别开关必须在**产物**里活着（摇树删掉 = 排障入口不存在）===');
+{
+  /* ★★ 为什么这一节必须查 `dist/` 而不是 `src/`（PITFALLS #46）
+   *
+   * `setLogLevel()` 是 `export function`，而 `src/` 里**一个调用点都没有** ——
+   * 唯一的使用者是**排障时人在控制台手敲**。esbuild 看到"导出了但没人 import"
+   * 就把它整段删掉 ⇒ 实测 `dist/background.js` 里 `setLogLevel` 出现 **0 次**。
+   *
+   * 三种伪装因此同时成立：
+   *   · 排障的人敲 `Site.setLogLevel('debug')` ⇒ 那个属性不存在；
+   *   · 读代码的人以为所有 `log.debug` 是"可开启的轨迹" ⇒ 其实**永远不输出**；
+   *   · 读文档的人看到"没人开过 debug" ⇒ 读成"不需要"，实际是"打不开"。
+   *
+   * ★ 而 `typecheck` / `build` / **在源码里 grep 到它** 三样都是绿的 ——
+   *   摇树发生在打包那一层。⇒ 判据**必须落到 `dist/`**。
+   *
+   * ★ 修法是让级别的存储变成"有副作用的形式"（`globalThis.__qlLogLevel`），
+   *   它摇不掉；而控制台里直接写它也**立刻生效**（`log()` 每次现读）。
+   */
+  const DIST_BG = join(ROOT, 'dist', 'background.js');
+  const logSrc = readFileSync(LOG_TS, 'utf8');
+  const distSrc = existsSync(DIST_BG) ? readFileSync(DIST_BG, 'utf8') : '';
+
+  check('前提：dist/background.js 存在（先跑 `npm run build`）', existsSync(DIST_BG));
+  if (existsSync(DIST_BG)) {
+    // ① 源码：级别必须存在 `globalThis` 上（不能是模块局部变量 —— 那才会被摇掉）
+    check('源码把级别存在 `globalThis.__qlLogLevel` 上（摇树删不掉的形式）',
+      /globalThis\.__qlLogLevel/.test(logSrc));
+    // ② 产物：那个属性真的还在
+    const n = (distSrc.match(/__qlLogLevel/g) || []).length;
+    check('★★ 产物 `dist/background.js` 里 `__qlLogLevel` 仍在（≥1 次）', n >= 1, `${n} 次`);
+    // ③ 反方向：级别**不许**再退回模块局部变量
+    //    ★ 退回的形态是 `let currentLevel: LogLevel = …` —— 它一旦没人 import 就会被删，
+    //      而"删掉"在源码里看不出来（源码里它是合法的 TS）。
+    check('源码里没有退回模块局部的 `let currentLevel`',
+      !/^\s*let\s+currentLevel\b/m.test(logSrc));
+    // ④ 过滤必须走"现读"的入口（否则控制台改级别要重载扩展才生效）
+    check('`log()` 经 `shouldLog()` 现读级别（改完立刻生效）',
+      /if\s*\(!shouldLog\(level\)\)/.test(logSrc));
   }
 }
 

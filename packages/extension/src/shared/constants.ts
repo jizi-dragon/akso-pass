@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.11';
+export const EXT_VERSION = '4.2.13';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -49,6 +49,17 @@ export const LOCAL_KEYS = {
   defaultBox: 'ql:defaultBox',
   /** 被禁用的盒子名单（轮盘跳过切换；空默认盒自动禁用） */
   disabledBoxes: 'ql:disabledBoxes',
+  /**
+   * ★ 2026-10-19：盒子详情的**离线副本**（`ParBox[]`，不含任何凭据）。
+   *
+   * 为什么要落盘：盒子台账的"关联站点 / 可改名 / 可删除"全部来自
+   * `GET /api/boxes`，而离线时那份数据拿不到。旧实现据此显示一行
+   * 「（离线：站点信息未同步）」并把按钮全撤掉 —— 用户看到的是一块**坏掉的界面**。
+   * ⇒ 每次成功拉取时把服务端算好的这份详情写进本地，离线时用**上一次同步到的
+   *   状态**渲染（与 `ql:disabledBoxes` 同一套"云端权威 + 本地只读副本"口径）。
+   * ★ 它只缓存**显示状态**，不参与任何判断 —— 账号归属仍以账号数据为准。
+   */
+  boxDetails: 'ql:boxDetails',
   /** 站点协议 hint（v3.10.9：授权时从用户输入 URL 解析；账号创建时优先采用） */
   siteSchemes: 'ql:siteSchemes',
   /** 常用页面书签（v3.16：轮盘 Alt+1 展示；[{name,path}]，空 = 用内置默认 7 条） */

@@ -101,6 +101,9 @@
             <button id="cloud-account" class="cloud-account hidden" type="button"
               aria-haspopup="menu" aria-expanded="false"></button>
             <div id="cloud-account-menu" class="cloud-menu hidden" role="menu">
+              <button id="cloud-menu-open" class="cloud-menu-item" type="button" role="menuitem">
+                <b>打开 Akso Cloud</b><i>在浏览器中打开云端账号库管理页</i>
+              </button>
               <button id="cloud-menu-sync" class="cloud-menu-item" type="button" role="menuitem">
                 <b>同步数据</b><i>从云端重新拉取账号与站点</i>
               </button>
@@ -172,7 +175,7 @@
             <div class="field-pair">
               <label class="field">
                 <span>站点</span>
-                <select id="p-host" title="站点来源：站点管理中已授权的站点"></select>
+                <select id="p-host" title="站点来源：站点管理里的站点"></select>
               </label>
               <label class="field">
                 <span>盒子</span>
@@ -211,20 +214,31 @@
           </div>
       </section>
 
-      <!-- ============ 面板 3：站点管理（真实授权清单，可增可撤） ============ -->
+      <!-- ============ 面板 3：站点管理（★★ v4.2.12：**只有增删改**） ============
+           ★ 2026-10-13（用户要求）：这里**不再显示任何"授权"概念** ——
+             原先是"浏览器实际授权清单，可增可撤"，而那份清单**根本不是云端那个站点列表**
+             （它由 `chrome.permissions` 拼出来，云端删掉的站点只要授权还在就还在）。
+             ★ 文案改了四处，原因见 `parallel.ts` 里 `SiteRow` 的注释：
+               标题、说明、提交按钮（「添加并授权」→「添加站点」）、下拉的 title。 -->
       <section class="card block pane" id="pane-sites" role="tabpanel" aria-label="站点管理" hidden>
         <div class="block-head">
           <h2>站点管理</h2>
         </div>
-        <p class="desc">浏览器实际授权清单。只有授权过的站点才会改写鉴权头与隔离存储；移除后新导航不再生效。</p>
+        <p class="desc">站点存在云端账号库里，这里只做增删改。删除一个站点会把它下面的账号一并删除（会先让你确认）。</p>
         <form id="site-form" class="site-grid">
           <!-- ★ v4.2.1：添加站点时就能填名称；**留空 ⇒ 自动用站点地址填充**
                （用户要求："未填写站点名称时，自动从站点地址中填充"）。
                顺序按"先地址、后名称"——地址是必需的身份，名称是可选别名。 -->
           <input id="s-host" placeholder="站点地址，例如 example.com" autocomplete="off" />
           <input id="s-name" placeholder="站点名称（留空则用地址）" autocomplete="off" maxlength="120" />
-          <button class="btn-ghost" type="submit">添加并授权</button>
+          <button class="btn-ghost" type="submit">添加站点</button>
         </form>
+        <!-- ★★★ 2026-10-19（用户要求 ⑤）：建站点时由用户选择要不要同步建同名盒。
+             默认勾选 = 原行为；取消勾选 ⇒ 只建站点，不建盒子。 -->
+        <label class="check-row" for="s-create-box">
+          <input type="checkbox" id="s-create-box" checked />
+          <span>同时创建一个同名盒子，并关联到这个站点</span>
+        </label>
         <p class="hint">站点名称只影响显示；账号绑定的是<b>站点地址</b>。留空时自动用地址当名称。</p>
         <ul id="site-list" class="plain site-list"></ul>
       </section>
@@ -242,7 +256,7 @@
           <select id="b-site" title="可选：新建时就把这个盒子关联到一个站点"></select>
           <button class="btn-ghost" type="submit">新建盒子</button>
         </form>
-        <p class="hint">盒子的名字、禁用态与站点关联都以<b>云端</b>为准；离线时显示的是上一次同步到的状态。</p>
+        <p class="hint">盒子的名字、禁用态与站点关联都以<b>云端</b>为准，会自动同步；改动会在下一次刷新时生效。</p>
         <ul id="box-list" class="plain site-list"></ul>
       </section>
 

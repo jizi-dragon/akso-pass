@@ -44,10 +44,10 @@
 .wrap {
   max-width: 1560px;
   margin: 0 auto;
-  padding: 26px clamp(20px, 4vw, 56px) 56px;
+  padding: var(--sp-6) clamp(var(--sp-5), 4vw, var(--sp-10)) var(--sp-10);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--sp-4);
   min-height: 100vh;
 }
 
@@ -60,7 +60,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
 }
 
@@ -68,7 +68,7 @@
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 
@@ -76,11 +76,11 @@
 .tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
   background: var(--sb-surface-2);
   border: 1px solid var(--sb-border);
-  border-radius: 999px;
+  border-radius: var(--sb-radius-pill);
   /* 窄屏横向滚动而不是换行：换行会让"一行标签"变成两行，与"二级导航栏"的心智不符 */
   overflow-x: auto;
   scrollbar-width: none;
@@ -91,12 +91,12 @@
 
 .tab {
   flex: none;
-  padding: 6px 16px;
+  padding: var(--sp-2) var(--sp-4);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--sb-radius-pill);
   background: transparent;
   color: var(--sb-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.14s ease, color 0.14s ease;
@@ -114,7 +114,7 @@
 .tabbed {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--sp-4);
   /* 遮罩相对它定位 ⇒ 定位上下文；`min-height` 保证未登录时锁区不至于只有一个标签高 */
   position: relative;
   min-height: 260px;
@@ -163,7 +163,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--sp-3);
   text-align: center;
 }
 /* `hidden` 要能盖过上面的 `display:flex` —— 本文件里 `.hidden` 定义在别处，
@@ -173,7 +173,7 @@
 }
 .login-mask-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-15);
   font-weight: 700;
   color: var(--sb-text);
 }
@@ -181,7 +181,7 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: var(--sp-3);
 }
 
 .brand-ring {
@@ -207,14 +207,14 @@
 
 .brand-text h1 {
   margin: 0;
-  font-size: 19px;
+  font-size: var(--fs-18);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .brand-text p {
-  margin: 2px 0 0;
-  font-size: 12px;
+  margin: var(--sp-0) 0 0;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   letter-spacing: 0.06em;
 }
@@ -222,24 +222,24 @@
 .stats {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--sp-4);
   background: var(--sb-surface);
   border: 1px solid var(--sb-border);
-  border-radius: 999px;
+  border-radius: var(--sb-radius-pill);
   box-shadow: var(--sb-shadow-sm);
-  padding: 7px 16px;
+  padding: var(--sp-2) var(--sp-4);
 }
 
 .stat {
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  font-size: 12px;
+  gap: var(--sp-1);
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
 }
 
 .stat b {
-  font-size: 16px;
+  font-size: var(--fs-15);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--sb-text);
@@ -260,9 +260,9 @@
 }
 
 .status-chip {
-  font-size: 11.5px;
-  padding: 4px 11px;
-  border-radius: 999px;
+  font-size: var(--fs-12);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--sb-radius-pill);
   border: 1px solid var(--sb-border);
   background: var(--sb-surface);
   color: var(--sb-text-secondary);
@@ -271,42 +271,42 @@
 
 /* ---- 区块通用 ---- */
 .block {
-  padding: 20px;
+  padding: var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: var(--sp-3);
 }
 
 .block-head {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
 }
 
 .block-head.row {
   flex-direction: row;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .block-head h2 {
   margin: 0;
-  font-size: 15.5px;
+  font-size: var(--fs-15);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .desc {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   line-height: 1.6;
   color: var(--sb-text-secondary);
 }
 
 .btn-sm {
-  font-size: 12px;
-  padding: 5px 10px;
+  font-size: var(--fs-12);
+  padding: var(--sp-1) var(--sp-2);
 }
 
 /* ---- ★★ v3.19（2026-10-09）：这里删掉了整个「数据源切换」样式块 ----
@@ -329,10 +329,10 @@
 .notice {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 11px 15px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--sb-radius);
-  font-size: 12.5px;
+  font-size: var(--fs-12);
   line-height: 1.7;
   white-space: pre-line;
   border: 1px solid var(--sb-border);
@@ -362,18 +362,18 @@
 .field-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
 .field span {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--sb-text-secondary);
   letter-spacing: 0.04em;
 }

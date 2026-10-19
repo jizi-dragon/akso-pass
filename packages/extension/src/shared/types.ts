@@ -29,6 +29,26 @@ export interface ParallelAccount {
   color: string;
   /** 所属盒子（收纳分组）；缺省 = 「默认盒子」 */
   box?: string;
+  /**
+   * ★★★ v4.2.12：**所属站点的 id**（服务端主键）。
+   *
+   * 它是「编辑账号 → 改所属站点」那条路径**唯一**能用的键：
+   * `PATCH /api/accounts/{id}` 收的是 `siteId`，而扩展平时只认 `siteHost`
+   * （那是客户端自己从 `baseUrl` 推出来的，**服务端根本没有这个字段**）。
+   * ⇒ 编辑弹窗的站点下拉要靠它预选中。
+   *
+   * ★ 别把两者当成同一件事：`siteId` 来自记录本身，`siteHost` 由它经 `sites` 表
+   *   回落而来（见 `cloud-store.toAccount()` 的那条链）。
+   */
+  siteId?: string;
+  /**
+   * ★★★ v4.2.12：**备注**。
+   *
+   * 云端控制台一直能读能写（编辑弹窗里那一格），而扩展此前**既不读也不传**
+   * ⇒ 在网页上写的备注在扩展里完全看不到，而扩展创建账号时也不会带上它。
+   * 「两端显示的数据必须一致」这条要求下，它必须补上。
+   */
+  note?: string;
   createdAt: number;
   /**
    * 最后修改时间（毫秒）：合并冲突的裁决依据 —— 新的赢。
@@ -81,6 +101,59 @@ export interface ParBox {
   /** 站点名（给人看）。站点被删之后，服务端会把它清成空串。 */
   siteName: string;
 }
+
+/**
+ * ★ 2026-10-19：**云端站点的只读摘要**（`par.sites` 的载荷，也是编辑弹窗的输入）。
+ *
+ * 此前这个形状在四个地方各写一遍（协议 / cloud-store / parallel-store / UI），
+ * 而这一轮要加 `baseUrl` 与 `note` —— 少改一处就会**静默丢字段**：
+ * 编辑弹窗的地址栏会是空的，保存时再把站点地址改成空串（服务端 400），
+ * 用户看到的是"莫名其妙保存失败"。
+ *
+ * ★ `host` 是从 `baseUrl` 推导出来的**身份键**（账号绑定用它），
+ *   `baseUrl` 是服务端原样存的地址（可能带路径 / 端口 / 协议）。
+ *   两者不要混用：改地址走 `baseUrl`，认站点走 `host` 或 `id`。
+ */
+export interface CloudSiteSummary {
+  id: string;
+  host: string;
+  name: string;
+  /** UI 主标题：用户起过名就用名，否则从地址推导（口径见 cloud-store）。 */
+  displayName: string;
+  baseUrl: string;
+  note: string;
+}
+
+/**
+ * 删除云端站点的结果 —— **四态，不能压成一个布尔**。
+ *
+ * ★★ v4.2.12 加 `blocked`。它是服务端 `DELETE /api/sites/{id}` 在"站点下还有账号"
+ *   时回的 **409**，而那个 409 **带着数据**：`accountCount` 与 `usernames`。
+ *
+ * ## 为什么必须是四态
+ *
+ * 改前是 `{kind:'deleted'|'missing'|'offline'}`，而 409 没有对应的那一支 ——
+ * 于是它会以"普通 Error"冒到 UI，用户看到的是一句
+ * `云端请求失败（HTTP 409）：该站点下还有 3 个账号…`（把服务端的 JSON 摊在脸上），
+ * 而**级联删除这个后果根本没有机会被摊开确认**。
+ *
+ * 现在四件事各自有名字，因为它们对用户的含义完全不同：
+ *   · `deleted`  ⇒ 删掉了（`accountsDeleted` 是服务端报的级联账号数，**必须如实转达**）
+ *   · `missing`  ⇒ 云端本来就没有（"本机删一个从没同步过的站点"是正常路径，不是失败）
+ *   · `offline`  ⇒ 连不上云端（**本机什么都没动**）
+ *   · `blocked`  ⇒ **站点还在，什么都没删**：服务端要求先看到名单再显式确认
+ *
+ * ★★ 这里曾经有一个**静默缺陷**（v4.2.12 修）：`deleted` 那一支的读取方
+ *   用的是 `accountsDeleted`，而服务端 `sites.py` 返回的字段名是
+ *   **`deletedAccounts`** ⇒ 级联删掉 12 个账号时，界面上写的是"0 个"。
+ *   两边都不报错，只是数字一直是 0。
+ */
+export type CloudDeleteSiteResult =
+  | { kind: 'deleted'; accountsDeleted: number }
+  | { kind: 'missing' }
+  | { kind: 'offline'; reason: string }
+  /** 服务端 409：站点下还有账号。`usernames` 用于把"要删哪些"摊开给人看 */
+  | { kind: 'blocked'; accountCount: number; usernames: string[] };
 
 /** ISOLATED 桥 → background 的上行载荷 */
 export type BridgeUpPayload =

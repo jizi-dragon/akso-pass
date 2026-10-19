@@ -109,6 +109,72 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, extra = '') => { results.push(ok); console.log(`${name}: ${ok ? '✔' : '✖'}${extra ? ' ' + extra : ''}`); };
 
+/* ============================================================ 等待：**轮询条件**，不是"睡固定秒数"
+ *
+ * ★★ 2026-10-16 优化（本轮实测出来的最大一笔）：本脚本原先有三处
+ *    `await sleep(16000)` / `sleep(20000)` / `sleep(16000)` —— **合计 52 秒**，
+ *    而整个脚本原本要 67 秒（占 akso-pass 全套 151 秒的 **44%**）。
+ *
+ * ## 为什么"睡固定秒数"是**双重**的坏
+ *
+ *  ① **慢**：条件通常 2–4 秒就满足了，而它一定等满 16/20 秒。
+ *  ② ★★ **不可靠**：它是一个**猜出来的上限**。机器快时白等，
+ *     机器慢（或 CI 上负载高）时**等不够** ⇒ 判据变成"看运气"，
+ *     而失败信息是 `URL=''` —— 读起来像"功能坏了"，实际是"没等够"。
+ *
+ * ⇒ 改成**轮询到条件成立**：好路径下立刻返回（快一个数量级），
+ *   坏路径下等满上限再报错（信息不变）。**这是一次纯粹的改进，没有取舍。**
+ *
+ * ★ 为什么用 `chrome.runtime.sendMessage` 的 `par.list` 而不是 `DOM` 查询：
+ *   这里要等的是"**后台**记账完成"（`hasToken` / `scheme`），
+ *   而它不是页面上某个元素的状态 —— 查 DOM 会得到"看起来好了、其实还没落库"的假通过。
+ */
+async function pollUntil(fn, { timeout = 20000, step = 250, label = '条件' } = {}) {
+  const t0 = Date.now();
+  let last;
+  for (;;) {
+    try { last = await fn(); } catch (e) { last = { __err: String(e) }; }
+    if (last) return last;
+    if (Date.now() - t0 >= timeout) return null;
+    await sleep(step);
+  }
+}
+
+/** 等"某个 host 的账号记录满足 cond"。返回记录或 null（超时）。 */
+const waitAccount = (page, host, cond = (r) => r?.hasToken === true, timeout = 20000) =>
+  pollUntil(async () => {
+    const list = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.list' }));
+    const rec = (list?.result?.data ?? []).find?.((a) => a.siteHost === host);
+    return cond(rec) ? rec : null;
+  }, { timeout });
+
+/** 等"站点页签的 URL 变成 want 前缀"。返回 url 或 null（超时）。 */
+const waitUrl = (ctx, prefix, timeout = 20000) =>
+  pollUntil(async () => {
+    const u = siteTabOf(ctx)?.url() ?? '';
+    return u.startsWith(prefix) ? u : null;
+  }, { timeout });
+
+/* ★★ 环境前置：**云端未登录**时 `par.open` 必然失败，而它**与我们验的 scheme 逻辑无关**。
+ *
+ * ## 为什么必须显式处理（而不是"让它自己超时"）
+ *
+ * 本脚本要真起 Chromium + 扩展，而 `par.open` 需要云端的账号库快照。
+ * 在没有云端登录的机器上（CI、别人的机器），原来的写法是：
+ *   每条断言都**等满 16–20 秒**再报 `URL=''` ⇒ 一个脚本白跑 **67 秒**，
+ *   而失败信息**指向不了根因**（读起来像"scheme 逻辑坏了"）。
+ *
+ * ⇒ 认出这个前置条件之后**立刻停止**，并把"缺什么"写在结论里。
+ *   ★ 这不是"把红变绿"：脚本仍然 **exit 1**（它确实没验成），
+ *     只是把"为什么没验成"说清楚，并且不再白等 50 多秒。
+ */
+const NEEDS_CLOUD = '云端未授权';
+function skipRest(reason) {
+  console.log(`\n⚠️ 环境前置不满足，**跳过后续需要云端快照的用例**：${reason}`);
+  console.log('   这不是判据失败，而是"这台机器上跑不了这一组"——');
+  console.log('   要真跑它：先在管理页点「重新登录」登录云端账号库，再重跑本脚本。');
+}
+
 async function launch(tag) {
   const profile = path.join(ROOT, 'tmp', `ui-scheme-${tag}`);
   try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* */ }
@@ -133,13 +199,27 @@ const siteTabOf = (ctx) => ctx.pages().find((p) => /10\.100|127\.0\.0\.1|qllocal
   const cr = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.create', siteHost: '127.0.0.1', tabName: 'A-账号', username: 'T01', password: '88888888', open: false, scheme: 'http' }));
   const id = cr?.result?.data?.id;
   const op = await page.evaluate((i) => chrome.runtime.sendMessage({ kind: 'par.open', id: i }), id);
-  check('A2a open 调用成功', op?.result?.ok === true);
-  await sleep(16000);
+  /* ★★ `par.open` 失败时**当场报出来**，不要再去等那个 20 秒的上限 ——
+   *   判据的价值在于"**这条信息指向根因**"。原来它只报 `URL=''`，
+   *   而真正的原因是 open 的 `error` 字段（读起来完全不一样）。 */
+  const aErr = String(op?.result?.error ?? '');
+  if (op?.result?.ok !== true) {
+    check('A2a open 调用成功', false, `error=${aErr || JSON.stringify(op)?.slice(0, 200)}`);
+    if (aErr.includes(NEEDS_CLOUD)) {
+      skipRest(aErr);
+      await ctx.close();
+      httpServer.close(); httpsServer.close();
+      console.log(`\n=== ${results.filter(Boolean).length}/${results.length} 通过（因环境前置提前结束）===`);
+      process.exit(1);
+    }
+  } else {
+    check('A2a open 调用成功', true);
+  }
+  // ★ 等"自动登录真的记账了"，而不是睡 16 秒
+  const rec = await waitAccount(page, '127.0.0.1');
   const tab = siteTabOf(ctx);
   const url = tab?.url() ?? '';
   check('A2b 打开直达 http（无重试）', url.startsWith('http://127.0.0.1/'), `URL=${url.slice(0, 60)}`);
-  const list = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.list' }));
-  const rec = (list?.result?.data ?? []).find?.((a) => a.siteHost === '127.0.0.1');
   check('A2c 自动登录成功（hasToken）', rec?.hasToken === true, `hasToken=${rec?.hasToken}`);
   await ctx.close();
 }
@@ -149,12 +229,10 @@ const siteTabOf = (ctx) => ctx.pages().find((p) => /10\.100|127\.0\.0\.1|qllocal
   const cr = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.create', siteHost: '127.0.0.1', tabName: 'B-账号', username: 'T01', password: '88888888', open: false }));
   const id = cr?.result?.data?.id;
   await page.evaluate((i) => chrome.runtime.sendMessage({ kind: 'par.open', id: i }), id);
-  await sleep(20000);
-  const tab = siteTabOf(ctx);
-  const url = tab?.url() ?? '';
+  // ★ 这一段等的是"自学习翻转"——它比 A 多一次失败导航，所以上限给宽一点
+  const rec = await waitAccount(page, '127.0.0.1', (r) => r?.scheme === 'http' && r?.hasToken === true, 25000);
+  const url = (await waitUrl(ctx, 'http://127.0.0.1/')) ?? siteTabOf(ctx)?.url() ?? '';
   check('B1 打开失败后自学习翻转 http 成功', url.startsWith('http://127.0.0.1/'), `URL=${url.slice(0, 60)}`);
-  const list = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.list' }));
-  const rec = (list?.result?.data ?? []).find?.((a) => a.siteHost === '127.0.0.1');
   check('B2 scheme 已写回账号档案', rec?.scheme === 'http', `scheme=${rec?.scheme}`);
   check('B3 自愈后登录成功（hasToken）', rec?.hasToken === true, `hasToken=${rec?.hasToken}`);
   await ctx.close();
@@ -167,12 +245,10 @@ const siteTabOf = (ctx) => ctx.pages().find((p) => /10\.100|127\.0\.0\.1|qllocal
   const cr = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.create', siteHost: 'qllocal.test', tabName: 'C-账号', username: 'T01', password: '88888888', open: false, scheme: 'https' }));
   const id = cr?.result?.data?.id;
   await page.evaluate((i) => chrome.runtime.sendMessage({ kind: 'par.open', id: i }), id);
-  await sleep(16000);
+  const rec = await waitAccount(page, 'qllocal.test');
   const tab = siteTabOf(ctx);
   const url = tab?.url() ?? '';
   check('C2 https 站点打开直达（不误伤）', url.startsWith('https://qllocal.test/'), `URL=${url.slice(0, 60)}`);
-  const list = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'par.list' }));
-  const rec = (list?.result?.data ?? []).find?.((a) => a.siteHost === 'qllocal.test');
   check('C3 https 自动登录成功（hasToken）', rec?.hasToken === true, `hasToken=${rec?.hasToken}`);
   await ctx.close();
 }

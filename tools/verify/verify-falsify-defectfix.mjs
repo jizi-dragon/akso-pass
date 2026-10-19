@@ -141,15 +141,38 @@ const CASES = [
       "throw new Error('云端未授权：请先在数据源处登录云端账号库');"),
   },
   {
-    name: 'E. 把 loadSites 的写盘守卫改成无条件写',
+    /* ★★ v4.2.12：这条反证的**注入目标跟着判据换向**了。
+     *
+     * 旧形态：把 `loadSites()` 里 `blockedHosts` 那次写盘的守卫拿掉 ⇒ 判据变红。
+     * 新形态（用户要求"站点管理只做增删改，无需关注授权"之后）：那段写盘搬进了
+     * `purgeLegacyHostLists()`，而 `loadSites()` 自己**不许**有任何写盘。
+     *
+     * ⇒ 现在注入两处，对应新判据的两条：
+     *   ① 把清理里的守卫拿掉（应当被"清理有守卫"那条抓住）
+     *   ② 在 `loadSites()` 里直接塞一句写盘（应当被"自身零写盘"那条抓住）
+     * ★ 只注入 ① 是不够的 —— 那样"零写盘"那条判据永远没被反证过，
+     *   而它恰恰是这一版新增的、**唯一**能防住"以后有人顺手加回去"的那一条。
+     */
+    name: 'E. 拿掉旧名单清理的守卫 + 在 loadSites 里直接写盘',
     section: '=== E.',
     file: 'packages/extension/src/ui/parallel/parallel.ts',
-    probe: 'storedList',
-    apply: () => poke('packages/extension/src/ui/parallel/parallel.ts',
-      `  if (JSON.stringify(storedList) !== JSON.stringify(blockedHosts)) {
-    await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });
-  }`,
-      `  await chrome.storage.local.set({ [LOCAL_KEYS.blockedHosts]: blockedHosts });`),
+    probe: 'purgeLegacyHostLists',
+    apply: () => {
+      // ★★ 两处都必须成功。**第一版我只写了两次调用、`return` 都没写** ——
+      //   于是 `apply()` 返回 `undefined` ⇒ `!applied` 成立 ⇒ 脚本报
+      //   "锚点没命中"，而真实原因是**它自己没把结果传出来**。
+      //   判据脚本自己报假红，比判据本身写错更坏（它把注意力引到源码上）。
+      const a = poke('packages/extension/src/ui/parallel/parallel.ts',
+        `  if (!stale.length) {
+    return;
+  }
+  await chrome.storage.local.remove(stale);`,
+        '  await chrome.storage.local.remove(stale);');
+      const b = poke('packages/extension/src/ui/parallel/parallel.ts',
+        '  await purgeLegacyHostLists();',
+        "  await chrome.storage.local.set({ 'ql:probe': 1 });\n  await purgeLegacyHostLists();");
+      return a && b;
+    },
   },
   {
     name: 'F. 把 send() 改回裸 resolve（不读 lastError / 不合成失败）',

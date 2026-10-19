@@ -301,41 +301,73 @@ console.log('\n=== D. 界面文案不指向已废除的"数据源"控件（v3.18
 // ══════════════════════════ E 轮询不再无条件写盘
 console.log('\n=== E. 3 秒轮询不再无条件写盘（曾经稳态每 3 秒一次磁盘写）===');
 {
+  /*
+   * ★★ v4.2.12：这一节**换了判据的形状**，而不是被删掉。
+   *
+   * ## 为什么必须换
+   *
+   * 它原来断言的是「`loadSites()` 里那次 `ql:blockedHosts` 写盘被条件守卫包住」。
+   * 用户 2026-10-13 决定「站点管理只做增删改，无需关注浏览器是否授权」⇒
+   * `blockedHosts` 这个本地名单连同它的读取方一起删了 ⇒ **旧断言永远找不到锚点**。
+   *
+   * ★ 这是本仓记过的形态：**功能被取消时，判据必须换向或删除，而不是留着假装在验**
+   *   （`akso-cloud/AGENTS.md` §3 里"侧边栏折叠"那一节的同类；那边是整节换成反向判据）。
+   *   留着一条永远为红的判据，后果不是"多一条红的"，而是**整套门禁开始被绕过**。
+   *
+   * ## 换向之后要守的东西没变
+   *
+   * 仍然是那句：**`loadSites()` 挂在 3 秒轮询上 ⇒ 它里面不许有无条件写盘**。
+   * 现在这段写盘搬到了 `purgeLegacyHostLists()`，所以断言跟着搬过去，
+   * 并且**反向加了一条**：`loadSites()` 自己不许再直接写 `storage.local`。
+   */
   const code = readCode(PAR);
-  const rawFn = functionBody(read(PAR), 'async function loadSites(');
-  if (!rawFn) {
+  const loadBody = functionBody(read(PAR), 'async function loadSites(');
+  if (!loadBody) {
     fail('找不到 `loadSites` 函数体（锚点漂了？）');
   } else {
-    const body = stripComments(rawFn);
-    // E1：写盘必须被条件守卫包着。
-    // ★ 第一版写成 `if\s*\([^)]*\)\s*\{` —— 而守卫的条件里**自己就带括号**
-    //   （`JSON.stringify(a) !== JSON.stringify(b)`）⇒ `[^)]*` 在第一个 `)` 处就断了，
-    //   于是真守卫被判成"没有守卫"。教训：**别用括号配平的正则去匹配含括号的表达式**。
-    //   ⇒ 改成换个角度：找到那次写盘，看它**上一行非空内容**是不是 `if (…) {`。
-    const setCall = [...body.matchAll(/chrome\.storage\.local\.set\(\{\s*\[LOCAL_KEYS\.blockedHosts\]/g)];
-    if (!setCall.length) {
-      fail('`loadSites` 里找不到 `blockedHosts` 的写盘（锚点漂了？）');
-    } else if (setCall.length > 1) {
-      fail(`\`blockedHosts\` 在 \`loadSites\` 里有 ${setCall.length} 处写盘（应恰好 1 处）`);
+    const body = stripComments(loadBody);
+    // E1（反向）：轮询路径自己不许直接写盘 —— 写盘必须收进有守卫的那个函数里
+    const direct = [...body.matchAll(/chrome\.storage\.local\.(set|remove)\(/g)];
+    if (direct.length) {
+      fail(`\`loadSites()\` 里仍有 ${direct.length} 处直接写 \`chrome.storage.local\` —— `
+        + '它由 3s 轮询驱动，稳态下会一直写同一个值。写盘要收进有守卫的函数里');
     } else {
-      // ★ 必须回到**语句所在行的行首**再往上找，且**跳过注释与空行**
-      //   （这批修复在上方写了多行说明注释 ⇒ "上一行非空内容"会是 `// ★★ 2026-10-12 修：…`）。
-      const lineStart = body.lastIndexOf('\n', setCall[0].index) + 1;
+      ok('`loadSites()` 自身零写盘（写盘全部委托给带守卫的函数）');
+    }
+    // E2：它确实调了清理（否则旧的本地名单永远留在盘上）
+    if (!/purgeLegacyHostLists\(/.test(body)) {
+      fail('`loadSites()` 没有调用 `purgeLegacyHostLists()` —— 旧版本的本地名单不会被清理');
+    } else {
+      ok('`loadSites()` 调用了旧名单清理');
+    }
+  }
+
+  const purgeBody = functionBody(read(PAR), 'async function purgeLegacyHostLists(');
+  if (!purgeBody) {
+    fail('找不到 `purgeLegacyHostLists()` 函数体');
+  } else {
+    const body = stripComments(purgeBody);
+    const call = [...body.matchAll(/chrome\.storage\.local\.remove\(/g)];
+    if (call.length !== 1) {
+      fail(`\`purgeLegacyHostLists()\` 里有 ${call.length} 处 \`remove\`（应恰好 1 处）`);
+    } else {
+      // ★ 与旧判据同一条道理：**看上一行非空内容是不是守卫**，
+      //   而不要用括号配平的正则去匹配含括号的条件表达式（那正是旧版返工过的坑）。
+      const lineStart = body.lastIndexOf('\n', call[0].index) + 1;
       const above = body.slice(0, lineStart).split('\n').reverse();
       const before = above.find((l) => l.trim() && !/^\s*(\/\/|\*|\/\*)/.test(l)) ?? '';
-      if (!/^\s*if\s*\(.*\{\s*$/.test(before)) {
-        fail('`blockedHosts` 的写盘没有被条件守卫包住（上一行非空内容是 '
-          + `\`${before.trim().slice(0, 60)}\`）—— 它由 3s 轮询驱动，稳态下会一直写同一个值`);
+      if (!/^\s*(if\s*\(|\}\s*$)/.test(before)) {
+        fail('清理的写盘没有被条件守卫包住（上一行非空内容是 '
+          + `\`${before.trim().slice(0, 60)}\`）—— 它由 3s 轮询驱动，稳态下会一直写`);
       } else {
-        ok('`blockedHosts` 写盘有守卫（仅在名单真的变化时写）');
+        ok('旧名单清理有守卫（仅在有残留时才写盘）');
       }
     }
-    // E2：守卫必须比"内容"，不能只比 size（一减一增时 size 不变）
-    if (/\.size\s*!==|\.length\s*!==/.test(body)) {
-      fail('守卫比较的是**长度/size** —— 名单"一减一增"时长度不变，'
-        + '于是该写的没写（而漏写是静默的）。要比较排序后的内容');
+    // E3：守卫必须比**内容**，不能只比 key 在不在 —— 空数组也算"已经清干净了"
+    if (!/Array\.isArray\(/.test(body) || !/\.length\s*>\s*0/.test(body)) {
+      fail('清理的守卫没有把"空数组"当成已清理 ⇒ 稳态下每次轮询都会写一次盘');
     } else {
-      ok('守卫比较的是内容而不是长度（不会漏掉"一减一增"）');
+      ok('守卫把"空数组"也当作已清理（稳态零写）');
     }
   }
 }
@@ -445,51 +477,96 @@ console.log('\n=== G. 浏览器层授权变化必须被监听 + 重新门控（v
   }
 }
 
-/* ==================== H. 授权残留判定不能被"自己的声明"弄真（v4.2.3）====================
+/* ==================== H. 授权判定不能被"自己的声明"弄真 ====================
  *
- * ## 治的缺陷
+ * ## 治的缺陷（v4.2.3）
  *
- * `revokeHost` 原来这样算"还有没有残留覆盖"：
+ * 旧的 `revokeHost` 这样算"还有没有残留覆盖"：
  *   host 归属相等 **或** origin 里含通配项
  * 而那个通配项**正是 manifest 里 `optional_host_permissions` 的声明本身** ——
  * 它**恒定出现**在 `getAll().origins` 里 ⇒ 判据**恒真**
  * ⇒ **删任何站点都判"未能回收"并弹框**（用户实测报的第二个现象）。
  *
- * ## 这条判据的形状
+ * ## ★★ v4.2.12：这一节**整个换向**了，而不是删掉
  *
- * 它不能是"字符串里有没有某个词"—— 那种断言极易假绿（`docs/PITFALLS.md` #35 记过一次）。
- * 这里断言的是**结构**：判据表达式里不得出现"包含通配"这种恒真形态，
- * 必须是"这个 host 的 origin 是否还在"。
+ * 用户 2026-10-13 决定「站点管理只做增删改，无需关注浏览器是否对其进行授权」，
+ * 于是 `revokeHost`（那个"回收授权 + 判定残留 + 落停用名单"的三合一）被删掉，
+ * 换成一个**不向用户承诺任何事**的 `revokeHostPermissions()`。
+ *
+ * ★ 判据必须跟着功能换向 —— 留着一条永远找不到锚点的判据，后果不是"多一条红的"，
+ *   而是**整套门禁开始被绕过**（`akso-cloud/AGENTS.md` §3 的"侧边栏折叠"整节换向，
+ *   是同一件事的先例）。
+ *
+ * ## 换向之后要守的是**新形态的同一个病**
+ *
+ * 病根没变：**别让一条恒真的判据决定"要不要打扰用户"**。
+ * 现在的形态是 —— 判断"授权够不够用"必须走"**已被更宽的授权覆盖**"这一支
+ * （一个明确的 `contains` 查询），而**不许**回到"扫一遍 origins 里有没有通配"这种
+ * 恒真写法。
  */
-console.log('\n=== H. 授权残留判定不得被扩展自己的通配声明弄真（v4.2.3）===');
+console.log('\n=== H. 授权判定不得被扩展自己的通配声明弄真（v4.2.3 → v4.2.12 换向）===');
 {
   const par = readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'ui', 'parallel', 'parallel.ts'), 'utf8');
   const parCode = stripComments(par);
-  const revoke = functionBody(parCode, 'async function revokeHost(');
-  if (!revoke) {
-    fail('找不到 `revokeHost()` 的函数体（锚点漂了？）');
+
+  const ensure = functionBody(parCode, 'async function ensureHostPermission(');
+  if (!ensure) {
+    fail('找不到 `ensureHostPermission()` 的函数体（锚点漂了？）');
   } else {
-    // ★ 恒真形态：用 `includes(<通配>)` 之类的"包含"判定来算残留
-    if (/\.includes\(\s*['"`]\*:\/\/\*\/\*['"`]\s*\)/.test(revoke)
-      || /\.some\([^)]*includes\(/.test(revoke)) {
-      fail('残留判定里出现了"包含通配"的写法 ⇒ `getAll().origins` 里那条**声明本身**会让它恒真，'
-        + '于是**删任何站点都弹"未能回收"**（用户实测报的就是它）');
+    // H1：**恒真形态** —— 用 `includes(<通配>)` 之类的"包含"判定来决定授权状态
+    if (/\.includes\(\s*['"`][^'"`]*\*\/\*[^'"`]*['"`]\s*\)/.test(ensure)
+      || /\.some\([^)]*includes\(/.test(ensure)) {
+      fail('授权判定里出现了"包含通配"的写法 ⇒ `getAll().origins` 里那条**声明本身**会让它恒真，'
+        + '于是判据永远为真（用户实测报过"删任何站点都弹未能回收"）');
     } else {
-      ok('残留判定不是"包含通配"的恒真形态');
+      ok('授权判定不是"包含通配"的恒真形态');
     }
-    // 必须真的按 host 归属去比
-    if (!/originToHost\(/.test(revoke)) {
-      fail('残留判定没有用 `originToHost()` 按 host 归属比对 ⇒ 无法区分"这个站点的授权"与"全局通配"');
+    // H2：必须真的问一次"是否已被覆盖"，而不是猜
+    if (!/chrome\.permissions\s*\.\s*contains\(/.test(ensure)) {
+      fail('授权判定没有调 `chrome.permissions.contains()` ⇒ 它只能靠猜，'
+        + '而"已被更宽授权覆盖"是 Chrome 的真实语义（v4.2.9 实测：那种情况下'
+        + '具体 origin 不会出现在 `getAll()` 里，请求也不弹窗）');
     } else {
-      ok('残留判定按 host 归属比对');
+      ok('授权判定实查了一次 `permissions.contains()`');
     }
-    // ★ 宽泛授权要**如实告知**（它是另一件事），不能和"回收失败"混成一句
-    if (!/<all_urls>/.test(revoke)) {
-      fail('没有识别 `<all_urls>`（用户手动选中"在所有网站上"会得到它）⇒ '
-        + '用户会看到"回收失败"却不知道真正的原因是那条宽泛授权');
+    // H3：申请授权必须能**在用户手势里同步发起** —— 这是本仓栽过两次的坑
+    if (!/chrome\.permissions\s*\.\s*request\(/.test(ensure)) {
+      fail('`ensureHostPermission()` 没有 `permissions.request()` —— 它就不再是"补齐授权"了');
     } else {
-      ok('识别并单独说明宽泛授权（`<all_urls>`）');
+      ok('`ensureHostPermission()` 会发起授权请求');
     }
+  }
+
+  // H4：**手势路径**必须存在，且必须是同步发起的（不能藏在 await 之后）
+  const wide = functionBody(parCode, 'function requestWideHostPermission(');
+  if (!wide) {
+    fail('找不到 `requestWideHostPermission()` —— 登录那一次手势里就没有地方要通配授权了，'
+      + '结果是每换一个站点都会弹一次窗（用户明确要求不要再看到授权这件事）');
+  } else {
+    const body = wide.slice(wide.indexOf('{') + 1).split('\n').map((l) => l.trim());
+    // ★ 取**第一条非注释、非空的语句**。注意它可能是多行的链式调用
+    //   （`return chrome.permissions\n  .request(...)`），所以先把整段拼起来、
+    //   再去掉注释行 —— 否则会像上一版那样把"签名行"当成第一句，
+    //   或者把 `return chrome.permissions` 当成"没调 request"（那次也是我判据的错）。
+    const joined = wide.split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join(' ');
+    const firstStmt = joined.slice(joined.indexOf('{') + 1).split(';')[0].trim();
+    if (!/^return\s+chrome\.permissions\s*\.\s*request\(/.test(firstStmt)) {
+      fail('`requestWideHostPermission()` 的**第一句可执行代码**不是 `chrome.permissions.request(...)` —— '
+        + `实际是 \`${firstStmt.slice(0, 80)}\`。晚一步用户手势就失效，Chrome 会`
+        + '**不弹窗、不报错、返回 false**（本仓 v4.2.7 / v4.2.9 连着栽过两次）');
+    } else {
+      ok('通配授权在函数第一句就发起（手势未失效）');
+    }
+  }
+
+  // H5：那个手势监听器必须挂成**捕获阶段**（否则会被别的监听器里的 await 抢在前面）
+  if (!/authReloginBtn\.addEventListener\(\s*'click'/.test(parCode)
+    || !/capture:\s*true/.test(parCode)) {
+    fail('登录按钮上没有捕获阶段的授权监听器 ⇒ 手势可能先被设备流那一路的 await 吃掉');
+  } else {
+    ok('登录按钮上挂了捕获阶段的授权监听器');
   }
 }
 

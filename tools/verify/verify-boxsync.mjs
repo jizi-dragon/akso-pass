@@ -132,6 +132,27 @@ console.log('\n=== ④ 默认盒去重与空值兜底 ===');
   else ok('空串被兜掉');
 }
 
+// ══════════════════════════ ⑤ 云端独有的空盒子必须出现（2026-10-19）
+console.log('\n=== ⑤ 云端独有的空盒子：必须进列表，且报 changed ===');
+{
+  /* 用户 2026-10-19：「盒子管理不要显示离线未同步提示，该部分应当自动同步」。
+   * 这一组钉的是同步的**另一半**：云端新建的空盒（含建站点时自动建的）此前
+   * 只存在于 `cloudNames`，而并集没把它算进去 ⇒ 扩展里**永远看不到它**。
+   * ★ 反证：把函数里 `...cloudNames.filter(...)` 那行删掉 ⇒ 本条当场红。 */
+  const out = reconcileBoxes({
+    remembered: [],
+    fromAccounts: [],
+    cloudNames: [DEF, '新建的空盒子'],
+    defaultBox: DEF,
+  });
+  console.log(`     boxes=${JSON.stringify(out.boxes)}  changed=${out.changed}`);
+  if (!out.boxes.includes('新建的空盒子')) {
+    fail('云端独有的空盒子没有进列表 —— 网页上新建的盒子在扩展里看不见');
+  } else ok('云端独有的空盒子进了列表');
+  if (!out.changed) fail('新增盒子没有报 changed ⇒ 调用点不会写回 ql:boxes，下一次刷新又会消失');
+  else ok('新增盒子报了 changed（会被写回本地记住的名单）');
+}
+
 fs.rmSync(OUT, { force: true });
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: ${bad} 处不符`);
 process.exit(bad === 0 ? 0 : 1);
