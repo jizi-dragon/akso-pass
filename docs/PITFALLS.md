@@ -2464,19 +2464,32 @@ SW 还没重载（旧版本）、绑定表缺记录、或页面是 SW 冷启后�
 而不是那条兜底路径本身。
 
 **判据**：
-1. `content/favorites-overlay.ts` 对**同源**书签直接 `window.location.assign(url)`，
-   不经过 background、不依赖 `boundAccountOf`；
+1. `content/favorites-overlay.ts` 对**同源**书签在当前页签内做 **History API + popstate**
+   路由切换，不经过 background、不依赖 `boundAccountOf`；
 2. background 的同源分支条件里**没有** `accountId`（`tabId + sameOrigin` 即导航）；
 3. 集成探针（本地 HTTP 页 + mock `chrome.runtime` 注入 `dist/content/favorites-overlay.js`）：
-   点同源书签后 `page.url()` 变成目标路径，且 **`context.pages().length` 不变**。
+   点同源书签后 `page.url()` 变成目标路径，且 **`context.pages().length` 不变**；
+4. 平台真实登录页探针：点击同源书签后 URL 变为 `/login?returnUrl=…`，而
+   **`load` 事件计数仍为 1**（证明是路由切换、不是整页重载）。
 
-**处置**：**已修**（v4.2.15）。同源走页内 `location.assign`，跨站才交给 background。
+**处置**：**已修**（v4.2.15 解决"新页签"，v4.2.16 解决"整页重载导致数据不刷新"）。
+同源走 `history.pushState` + `PopStateEvent('popstate')`，跨站才交给 background。
 background 的同源分支保留为旧浮层/其他调用方的第二道保险。
+
+★ **第二轮教训（v4.2.16）**：v4.2.15 用 `location.assign` 虽然解决了"新页签"，
+但它是**整页重载**，平台走冷启动路径，用户看到"进入页面但数据没刷新"。
+"同页签"与"平台路由切换"是两件事 —— 前者只保证同一个 tab，
+后者才保证目标页组件按平台自己的方式挂载/取数。
 
 **推广**：★★ **"当前页签内做一个动作"不需要先证明'这个页签是谁的'。**
 同源导航的上下文由**页签本身**保证；把账号识别当前置条件，识别一旦失败就把
 用户推到一条**更差**的路径（新页签 + 共享 jar）。设计兜底时先问：
 **"这个前置条件失败时，兜底路径是不是比主路径更糟？"**
+
+★★ **"不新开页签"不等于"用户要的跳转已经完成"。** 用户说"只是路由变化"时，
+要问清楚：是**同一个 tab 的整页加载**，还是**平台路由的 SPA 切换**？
+对 SPA 来说两者在地址栏上看起来一样，但数据刷新/内存态完全不同 ——
+判据必须包含 **load 次数**，不能只看 URL 和 tab 数量。
 
 ---
 
