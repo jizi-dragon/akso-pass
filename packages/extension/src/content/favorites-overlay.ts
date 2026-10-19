@@ -152,7 +152,7 @@ async function mount(): Promise<void> {
   /**
    * 平台自己的菜单链接里通常带着完整 query（`?bid=…`）。
    * 只返回**带 query** 的同 pathname 链接 —— 没有 query 的直接用书签路径即可，
-   * 剩下的交给 `favorites.resolve` 去平台菜单接口里找完整地址。
+   * 剩下的交给 `resolveFromBundle` / `favorites.resolve` 去平台配置里找完整地址。
    */
   function findMenuHref(path: string): string {
     let want = '';
@@ -170,7 +170,7 @@ async function mount(): Promise<void> {
         if (u.pathname.replace(/\/+$/, '') !== want) {
           continue;
         }
-        if (u.search) {
+        if (u.search && /[?&]bid=/i.test(u.search)) {
           return u.href;
         }
       } catch {
@@ -178,6 +178,74 @@ async function mount(): Promise<void> {
       }
     }
     return '';
+  }
+
+  /**
+   * ★★★ 2026-10-20（用户实测"新标签地址仍然没有 ?bid"）：
+   * 从**平台自己的入口 bundle**里解析菜单地址。
+   *
+   * 平台的静态菜单配置把 `url:["/admin/user-mgmt/users/list?bid=…"]` 直接编译进了
+   * `assets/akso-script-entry-*.js`。这份文件是**同源静态资源**，不需要 token、
+   * 不需要请求签名，也不依赖菜单接口的字段名 —— 比调 `/api/platform/Menu/...`
+   * 更稳（后者在部分部署上会被签名/权限拦掉）。
+   *
+   * 只做一件事：在 bundle 文本里找 `<pathname>?bid=<GUID>`。
+   * 找不到就返回空，交给后续兜底。
+   */
+  let bundleTextPromise: Promise<string> | null = null;
+
+  function platformEntryUrl(): string {
+    const scripts = Array.from(document.scripts)
+      .map((s) => s.src)
+      .filter((s): s is string => Boolean(s));
+    const fromScripts = scripts.find((s) => /\/assets\/[^/]*entry[^/]*\.js/i.test(s))
+      ?? scripts.find((s) => /entry[^/]*\.js/i.test(s));
+    if (fromScripts) {
+      return fromScripts;
+    }
+    try {
+      const fromPerf = performance
+        .getEntriesByType('resource')
+        .map((e) => e.name)
+        .filter((n) => /\/assets\/[^/]*entry[^/]*\.js/i.test(n));
+      return fromPerf[0] ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  async function resolveFromBundle(path: string): Promise<string> {
+    const entry = platformEntryUrl();
+    if (!entry) {
+      return '';
+    }
+    let pathname = '';
+    try {
+      pathname = new URL(path, location.origin).pathname.replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
+    if (!pathname) {
+      return '';
+    }
+    try {
+      bundleTextPromise ||= fetch(entry, { credentials: 'same-origin', cache: 'force-cache' })
+        .then((r) => (r.ok ? r.text() : ''))
+        .catch(() => '');
+      const text = await bundleTextPromise;
+      if (!text) {
+        return '';
+      }
+      const escaped = pathname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(
+        `${escaped}\\?bid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`,
+        'i',
+      );
+      const m = re.exec(text);
+      return m ? `${location.origin}${pathname}?bid=${m[1]}` : '';
+    } catch {
+      return '';
+    }
   }
 
   async function open(item: FavoriteItem): Promise<void> {
@@ -246,9 +314,16 @@ async function mount(): Promise<void> {
     showToast(`正在新标签页打开「${item.name}」…`, 'info');
     let resolved = target;
     try {
-      const r = await ask<{ url: string }>({ kind: 'favorites.resolve', path: item.path });
-      if (r.ok && r.data?.url) {
-        resolved = r.data.url;
+      // ★ 先查平台入口 bundle 里的静态菜单配置（同源、无需 token），
+      //   拿不到再走 background 的菜单接口（动态/权限菜单）。
+      const fromBundle = await resolveFromBundle(item.path);
+      if (fromBundle) {
+        resolved = fromBundle;
+      } else {
+        const r = await ask<{ url: string }>({ kind: 'favorites.resolve', path: item.path });
+        if (r.ok && r.data?.url) {
+          resolved = r.data.url;
+        }
       }
     } catch {
       // 解析失败：用书签原地址

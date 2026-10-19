@@ -5,6 +5,49 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.18（2026-10-20）
+
+**用户实测**：4.2.17 的新标签页地址**仍然没有 `?bid`**。
+
+### 根因：菜单接口那条路在真实账号页签里没返回可用地址
+
+4.2.17 的顺序是「页面 `<a>` 菜单链接 → `/api/platform/Menu/GetUserMenuPermission`
+→ 书签原地址」。真实环境里前两步都没拿到带 `?bid` 的地址（菜单接口可能被请求签名/
+权限/字段差异拦住），于是落到书签原地址 —— 页面还是只有框架。
+
+### 修法：直接从平台入口 bundle 的静态菜单配置里取 `?bid`
+
+平台的静态菜单配置把
+`url: ["/admin/user-mgmt/users/list?bid=3a09ccdd-…"]`
+**编译进了同源的 `assets/akso-script-entry-*.js`**。这份文件：
+
+- 同源静态资源，**不需要 token、不需要请求签名、不依赖菜单接口字段**；
+- 地址里的 `bid` 就是该部署实际使用的业务对象 id；
+- 带 hash 的静态资源可 `force-cache`，取一次即可。
+
+解析顺序改为：
+1. 书签本身带 query ⇒ 直接用；
+2. 当前页面里 pathname 相同、且 query 含 `bid` 的 `<a href>`；
+3. **入口 bundle 文本里匹配 `<pathname>?bid=<GUID>`**；
+4. 平台菜单接口（动态/权限菜单兜底）；
+5. 书签原地址。
+
+同时把第 2 步收紧为**只认 `?bid=`**，避免把 `?display=` / `?cid=` 之类
+不完整的菜单链接当成完整地址。
+
+### 验证
+
+平台真实登录页（同源、无账号）注入构建产物：
+
+```text
+entry: .../assets/akso-script-entry-index-c7bb9300.js
+len:   7096151
+hit:   3a09ccdd-2d7a-dfac-4a59-07a50cb8a2a5
+popup: .../login?returnUrl=%252Fadmin%252Fuser-mgmt%252Fusers%252Flist%253Fbid%253D3a09ccdd-…
+```
+
+新页签最终 URL 的 `returnUrl` 里已经带 `?bid`；登录态下会直接落到带数据的列表页。
+
 ## 4.2.17（2026-10-20）
 
 **用户要求变更**：常用页面跳转要**新开标签页**，不要覆盖原页面。

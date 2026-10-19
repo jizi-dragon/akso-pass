@@ -2469,23 +2469,26 @@ globalThis.__qlLogLevel = 'debug'     // SW / 任意扩展页面的 DevTools 控
 3. **书签只有 pathname**：平台的列表页靠 `?bid=<业务对象 id>` 取数；
    `/admin/user-mgmt/users/list` 能进框架，但不会查数据。
 
-**最终判据**（v4.2.17）：
+**最终判据**（v4.2.18）：
 
 1. `content/favorites-overlay.ts` 用 `window.open(url, '_blank')` 打开新页签，
    **不覆盖来源页**；需要异步解析地址时先同步开 `about:blank`，再 `location.replace`。
 2. 新页签的 `openerTabId` 指向来源页签 ⇒ `parallelSession.adoptFromOpener` 收编为
    同一账号。探针：内容脚本 `window.open` 后 `tabs.onCreated` 的 `openerTabId`
    等于来源 tab id。
-3. 地址解析顺序：当前页里 pathname 相同且带 query 的 `<a href>` →
-   来源页 MAIN world 调 `/api/platform/Menu/GetUserMenuPermission`（用
-   `sessionStorage.__auth_token__`）→ `linkurl` 的 query；若无 query 但同项有 GUID
-   `objectId`，拼 `?bid=<objectId>` → 书签原地址。
+3. 地址解析顺序：当前页里 pathname 相同、且 query 含 `bid` 的 `<a href>` →
+   **同源入口 bundle 文本里的 `<pathname>?bid=<GUID>`** →
+   来源页 MAIN world 调 `/api/platform/Menu/GetUserMenuPermission` → 书签原地址。
+   ★ v4.2.17 只做了菜单接口，真实账号页签里没拿到地址；v4.2.18 把 bundle 静态配置
+   提到接口之前（实测 entry bundle 7,096,151 字节，命中 `3a09ccdd-…`）。
 4. background 的 `favorites.open` 兜底**只开新页签**，函数里没有 `tabs.update`。
 5. 集成探针：`context.pages()` 从 1 变 2、原页面 URL 不变、新页签 URL 为
-   `/target?bid=TEST`；`favorites.resolve` 探针返回 `?bid=<objectId>`。
+   `/target?bid=TEST`；`favorites.resolve` 探针返回 `?bid=<objectId>`；
+   平台真实登录页注入探针的 `returnUrl` 里带 `?bid=`。
 
-**处置**：**已修**（v4.2.17）。浮层 `window.open` 新页签 + opener 继承账号；
-菜单接口补全 `?bid=`；background 只做"弹窗被拦"的新页签兜底。
+**处置**：**已修**（v4.2.18）。浮层 `window.open` 新页签 + opener 继承账号；
+优先从平台入口 bundle 的静态菜单配置取 `?bid=`，菜单接口只做动态兜底；
+background 只做"弹窗被拦"的新页签兜底。
 
 **推广**：
 
@@ -2498,6 +2501,10 @@ globalThis.__qlLogLevel = 'debug'     // SW / 任意扩展页面的 DevTools 控
 - ★★ **SPA 的 pathname 不是完整身份**。`?bid=` / `?cid=` / `?mid=` 这类 query
   才是页面取数的参数；只抄路径会得到"有框架、无数据"的假页面。
   书签要么存完整地址，要么从平台菜单/接口解析出完整地址。
+- ★★ **调平台私有接口前，先看同一事实是否已在同源静态资源里。**
+  入口 bundle 里的菜单配置不需要 token、不需要请求签名，而且就是页面实际使用的值；
+  私有接口可能被签名/权限/字段差异拦住。静态资源也有代价（7MB、hash 变化），
+  所以只把它当**只读配置源**，配合 `force-cache` 和"找不到就回退"。
 
 ---
 
