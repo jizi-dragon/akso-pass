@@ -43,6 +43,8 @@ interface TranslateReply {
 interface CachedSettings {
   translate_enabled: boolean;
   floating_icon_enabled: boolean;
+  /** 点图标时是否回填输入框；false 时只复制 */
+  icon_fill_enabled: boolean;
   naming_convention_mode: boolean;
   target_language: string;
   ts: number;
@@ -219,6 +221,7 @@ async function getSettings(): Promise<CachedSettings> {
   let out: CachedSettings = {
     translate_enabled: true,
     floating_icon_enabled: true,
+    icon_fill_enabled: true,
     naming_convention_mode: false,
     target_language: 'en',
     ts: now,
@@ -227,12 +230,14 @@ async function getSettings(): Promise<CachedSettings> {
     const stored = await chrome.storage.sync.get({
       translate_enabled: true,
       floating_icon_enabled: true,
+      icon_fill_enabled: true,
       naming_convention_mode: false,
       target_language: 'en',
     });
     out = {
       translate_enabled: stored.translate_enabled !== false,
       floating_icon_enabled: stored.floating_icon_enabled !== false,
+      icon_fill_enabled: stored.icon_fill_enabled !== false,
       naming_convention_mode: stored.naming_convention_mode === true,
       target_language: typeof stored.target_language === 'string' ? stored.target_language : 'en',
       ts: now,
@@ -336,13 +341,17 @@ async function requestTranslation(text: string, maxRetries = 3): Promise<Transla
 
 /* ────────────────────────── 两条落地路径 ────────────────────────── */
 
-/** 路径 A：点图标 → 翻译并**回填**输入框 */
+/** 路径 A：点图标 → 按设置**回填**输入框，或**只复制**到剪贴板 */
 async function onIconClick(e: MouseEvent): Promise<void> {
   e.preventDefault();
   e.stopPropagation();
   const el = targetEl;
   if (!el) {
     return;
+  }
+  const settings = await getSettings();
+  if (!settings.translate_enabled) {
+    return; // 总开关刚关掉、图标还没隐藏的瞬间：不产生任何副作用
   }
   const source = readText(el).trim();
   if (!source) {
@@ -358,12 +367,23 @@ async function onIconClick(e: MouseEvent): Promise<void> {
       showToast(`❌ ${firstLine(reply.error ?? '翻译失败')}`, 'error');
       return;
     }
-    const settings = await getSettings();
-    writeText(el, reply.text ?? '');
-    showToast(
-      settings.naming_convention_mode ? '✅ 翻译完成（已转换为命名规范格式）' : '✅ 翻译完成',
-      'success',
-    );
+    if (settings.icon_fill_enabled) {
+      writeText(el, reply.text ?? '');
+      showToast(
+        settings.naming_convention_mode ? '✅ 翻译完成（已转换为命名规范格式）' : '✅ 翻译完成',
+        'success',
+      );
+      return;
+    }
+
+    /* ★ 2026-10-21：用户在翻译面板关掉「点图标时填充」⇒ 点图标与 Alt+T 一样只复制。
+     *   ★ 绝不能在复制分支里再调 writeText：那会覆盖原文，正好是用户关掉它的原因。 */
+    const copied = await writeClipboard(reply.text ?? '');
+    if (copied) {
+      showToast('✅ 已翻译并复制到剪贴板（原输入未改动）', 'success');
+    } else {
+      showToast('⚠️ 翻译完成但复制失败，请检查浏览器剪贴板权限', 'warning');
+    }
   } finally {
     icon?.classList.remove('ql_icon_loading');
   }

@@ -129,6 +129,35 @@ check('manifest.description 不再声称本地加密保存', !/AES-?GCM|加密�
   desc.slice(0, 60));
 check('manifest.description 提到账号存云端', /云端/.test(desc), '');
 
+console.log('\n=== 5. 翻译图标的落地开关必须与用户手册/代码一致 ===');
+const translateHtml = readFileSync(
+  join(ROOT, 'packages', 'extension', 'src', 'ui', 'translate', 'translate.html'),
+  'utf8',
+);
+const translateContent = readFileSync(
+  join(ROOT, 'packages', 'extension', 'src', 'content', 'translate.ts'),
+  'utf8',
+);
+const translateUi = readFileSync(
+  join(ROOT, 'packages', 'extension', 'src', 'ui', 'translate', 'translate.ts'),
+  'utf8',
+);
+const translateSettings = readFileSync(
+  join(ROOT, 'packages', 'extension', 'src', 'shared', 'translate-settings.ts'),
+  'utf8',
+);
+
+check('翻译面板有「点图标时填充输入框」开关',
+  /id="icon_fill_enabled"/.test(translateHtml) && /for="icon_fill_enabled"/.test(translateHtml));
+check('开关关闭时标题/说明改为复制',
+  /iconPathTitle\.textContent = fill \? '点图标回填原文' : '点图标复制译文'/.test(translateUi)
+  && /iconActionDesc\.textContent = fill/.test(translateUi));
+check('默认值保持旧行为（填充开启）', /icon_fill_enabled: true/.test(translateSettings));
+check('内容脚本按开关分流到填充/剪贴板',
+  /settings\.icon_fill_enabled/.test(translateContent)
+  && /writeClipboard\(reply\.text/.test(translateContent));
+check('用户手册说明该开关', /点图标时填充输入框/.test(manual) && /只复制到剪贴板/.test(manual));
+
 const passed = results.filter(Boolean).length;
 console.log(`\n=== 汇总：${passed}/${results.length} 通过 ===`);
 if (passed !== results.length) {

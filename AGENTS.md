@@ -139,7 +139,7 @@ node tools/verify/verify-falsify-forensics.mjs       # ↑ 的反证（3/3）
 # 图标源 + 用户文档：**四个**脚本（+ CSS 变量卫生一个，见下），同样秒级、不需要浏览器
 node tools/verify/verify-icons.mjs                   # 图标源与派生产物（**42 条**）
 node tools/verify/verify-falsify-icons.mjs           # ↑ 的反证（**4/4**）
-node tools/verify/verify-user-docs.mjs               # 用户可见的功能描述（**7 条**）
+node tools/verify/verify-user-docs.mjs               # 用户可见的功能描述（**12 条**）
 node tools/verify/verify-falsify-userdocs.mjs        # ↑ 的反证（**5/5**）
 
 # 装载冒烟：真起 Chromium + --load-extension（**20 条**，约 15 秒）

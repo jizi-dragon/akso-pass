@@ -97,8 +97,13 @@
           <div class="t-path">
             <div class="t-path-key t-path-key-icon" aria-hidden="true">🔵</div>
             <div class="t-path-body">
-              <b>点图标回填原文</b>
-              <span>输入框右下角的小图标。<b>翻译并覆盖原框</b>（会改掉你写的中文）。</span>
+              <b id="icon-path-title">点图标回填原文</b>
+              <span id="icon-action-desc">翻译并覆盖原框（会改掉你写的中文）。</span>
+              <label class="t-inline-switch" for="icon_fill_enabled">
+                <input id="icon_fill_enabled" type="checkbox" class="t-switch-input" />
+                <span class="t-switch t-switch-sm" aria-hidden="true"><i></i></span>
+                <span id="icon-fill-label">点图标时填充输入框</span>
+              </label>
               <label class="t-inline-switch" for="floating_icon_enabled">
                 <input id="floating_icon_enabled" type="checkbox" class="t-switch-input" />
                 <span class="t-switch t-switch-sm" aria-hidden="true"><i></i></span>

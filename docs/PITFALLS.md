@@ -1187,7 +1187,7 @@ marker 仍在源码里 ⇒ 判据不红 ⇒ 反证 SKIP（**规则 25 已踩过�
 - ★ 而 Q7 那条最坏：**教用户"换机走导出→导入"** —— 而导出**搬不走口令**，
   他在新机器上会以为**数据丢了**，或者以为"扩展坏了"。
 
-**判据**：`tools/verify/verify-user-docs.mjs`（**7 条**）+ 反证 `verify-falsify-userdocs.mjs`（**5/5**）。
+**判据**：`tools/verify/verify-user-docs.mjs`（**12 条**）+ 反证 `verify-falsify-userdocs.mjs`（**5/5**）。
 
 ★★ **判据怎么划才不被自己的历史留痕弄红**（这是本条最值得记的部分）：
 

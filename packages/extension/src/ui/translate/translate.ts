@@ -62,6 +62,10 @@ const el = {
   enabledSub: $<HTMLElement>('enabled_sub'),
   disabledBanner: $<HTMLDivElement>('disabled-banner'),
   floatingIcon: $<HTMLInputElement>('floating_icon_enabled'),
+  iconFill: $<HTMLInputElement>('icon_fill_enabled'),
+  iconFillLabel: $<HTMLElement>('icon-fill-label'),
+  iconPathTitle: $<HTMLElement>('icon-path-title'),
+  iconActionDesc: $<HTMLElement>('icon-action-desc'),
   naming: $<HTMLInputElement>('naming_convention_mode'),
   targetLang: $<HTMLSelectElement>('target_language'),
   engineList: $<HTMLDivElement>('engine-list'),
@@ -170,6 +174,20 @@ function renderEnabledState(enabled: boolean): void {
   el.disabledBanner.classList.toggle('hidden', enabled);
 }
 
+/**
+ * 点图标落地方式的文案必须跟着开关变。
+ *
+ * ★ 只改 checkbox 不改文案，用户会看到「点图标回填原文」而实际行为是复制 ——
+ *   那是界面在说谎，且**没有任何报错**。
+ */
+function renderIconFillState(fill: boolean): void {
+  el.iconPathTitle.textContent = fill ? '点图标回填原文' : '点图标复制译文';
+  el.iconActionDesc.textContent = fill
+    ? '翻译并覆盖原框（会改掉你写的中文）。'
+    : '翻译并复制到剪贴板（原输入一字不动），到别处直接粘贴。';
+  el.iconFillLabel.textContent = fill ? '点图标时填充输入框' : '点图标时复制到剪贴板';
+}
+
 /* ── 渲染：统计 ── */
 async function renderStats(): Promise<void> {
   const stats = await readStats();
@@ -184,6 +202,7 @@ async function collect(): Promise<TranslationSettings> {
   return {
     translate_enabled: el.enabled.checked,
     floating_icon_enabled: el.floatingIcon.checked,
+    icon_fill_enabled: el.iconFill.checked,
     naming_convention_mode: el.naming.checked,
     target_language: el.targetLang.value,
     source_language: 'auto',
@@ -309,6 +328,7 @@ async function init(): Promise<void> {
     settings = {
       translate_enabled: true,
       floating_icon_enabled: true,
+      icon_fill_enabled: true,
       naming_convention_mode: false,
       target_language: 'en',
       source_language: 'auto',
@@ -318,10 +338,12 @@ async function init(): Promise<void> {
 
   el.enabled.checked = settings.translate_enabled;
   el.floatingIcon.checked = settings.floating_icon_enabled;
+  el.iconFill.checked = settings.icon_fill_enabled;
   el.naming.checked = settings.naming_convention_mode;
   el.targetLang.value = settings.target_language;
   renderEngines(settings.translation_provider);
   renderEnabledState(settings.translate_enabled);
+  renderIconFillState(settings.icon_fill_enabled);
 
   // 高级区默认展开：**宁可多露一点，也不要"藏在折叠里等于没做"**
   // （本仓规则 40 的同族：读不到 = 不存在）。用户嫌长可以自己折起来。
@@ -340,6 +362,10 @@ async function init(): Promise<void> {
     void onSave();
   });
   el.floatingIcon.addEventListener('change', () => void onSave());
+  el.iconFill.addEventListener('change', () => {
+    renderIconFillState(el.iconFill.checked);
+    void onSave();
+  });
 
   el.saveBtn.addEventListener('click', () => void onSave());
   el.testBtn.addEventListener('click', () => void onTest());
@@ -363,10 +389,12 @@ async function init(): Promise<void> {
       void loadTranslationSettings().then((next) => {
         el.enabled.checked = next.translate_enabled;
         el.floatingIcon.checked = next.floating_icon_enabled;
+        el.iconFill.checked = next.icon_fill_enabled;
         el.naming.checked = next.naming_convention_mode;
         el.targetLang.value = next.target_language;
         renderEngines(next.translation_provider);
         renderEnabledState(next.translate_enabled);
+        renderIconFillState(next.icon_fill_enabled);
         renderPreview();
       });
     } else if (area === 'local') {

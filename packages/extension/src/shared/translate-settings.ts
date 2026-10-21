@@ -45,6 +45,15 @@ export interface TranslationSettings {
   translate_enabled: boolean;
   /** ★ 浮动翻译图标是否出现（用户 2026-10-12 明确要求把它变成"可选项"） */
   floating_icon_enabled: boolean;
+  /**
+   * ★ 2026-10-21：点击浮动图标时的落地方式。
+   *
+   * - `true`（默认，保持旧行为）：翻译并**覆盖输入框**；
+   * - `false`：翻译并**只复制到剪贴板**，原输入不动。
+   *
+   * `Alt+T` 不受此开关影响，始终只复制。
+   */
+  icon_fill_enabled: boolean;
   target_language: string;
   source_language: string;
   translation_provider: EngineId;
@@ -55,6 +64,7 @@ export interface TranslationSettings {
 export const TRANSLATION_DEFAULTS: TranslationSettings = {
   translate_enabled: true,
   floating_icon_enabled: true,
+  icon_fill_enabled: true,
   target_language: 'en',
   source_language: 'auto',
   translation_provider: 'auto',
@@ -74,6 +84,7 @@ export function normalizeTranslationSettings(raw: unknown): TranslationSettings 
     // 布尔一律 `=== true`：`"false"` 字符串是 truthy，而手改 storage 真的会产生它
     translate_enabled: r.translate_enabled !== false,
     floating_icon_enabled: r.floating_icon_enabled !== false,
+    icon_fill_enabled: r.icon_fill_enabled !== false,
     target_language: LANG_CODES.has(lang) ? lang : TRANSLATION_DEFAULTS.target_language,
     source_language: String(r.source_language ?? TRANSLATION_DEFAULTS.source_language),
     translation_provider: normalizeEngineId(r.translation_provider),
