@@ -10,6 +10,14 @@ import { DEFAULT_FAVORITES, EXT_VERSION, LOCAL_KEYS } from '../../shared/constan
 import { getForwardingLogger, setForwarder } from '../../shared/log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
+import {
+  buildExcelTemplate,
+  EXCEL_TEMPLATE_FILENAME,
+  parseExcelFile,
+  validateExcelRows,
+  type ParsedExcel,
+  type ValidatedExcelRow,
+} from './excel-import';
 
 /* ==================== 日志通道（v3.19） ====================
  *
@@ -80,9 +88,21 @@ const importText = document.getElementById('import-text') as HTMLTextAreaElement
 const importRun = document.getElementById('import-run') as HTMLButtonElement;
 const importCancel = document.getElementById('import-cancel') as HTMLButtonElement;
 
+/* Excel 导入（v4.2.22）：文件选择 → 校验预览 → 只导入有效行 */
+const excelToggle = document.getElementById('excel-import-toggle') as HTMLButtonElement;
+const excelPanel = document.getElementById('excel-panel') as HTMLDivElement;
+const excelFile = document.getElementById('excel-import-file') as HTMLInputElement;
+const excelPick = document.getElementById('excel-pick') as HTMLButtonElement;
+const excelTemplate = document.getElementById('excel-template') as HTMLButtonElement;
+const excelRun = document.getElementById('excel-run') as HTMLButtonElement;
+const excelCancel = document.getElementById('excel-cancel') as HTMLButtonElement;
+const excelSummary = document.getElementById('excel-summary') as HTMLDivElement;
+const excelRowsEl = document.getElementById('excel-rows') as HTMLTableSectionElement;
+
 const dataExportBtn = document.getElementById('data-export') as HTMLButtonElement;
 const dataImportBtn = document.getElementById('data-import') as HTMLButtonElement;
 const dataImportFile = document.getElementById('data-import-file') as HTMLInputElement;
+const dataImportExcelBtn = document.getElementById('data-import-excel') as HTMLButtonElement;
 const exportDiagBtn = document.getElementById('export-diag') as HTMLButtonElement;
 const favText = document.getElementById('fav-text') as HTMLTextAreaElement;
 const favSave = document.getElementById('fav-save') as HTMLButtonElement;
@@ -1800,6 +1820,330 @@ importRun.addEventListener('click', () => {
     alert(`批量导入完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 条（缺账号名或密码）` : ''}。账号已保存到盒子「${box}」，可从列表逐个打开。`);
   })();
 });
+
+/* ==================== Excel 导入（v4.2.22） ==================== */
+
+let excelRows: ValidatedExcelRow[] = [];
+let excelImporting = false;
+let excelParsed: ParsedExcel | null = null;
+const excelStatus = new Map<number, { kind: 'ok' | 'bad'; text: string }>();
+
+function excelSummaryText(): string {
+  if (!excelRows.length) {
+    return '';
+  }
+  const bad = excelRows.filter((r) => r.errors.length > 0).length;
+  const good = excelRows.length - bad;
+  return `共 ${excelRows.length} 行：可导入 ${good} 行，需修正 ${bad} 行。`;
+}
+
+function renderExcelPreview(): void {
+  excelRowsEl.innerHTML = '';
+  for (const row of excelRows) {
+    const status = excelStatus.get(row.rowNumber);
+    const tr = document.createElement('tr');
+    tr.className = row.errors.length ? 'is-bad' : status?.kind === 'ok' ? 'is-ok'
+      : status?.kind === 'bad' ? 'is-bad' : '';
+    const values = [
+      String(row.rowNumber),
+      row.normalized.siteName || row.siteName || '—',
+      row.siteAddress || row.host || '—',
+      row.normalized.username || '—',
+      row.normalized.tabName || '—',
+      row.boxName || '—',
+    ];
+    for (const value of values) {
+      const td = document.createElement('td');
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    const reason = document.createElement('td');
+    reason.className = 'excel-reason';
+    if (status) {
+      reason.textContent = status.text;
+      reason.classList.add(status.kind === 'ok' ? 'excel-ok-text' : 'excel-bad-text');
+    } else if (row.errors.length) {
+      reason.textContent = row.errors.join('；');
+      reason.classList.add('excel-bad-text');
+    } else {
+      reason.textContent = row.siteKnown ? '可导入（站点已存在）' : '可导入（将新建站点和同名盒子）';
+    }
+    tr.appendChild(reason);
+    excelRowsEl.appendChild(tr);
+  }
+  const base = excelSummaryText();
+  if (base) {
+    excelSummary.textContent = base;
+    if (excelParsed?.ignoredHeaders.length) {
+      excelSummary.textContent += ` 未识别列（已忽略）：${excelParsed.ignoredHeaders.join('、')}。`;
+    }
+  }
+  const hasValid = excelRows.some((r) => !r.errors.length && !excelStatus.has(r.rowNumber));
+  excelRun.disabled = excelImporting || !hasValid;
+}
+
+function excelErrorText(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 160);
+}
+
+async function loadExcelFile(file: File): Promise<void> {
+  excelPanel.classList.remove('hidden');
+  excelRows = [];
+  excelParsed = null;
+  excelStatus.clear();
+  excelSummary.textContent = '正在解析…';
+  excelRun.disabled = true;
+  try {
+    const parsed = await parseExcelFile(file);
+    excelParsed = parsed;
+    excelRows = validateExcelRows(parsed.rows, {
+      sites: cloudSites,
+      accounts: browserAccounts,
+    });
+    renderExcelPreview();
+  } catch (e) {
+    excelRows = [];
+    excelRowsEl.innerHTML = '';
+    excelSummary.textContent = `❌ ${excelErrorText(e)}`;
+    excelSummary.classList.add('excel-bad-text');
+    excelRun.disabled = true;
+    return;
+  }
+  excelSummary.classList.remove('excel-bad-text');
+  renderExcelPreview();
+}
+
+async function finishExcelImport(created: number, failed: number): Promise<void> {
+  excelImporting = false;
+  renderExcelPreview();
+  const invalid = excelRows.filter((r) => r.errors.length > 0).length;
+  excelSummary.textContent = `导入完成：成功 ${created} 行，失败 ${failed} 行`
+    + `${invalid ? `；另有 ${invalid} 行数据有问题，未导入（已标红）` : ''}。`;
+  excelSummary.classList.toggle('excel-bad-text', failed > 0);
+  await refreshAll();
+}
+
+async function runExcelImport(): Promise<void> {
+  if (excelImporting) {
+    return;
+  }
+  const candidates = excelRows.filter((r) => !r.errors.length && !excelStatus.has(r.rowNumber));
+  if (!candidates.length) {
+    return;
+  }
+  excelImporting = true;
+  excelRun.disabled = true;
+  renderExcelPreview();
+
+  const markBad = (rows: ValidatedExcelRow[], text: string): void => {
+    for (const row of rows) {
+      excelStatus.set(row.rowNumber, { kind: 'bad', text: `✗ ${text}` });
+    }
+  };
+
+  /* ① 先把缺失站点建出来。同一个 host 只建一次。 */
+  const knownSites = new Set(cloudSites.map((s) => s.host.toLowerCase()));
+  const siteErrors = new Map<string, string>();
+  const toCreate = new Map<string, ValidatedExcelRow>();
+  for (const row of candidates) {
+    if (!row.siteKnown && row.host && !knownSites.has(row.host.toLowerCase()) && !toCreate.has(row.host)) {
+      toCreate.set(row.host, row);
+    }
+  }
+  for (const [host, row] of toCreate) {
+    const scheme = row.normalized.scheme === 'http' || row.normalized.scheme === 'https'
+      ? row.normalized.scheme
+      : undefined;
+    const res = await send({
+      kind: 'par.upsertSite',
+      host,
+      name: row.normalized.siteName || host,
+      createBox: false,
+      ...(scheme ? { scheme } : {}),
+    }).catch((e: unknown) => ({ kind: 'par.upsertSite' as const, result: { ok: false as const, error: excelErrorText(e) } }));
+    if (!(res.kind === 'par.upsertSite' && res.result.ok)) {
+      siteErrors.set(host, res.kind === 'par.upsertSite' && !res.result.ok ? res.result.error : '站点创建失败');
+    } else {
+      knownSites.add(host.toLowerCase());
+    }
+  }
+
+  /* ② 重新拉站点与盒子：新站点的 id、盒子现有绑定关系都以云端为准。 */
+  const siteRes = await send({ kind: 'par.sites' }).catch(() => null);
+  if (!(siteRes && siteRes.kind === 'par.sites' && siteRes.result.ok && siteRes.result.data)) {
+    markBad(candidates, '读取云端站点失败，未创建任何账号');
+    await finishExcelImport(0, candidates.length);
+    return;
+  }
+  const siteByHost = new Map(siteRes.result.data.map((s) => [s.host.toLowerCase(), s] as const));
+  for (const row of candidates) {
+    if (siteErrors.has(row.host)) {
+      continue;
+    }
+    const site = siteByHost.get(row.host.toLowerCase());
+    if (!site) {
+      siteErrors.set(row.host, '站点创建后仍找不到这条记录');
+    }
+  }
+
+  const boxRes = await send({ kind: 'par.boxes' }).catch(() => null);
+  if (!(boxRes && boxRes.kind === 'par.boxes' && boxRes.result.ok && boxRes.result.data)) {
+    markBad(candidates.filter((r) => !siteErrors.has(r.host)), '读取云端盒子失败，未创建任何账号');
+    for (const [host, reason] of siteErrors) {
+      markBad(candidates.filter((r) => r.host === host), `站点创建失败：${reason}`);
+    }
+    await finishExcelImport(0, candidates.length);
+    return;
+  }
+  const boxes = boxRes.result.data.boxes;
+  const defaultBoxName = boxRes.result.data.default;
+  const boxSite = new Map(boxes.map((b) => [b.name, b.siteId] as const));
+  const boxErrors = new Map<string, string>();
+
+  /* ③ 每个站点一个同名盒子，并确保盒子关联到该站点。 */
+  const hosts = new Set(candidates.map((r) => r.host));
+  for (const host of hosts) {
+    if (siteErrors.has(host)) {
+      continue;
+    }
+    const site = siteByHost.get(host.toLowerCase());
+    if (!site) {
+      boxErrors.set(host, '站点记录不存在');
+      continue;
+    }
+    const boxName = site.name.trim() || site.host;
+    if (!boxName || boxName.length > 60) {
+      boxErrors.set(host, `站点名称「${boxName || '空'}」无法作为盒子名（上限 60）`);
+      continue;
+    }
+    if (boxName === defaultBoxName) {
+      boxErrors.set(host, '站点名称不能使用默认盒子名');
+      continue;
+    }
+
+    const currentSite = boxSite.get(boxName);
+    if (currentSite && currentSite !== site.id) {
+      boxErrors.set(host, `同名盒子「${boxName}」已关联其他站点`);
+      continue;
+    }
+
+    if (!boxSite.has(boxName)) {
+      const created = await send({ kind: 'par.createBox', name: boxName }).catch(() => null);
+      if (!(created && created.kind === 'par.createBox' && created.result.ok)) {
+        const why = created && created.kind === 'par.createBox' && !created.result.ok
+          ? created.result.error
+          : '无响应';
+        boxErrors.set(host, `盒子「${boxName}」创建失败：${excelErrorText(why)}`);
+        continue;
+      }
+      boxSite.set(boxName, '');
+    }
+
+    if (boxSite.get(boxName) !== site.id) {
+      const bound = await send({ kind: 'par.bindBoxSite', name: boxName, siteId: site.id }).catch(() => null);
+      if (!(bound && bound.kind === 'par.bindBoxSite' && bound.result.ok)) {
+        const why = bound && bound.kind === 'par.bindBoxSite' && !bound.result.ok
+          ? bound.result.error
+          : '无响应';
+        boxErrors.set(host, `盒子「${boxName}」关联站点失败：${excelErrorText(why)}`);
+        continue;
+      }
+      boxSite.set(boxName, site.id);
+    }
+
+    for (const row of candidates) {
+      if (row.host === host) {
+        row.boxName = boxName;
+      }
+    }
+  }
+
+  /* ④ 站点 / 盒子都就绪后才建账号；失败逐行记账，不中断其它行。 */
+  let created = 0;
+  let failed = 0;
+  for (const row of candidates) {
+    const siteError = siteErrors.get(row.host);
+    if (siteError) {
+      failed += 1;
+      excelStatus.set(row.rowNumber, { kind: 'bad', text: `✗ 站点创建失败：${excelErrorText(siteError)}` });
+      continue;
+    }
+    const boxError = boxErrors.get(row.host);
+    if (boxError) {
+      failed += 1;
+      excelStatus.set(row.rowNumber, { kind: 'bad', text: `✗ ${excelErrorText(boxError)}` });
+      continue;
+    }
+    const scheme = row.normalized.scheme === 'http' || row.normalized.scheme === 'https'
+      ? row.normalized.scheme
+      : undefined;
+    try {
+      const res = await send({
+        kind: 'par.create',
+        siteHost: row.host,
+        tabName: row.normalized.tabName,
+        username: row.normalized.username,
+        password: row.normalized.password,
+        open: false,
+        box: row.boxName,
+        ...(scheme ? { scheme } : {}),
+      });
+      if (res.kind === 'par.create' && res.result.ok) {
+        created += 1;
+        excelStatus.set(row.rowNumber, { kind: 'ok', text: '✓ 已创建' });
+      } else {
+        failed += 1;
+        const why = res.kind === 'par.create' && !res.result.ok ? res.result.error : '无响应';
+        excelStatus.set(row.rowNumber, { kind: 'bad', text: `✗ 创建失败：${excelErrorText(why)}` });
+      }
+    } catch (e) {
+      failed += 1;
+      excelStatus.set(row.rowNumber, { kind: 'bad', text: `✗ 创建失败：${excelErrorText(e)}` });
+    }
+  }
+
+  if (created) {
+    let last: ValidatedExcelRow | undefined;
+    for (const r of candidates) {
+      if (excelStatus.get(r.rowNumber)?.kind === 'ok') {
+        last = r;
+      }
+    }
+    if (last) {
+      await chrome.storage.local.set({ [LAST_HOST_KEY]: last.host });
+    }
+  }
+  await finishExcelImport(created, failed);
+}
+
+function openExcelImportPicker(): void {
+  /* 顶部栏的按钮可能从任意页签点进来；Excel 预览面板在「添加账号」页里，
+   * 所以先切过去再打开文件选择器。`showTab` 是函数声明，可安全在此调用。 */
+  showTab('add');
+  excelPanel.classList.remove('hidden');
+  excelFile.click();
+}
+
+excelToggle.addEventListener('click', () => openExcelImportPicker());
+dataImportExcelBtn.addEventListener('click', () => openExcelImportPicker());
+excelPick.addEventListener('click', () => excelFile.click());
+excelCancel.addEventListener('click', () => excelPanel.classList.add('hidden'));
+excelTemplate.addEventListener('click', () => {
+  const url = URL.createObjectURL(buildExcelTemplate());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = EXCEL_TEMPLATE_FILENAME;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+excelFile.addEventListener('change', () => {
+  const file = excelFile.files?.[0];
+  excelFile.value = ''; // 允许重复选同一个文件
+  if (file) {
+    void loadExcelFile(file);
+  }
+});
+excelRun.addEventListener('click', () => void runExcelImport());
 
 /* ==================== 添加账号（单个） ==================== */
 

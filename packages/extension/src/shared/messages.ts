@@ -62,7 +62,7 @@ export type RuntimeRequest =
    * ★ `createBox`（2026-10-19）：新建站点时是否同步建一个同名盒子，缺省 true
    *   （保持旧行为）。站点已存在时这个字段没有意义。
    */
-  | { kind: 'par.upsertSite'; host: string; name: string; createBox?: boolean }
+  | { kind: 'par.upsertSite'; host: string; name: string; createBox?: boolean; scheme?: 'http' | 'https' }
   /**
    * ★ 2026-10-19：**编辑站点**（用户要求「站点管理缺少编辑功能」）。
    *

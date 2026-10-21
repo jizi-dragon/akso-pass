@@ -64,8 +64,8 @@ export interface ParallelStore {
   listSites(force?: boolean): Promise<CloudSiteSummary[]>;
   /** 一次原子读取 accounts+sites+boxes（`GET /api/ui/state`），失败时由 UI 回落旧读路径 */
   uiState(): Promise<CloudUiState>;
-  /** 添加站点时落名：站点不存在就建 */
-  upsertSite(host: string, name: string, createBox?: boolean): Promise<void>;
+  /** 添加站点时落名：站点不存在就建；`scheme` 用于新建 `http://` 站点 */
+  upsertSite(host: string, name: string, createBox?: boolean, scheme?: 'http' | 'https'): Promise<void>;
   /** ★ 2026-10-19：编辑站点（名称 / 地址 / 备注），见 `cloud-store.updateSiteOnCloud` */
   updateSite(
     siteId: string,
@@ -313,8 +313,8 @@ export const parallelStore: ParallelStore = {
     return cloudStore.uiState();
   },
 
-  upsertSite(host: string, name: string, createBox = true): Promise<void> {
-    return cloudStore.upsertSite(host, name, createBox);
+  upsertSite(host: string, name: string, createBox = true, scheme?: 'http' | 'https'): Promise<void> {
+    return cloudStore.upsertSite(host, name, createBox, scheme);
   },
 
   updateSite(

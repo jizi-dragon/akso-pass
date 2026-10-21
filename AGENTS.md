@@ -227,7 +227,7 @@ npm run verify:list       # 列出回归脚本（不跑）
 
 ```powershell
 npm run verify:list                 # ★ 先看有几个、都是谁（数量以它为准，别在文档里写死）
-node tools/verify/run-all.mjs --static         # 24 个静态脚本，≈58 s（日常最常用）
+node tools/verify/run-all.mjs --static         # 25 个静态脚本，≈58 s（日常最常用）
 node tools/verify/run-all.mjs --browser-only   # 13 个真起 Chromium，≈62 s
 npm run verify -- --only v310       # 只跑名字含 v310 的（最快）
 npm run verify -- --only jarhygiene
@@ -260,7 +260,7 @@ npm run verify -- --only jarhygiene
 ★ 而 `run-all.mjs` 现在把这个划分写成了**可核对的名单**（`BROWSER_SCRIPTS`）并**双向自证**：
 凡源码里加载 `playwright-core` 的必须在名单里、名单里的必须真的加载它
 ⇒ 新加一个起浏览器的脚本却忘了登记，会**当场报错**（`--static` / `--browser-only` 两个开关依赖它）。
-★ **`--static` 是日常入口**（2026-10-18 实测：24 个静态脚本 **58 秒**），`--browser` 才是全量（**110 秒**）；
+★ **`--static` 是日常入口**（2026-10-18 实测：25 个静态脚本 **58 秒**），`--browser` 才是全量（**110 秒**）；
 打码、图标、CSS 变量、品牌色、文档、盒子对账、本轮新增的缺陷回归**都是纯静态、秒级**的
 ⇒ 它们**可以直接单独跑**，不必为了改一行等几分钟。
 （原文写"每个脚本都真起一个带扩展的 Chromium（数十秒）并往 `tmp/` 写档案"，
@@ -284,11 +284,11 @@ npm run verify -- --only jarhygiene
 
 | 触发 | 版本号 | 产物 |
 |---|---|---|
-| 用户**明确说**"发布正式版本" | **minor +1、patch 归零**（4.2.21 → 4.3.0） | 构建 ZIP + GitHub Release + 更新 akso-cloud 下载清单 |
-| 用户**没有说**是正式版本 | **patch +1**（4.2.20 → 4.2.21，优化版） | 只提交/构建 dist；**不打包上传、不改下载清单** |
+| 用户**明确说**"发布正式版本" | **minor +1、patch 归零**（4.2.22 → 4.3.0） | 构建 ZIP + GitHub Release + 更新 akso-cloud 下载清单 |
+| 用户**没有说**是正式版本 | **patch +1**（4.2.21 → 4.2.22，优化版） | 只提交/构建 dist；**不打包上传、不改下载清单** |
 
 三处版本用 `node tools/bump.mjs <old> <new>` 同步。正式版必须等明确措辞，
-不能把优化版自行升级为正式版。**当前 4.2.21 是优化版，未发布。**
+不能把优化版自行升级为正式版。**当前 4.2.22 是优化版，未发布。**
 
 ---
 

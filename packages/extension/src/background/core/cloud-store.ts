@@ -718,7 +718,12 @@ async function loadSiteNames(force = false): Promise<CloudSiteSummary[]> {
  *   由用户选择要不要同步建一个同名盒子，默认建）。站点已存在时它没有意义 ——
  *   这里不读它，免得"改个名"顺手再建一个盒子。
  */
-async function upsertSiteOnCloud(host: string, name: string, createBox = true): Promise<void> {
+async function upsertSiteOnCloud(
+  host: string,
+  name: string,
+  createBox = true,
+  scheme: 'http' | 'https' = 'https',
+): Promise<void> {
   const wanted = host.trim().toLowerCase();
   const name2 = name.trim() || wanted;
   const sites = await loadSites(true);
@@ -738,7 +743,7 @@ async function upsertSiteOnCloud(host: string, name: string, createBox = true): 
    *   而站点卡片显示的是用户起的名字，两端看起来像两个不同的东西。 */
   await cloudRequest('/api/sites', {
     method: 'POST',
-    body: { name: name2, baseUrl: `https://${wanted}`, note: '', createBox },
+    body: { name: name2, baseUrl: `${scheme}://${wanted}`, note: '', createBox },
   });
   invalidateCloudCache();
 }
@@ -1150,8 +1155,8 @@ export const cloudStore = {
   },
 
   /** 添加站点时落名（站点不存在就建），见 `upsertSiteOnCloud` 的说明 */
-  async upsertSite(host: string, name: string, createBox = true): Promise<void> {
-    return upsertSiteOnCloud(host, name, createBox);
+  async upsertSite(host: string, name: string, createBox = true, scheme: 'http' | 'https' = 'https'): Promise<void> {
+    return upsertSiteOnCloud(host, name, createBox, scheme);
   },
 
   /** ★ 2026-10-19：编辑站点（名称 / 地址 / 备注），见 `updateSiteOnCloud` 的说明 */

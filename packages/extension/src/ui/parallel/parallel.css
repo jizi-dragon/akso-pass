@@ -335,6 +335,72 @@
   color: var(--sb-brand);
 }
 
+/* ---- Excel 导入预览（v4.2.22）----
+ * 有问题的行必须一眼可见：底色 + 左侧描边 + 原因列，不依赖用户读完整张表。
+ */
+.excel-summary {
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+}
+
+.excel-summary:empty {
+  display: none;
+}
+
+.excel-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface);
+}
+
+.excel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-12);
+}
+
+.excel-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--sp-2);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--sb-text-secondary);
+  background: var(--sb-surface-2);
+  border-bottom: 1px solid var(--sb-border);
+}
+
+.excel-table td {
+  padding: var(--sp-2);
+  vertical-align: top;
+  border-bottom: 1px solid var(--sb-border);
+}
+
+.excel-table tr.is-bad {
+  background: color-mix(in srgb, var(--sb-danger) 8%, var(--sb-surface));
+  box-shadow: inset 3px 0 0 var(--sb-danger);
+}
+
+.excel-table tr.is-ok {
+  box-shadow: inset 3px 0 0 var(--sb-success);
+}
+
+.excel-table .excel-reason {
+  min-width: 220px;
+  line-height: 1.55;
+}
+
+.excel-table .excel-bad-text {
+  color: var(--sb-danger);
+}
+
+.excel-table .excel-ok-text {
+  color: var(--sb-success);
+}
+
 /* ---- 常用页面书签编辑器（v3.16）---- */
 #fav-text {
   font-family: ui-monospace, Consolas, 'Courier New', monospace;

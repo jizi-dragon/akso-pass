@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **29 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **38 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -97,6 +97,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 |---|---|---|---|
 | **`verify-agents-budget.mjs`** | ★ **规则入口的"体积 + 一致性"判据**（静态、秒级）：① `AGENTS.md` **&lt; 48 KB** ② `AGENTS.md` 的规则**索引**与 `docs/RULES.md` 的**正文**编号集合**双向相等**且连续（1..40，无缺号）③ 两份文件互相有指针、并都指向 `PITFALLS.md`。<br>★★ 起因：`AGENTS.md` 长到 **66 KB** 时**被指令预算截断** —— 规则 39 读不全，而**没有任何门禁能发现**（规则 40 的由来）。 | **11/11** | ✘ |
 | **`verify-boxsync.mjs`** | ★ **盒子与云端对账**（静态、秒级）：用 `esbuild` 把 `shared/box-reconcile.ts` **就地转成 CJS** 再加载，以合成数据钉住三条约束 —— ① 云端有答复时**多余的本地盒名必须被剪掉** ② ★ **离线（云端没答复）时一个都不许剪** ③ ★ **账号里正在用的盒名永远不许剪**。（②③ 是**反方向**判据：只验"剪掉了多余的"是不够的，"一律清空"也能过那一条。）<br>★★ 起因：用户报"盒子的数据没有做好同步"，实测**扩展 5 个盒子、云端 2 个**，两边都不报错。 | **OK** | ✘ |
+| **`verify-excel-import.mjs`** | ★ **Excel 导入的纯逻辑判据**（静态、秒级）：① 表头别名 / 跳过标题行 / Excel 1-based 行号 ② 已存在站点、仅站点名匹配、新站点地址、未知站点、坏地址、文件内重复、云端已存在、协议冲突 ③ 空密码只警告不阻断 ④ 模板可生成。 | **OK** | ✘ |
 | **`verify-defectfix.mjs`** | ★ **六个"修好后 `typecheck`/`build` 照样全绿"的缺陷的回归判据**（静态、秒级）：`reused` 单一来源 / 凭据只交给本账号站点的 frame / 叛逃清扫走**原生** IDB·CacheStorage / 界面文案不指向已废除的"数据源"控件 / 3 秒轮询不再无条件写盘 / UI 通信层不把 `undefined` 交给调用点。<br>★★ 之所以单独一个脚本：这六条**全都不是类型错误**（而是"两个事实不一致""走了补丁版 API""文案指向不存在的控件"）⇒ 没有能红的判据，下一次重构会把它们原样带回来。<br>★ 诚实边界：它只能验「**写法还在不在**」，**不能**证明"凭据真的只交给了本站点的 frame"——那要真机。 | **OK** | ✘ |
 | **`verify-falsify-defectfix.mjs`** | **上一条的反证（6 条）**：把仓库复制到 `tmp/`（只拷 `src` + `tools/verify`），逐个注入"修复前"的写法 —— `reused: false` / 拆掉来源域校验 / 改回 `indexedDB.databases()` / 注回"在数据源处" / 改回无条件写盘 / `send()` 改回裸 `resolve` ⇒ 每条都必须**变红且红在对的那一节**。<br>★ 它也**反过来验自己**：`poke()` 会**数锚点出现次数**，不是恰好 1 次就明确失败（否则 `String.replace` 会改到别处，而"没变红"会被误读成"判据恒真"）；且两侧行尾**先归一化**（本仓同目录下 CRLF 与 LF 混用）。<br>★ 真实工作区**从未被改动**（副本结束时删除）。 | **OK** | ✘ |
 | **`verify-deadprotocol.mjs`** | ★ **死协议判据**（静态、秒级）：对**每个**消息 kind 与桥上行 op，要求它能报出**对端** —— ① 只出现在定义文件 ⇒ **类型孤儿**；② 只出现在定义 + 处理文件（`service-worker.ts` / `parallel-session.ts`）⇒ **零发送方**（handler 永不被走到）。<br>★★ 起因：清理时实测本仓曾有 **8 处**这类东西（`site.grants.list` / `site.grant.add` / `wheel.toggle` / `cloud.auth` / `CloudMergeReport` / `okOf()` / `registerAuthHandlers()` / `journalRollbackDone`），而 `typecheck` 与 `build` **全绿**、没有任何门禁会说话。<br>★ 白名单**只有一条**（`hold`：下行应答天然只有"定义 + 发送方"两个文件），每条都写明理由 —— 表每长一条，判据就弱一分（规则 26）。 | **OK** | ✘ |
@@ -132,7 +133,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"37 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"38 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -142,7 +143,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 37
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 38
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

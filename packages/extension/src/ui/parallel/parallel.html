@@ -70,6 +70,7 @@
           <div class="head-actions">
             <button id="data-import" class="btn-ghost btn-sm" type="button">导入数据</button>
             <input id="data-import-file" type="file" accept="application/json,.json" class="hidden" />
+            <button id="data-import-excel" class="btn-ghost btn-sm" type="button" title="用 Excel 批量创建站点和账号">Excel 导入</button>
             <button id="data-export" class="btn-ghost btn-sm" type="button">导出数据</button>
             <button id="export-diag" class="btn-ghost btn-sm" type="button" title="导出诊断包（排查问题时发给开发者）">导出诊断</button>
           </div>
@@ -200,6 +201,7 @@
               <button id="add-only" class="btn-ghost" type="button">仅保存</button>
               <button class="btn-primary" type="submit">添加并打开</button>
               <button id="import-toggle" class="btn-ghost" type="button">批量导入</button>
+              <button id="excel-import-toggle" class="btn-ghost" type="button">Excel 导入</button>
             </span>
           </form>
 
@@ -210,6 +212,34 @@
             <div class="btn-group">
               <button id="import-run" class="btn-primary" type="button">解析并导入</button>
               <button id="import-cancel" class="btn-ghost" type="button">收起</button>
+            </div>
+          </div>
+
+          <input id="excel-import-file" type="file" accept=".xlsx,.xls,.csv" class="hidden" />
+          <div id="excel-panel" class="import-panel hidden">
+            <p class="desc">
+              Excel 表头固定为五项，且都必填：<code>站点名称</code> /
+              <code>站点地址</code> / <code>用户名</code> / <code>密码</code> /
+              <code>页签名</code>。盒子不填：每个站点会自动创建同名盒子并关联站点，
+              该站点下所有账号都放进这个盒子。有问题的行会标红并写明原因。
+            </p>
+            <div class="btn-group">
+              <button id="excel-pick" class="btn-ghost" type="button">选择文件</button>
+              <button id="excel-template" class="btn-ghost" type="button">下载模板</button>
+              <button id="excel-run" class="btn-primary" type="button" disabled>导入有效行</button>
+              <button id="excel-cancel" class="btn-ghost" type="button">收起</button>
+            </div>
+            <div id="excel-summary" class="excel-summary" role="status" aria-live="polite"></div>
+            <div class="excel-table-wrap">
+              <table class="excel-table">
+                <thead>
+                  <tr>
+                    <th>行</th><th>站点</th><th>地址</th><th>用户名</th>
+                    <th>页签名</th><th>目标盒子</th><th>状态 / 原因</th>
+                  </tr>
+                </thead>
+                <tbody id="excel-rows"></tbody>
+              </table>
             </div>
           </div>
       </section>

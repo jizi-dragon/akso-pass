@@ -397,7 +397,7 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
     case 'par.upsertSite': {
       const r = await tryRun(async () => {
         // ★ 2026-10-19：`createBox` 由站点表单的勾选框决定（缺省 true = 原行为）。
-        await parallelStore.upsertSite(req.host, req.name, req.createBox !== false);
+        await parallelStore.upsertSite(req.host, req.name, req.createBox !== false, req.scheme);
         const rows = await parallelStore.listSites(true);
         const hit = rows.find((s) => s.host === req.host.trim().toLowerCase());
         return { host: req.host, name: hit?.name ?? req.name, displayName: hit?.displayName ?? req.name };
