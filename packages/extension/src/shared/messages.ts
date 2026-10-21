@@ -1,7 +1,11 @@
 import type { LogRecord } from './log';
-import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** `par.state` 的账号还要带运行态与是否存了密码，与 `par.list` 的账号形状一致。 */
+type UiStateAccount = ParallelAccount & ParallelAccountStatus & { password: boolean };
+export type UiStatePayload = Omit<CloudUiState, 'accounts'> & { accounts: UiStateAccount[] };
 
 /**
  * UI / content ⇄ background 的请求协议。
@@ -20,6 +24,12 @@ type Result<T> = { ok: true; data: T } | { ok: false; error: string };
  */
 export type RuntimeRequest =
   | { kind: 'par.list' }
+  /**
+   * 一次原子读取 accounts+sites+boxes（`GET /api/ui/state`）。
+   * 页面只需要**一个**响应就能整页替换；旧服务端没有该端点时，UI 会回落到
+   * 原来的 par.list / par.sites / par.boxes 三次读取。
+   */
+  | { kind: 'par.state' }
   /* ---- 离线只读副本的可见性（v3.19，2026-10-09）----
    * 决策：本地数据源废除后，离线**只能看副本**（可看、可开页签；
    * 不可新增/编辑、填表失效）。
@@ -266,6 +276,7 @@ export interface DataBackup {
 
 export type RuntimeResponse =
   | { kind: 'par.list'; result: Result<Array<ParallelAccount & ParallelAccountStatus & { password: boolean }>> }
+  | { kind: 'par.state'; result: Result<UiStatePayload> }
   /* `offline=true` ⇒ 用户此刻看到的列表**就是**只读副本（不是"可能旧"）。
    * `savedAt` / `ageMs` 让界面能说准"这是多久前的副本"，
    * 而不是含糊的"可能是旧的"（`account-cache.ts` 的设计意图）。 */

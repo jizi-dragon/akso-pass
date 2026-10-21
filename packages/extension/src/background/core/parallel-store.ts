@@ -1,7 +1,7 @@
 import { SESSION_COLORS } from '../../shared/constants';
 import { cloudStore, fetchPlaintextPassword } from './cloud-store';
 import { cacheBelongsTo, loadSnapshot, saveSnapshot } from './account-cache';
-import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount } from '../../shared/types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount } from '../../shared/types';
 
 /** 新增账号的入参 */
 export interface ParallelAccountInput {
@@ -62,6 +62,8 @@ export interface ParallelStore {
    *     会让"块注释配平"判据（`verify-css-vars.mjs`）**误判**（见 PITFALLS #43）。
    */
   listSites(force?: boolean): Promise<CloudSiteSummary[]>;
+  /** 一次原子读取 accounts+sites+boxes（`GET /api/ui/state`），失败时由 UI 回落旧读路径 */
+  uiState(): Promise<CloudUiState>;
   /** 添加站点时落名：站点不存在就建 */
   upsertSite(host: string, name: string, createBox?: boolean): Promise<void>;
   /** ★ 2026-10-19：编辑站点（名称 / 地址 / 备注），见 `cloud-store.updateSiteOnCloud` */
@@ -304,6 +306,11 @@ export const parallelStore: ParallelStore = {
    */
   listSites(force = false): Promise<CloudSiteSummary[]> {
     return cloudStore.listSites(force);
+  },
+
+  /** 一次性原子状态；离线时会抛 OfflineError，由 UI 回落既有的只读路径。 */
+  uiState(): Promise<CloudUiState> {
+    return cloudStore.uiState();
   },
 
   upsertSite(host: string, name: string, createBox = true): Promise<void> {

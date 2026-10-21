@@ -122,6 +122,23 @@ export interface CloudSiteSummary {
   displayName: string;
   baseUrl: string;
   note: string;
+  /** 服务端算好的账号数（`/api/sites` 的 `accountCount`），与云端站点卡片同源。 */
+  accountCount: number;
+}
+
+/**
+ * 一次原子读取的 UI 状态（`GET /api/ui/state`）。
+ *
+ * ★ 2026-10-21：此前扩展分别请求 accounts / sites / boxes；三个响应之间
+ *   可以插入写入，页面会拿到"新账号 + 旧站点/盒子"的拼盘。
+ *   这个形状把三份数据和同一个 revision 绑在一起，扩展整页替换而不是拼装。
+ */
+export interface CloudUiState {
+  revision: number;
+  accounts: ParallelAccount[];
+  sites: CloudSiteSummary[];
+  boxes: ParBox[];
+  defaultBox: string;
 }
 
 /**

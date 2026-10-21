@@ -4,6 +4,7 @@ import type {
   DataBackup,
   RuntimeRequest,
   RuntimeResponse,
+  UiStatePayload,
 } from '../../shared/messages';
 import { DEFAULT_FAVORITES, EXT_VERSION, LOCAL_KEYS } from '../../shared/constants';
 import { getForwardingLogger, setForwarder } from '../../shared/log';
@@ -298,6 +299,77 @@ async function loadBrowserAccounts(): Promise<void> {
   //   但**必须由同一处赋值**（都在这里），否则两处会给出不同的数 ——
   //   而"哪个是真的"没有人能判断（本仓历史上 `reused` 就是这么错过的）。
   setStat('nav-online', onlineCount);
+}
+
+/**
+ * 一次原子读取 accounts / sites / boxes。
+ *
+ * `par.state` 是 4.2.20 新增的读路径：服务端 `/api/ui/state` 把三份数据
+ * 和同一个 revision 一起返回，页面直接整页替换。
+ *
+ * ★ 失败（旧服务端没有该端点 / 离线 / 版本错配）返回 false，
+ *   由 `refreshAll()` 回落到原来的三次读取；**不能让新端点成为单点故障**。
+ * ★ 成功时也把只读副本写回 storage，离线/下次启动仍能显示。
+ */
+async function loadAtomicState(): Promise<boolean> {
+  let res: RuntimeResponse;
+  try {
+    res = await send({ kind: 'par.state' });
+  } catch {
+    return false;
+  }
+  if (res.kind !== 'par.state' || !res.result.ok) {
+    return false;
+  }
+  const state = res.result.data as UiStatePayload;
+  if (!state || !Array.isArray(state.accounts) || !Array.isArray(state.sites)
+      || !Array.isArray(state.boxes)) {
+    return false;
+  }
+
+  browserAccounts = state.accounts;
+  for (const id of Array.from(selectedIds)) {
+    if (!browserAccounts.some((a) => a.id === id)) {
+      selectedIds.delete(id);
+    }
+  }
+  defaultBox = state.defaultBox || DEFAULT_BOX_FALLBACK;
+  boxes = [...new Set([defaultBox, ...state.boxes.map((b) => b.name)])];
+  if (currentBox !== '全部' && !boxes.includes(currentBox)) {
+    currentBox = '全部';
+  }
+  boxDetail = new Map(state.boxes.map((b) => [b.name, b]));
+  disabledBoxes = state.boxes.filter((b) => b.disabled).map((b) => b.name).sort();
+  cloudSites = state.sites.filter((s) => !isCloudHost(s.host));
+  siteNames = Object.fromEntries(
+    cloudSites.map((s) => [s.host, { name: s.name, displayName: s.displayName }]),
+  );
+  cloudListError = '';
+  offlineStatus = { offline: false };
+
+  // 只读副本：离线/重启后 loadBoxes / 轮盘仍能按上一次成功状态工作
+  try {
+    const used = new Set(browserAccounts.map((a) => boxOf(a)));
+    await chrome.storage.local.set({
+      [LOCAL_KEYS.defaultBox]: defaultBox,
+      [LOCAL_KEYS.disabledBoxes]: disabledBoxes,
+      [LOCAL_KEYS.boxList]: boxes.filter((b) => b !== defaultBox && !used.has(b)),
+      [LOCAL_KEYS.boxDetails]: state.boxes,
+    });
+  } catch (e) {
+    // 副本写失败不影响本次在线渲染；下一轮还会再写
+    log.warn('原子状态的只读副本写盘失败（本次仍按在线数据渲染）：%s',
+      e instanceof Error ? e.message : String(e));
+  }
+
+  // 强制下一轮渲染（数据已经整页替换，旧 diff key 不能继续抑制重画）
+  lastListKey = '';
+  lastSitesKey = '';
+  lastChipsKey = '';
+  lastLedgerKey = '';
+  lastHostOptions = '';
+  lastBoxOptions = '';
+  return true;
 }
 
 function badgeOf(a: BrowserAccount): { cls: string; text: string } {
@@ -874,14 +946,29 @@ function isBoxDisabled(name: string): boolean {
 }
 
 function renderBoxChips(): void {
-  const key = JSON.stringify([boxes, currentBox, browserAccounts.map((a) => boxOf(a)), batchMode]);
+  const key = JSON.stringify([
+    boxes,
+    currentBox,
+    browserAccounts.map((a) => boxOf(a)),
+    boxes.map((name) => [name, boxDetail.get(name)?.count ?? null]),
+    batchMode,
+  ]);
   if (key === lastChipsKey) {
     return;
   }
   lastChipsKey = key;
   boxChipsEl.innerHTML = '';
 
-  const countOf = (name: string) => browserAccounts.filter((a) => boxOf(a) === name).length;
+  /* ★ 2026-10-21：芯片与台账使用**同一个云端 count**。
+   *   改前这里按 browserAccounts 现算，而账号缓存 5 秒、盒子详情是 force 拉取的
+   *   ⇒ 刚在云端增删账号时，同一个盒子在芯片/台账上会短暂显示两个不同数字。
+   *   没有云端详情（离线/首轮）才回落到本地账号列表。 */
+  const countOf = (name: string) => {
+    const d = boxDetail.get(name);
+    return d && Number.isFinite(d.count)
+      ? d.count
+      : browserAccounts.filter((a) => boxOf(a) === name).length;
+  };
 
   const all = document.createElement('button');
   all.type = 'button';
@@ -890,7 +977,7 @@ function renderBoxChips(): void {
   allLabel.textContent = '全部';
   const allN = document.createElement('span');
   allN.className = 'chip-n';
-  allN.textContent = String(browserAccounts.length);
+  allN.textContent = String(boxes.reduce((n, name) => n + countOf(name), 0));
   all.append(allLabel, allN);
   all.addEventListener('click', () => {
     currentBox = '全部';
@@ -1996,22 +2083,27 @@ function countAccountsFor(displayHost: string): number {
  */
 async function loadSites(): Promise<void> {
   // 站点名从云端拉；拿不到（离线）时**保持上一次的列表**（见 refreshSiteNames 的说明）
-  const fresh = await refreshSiteNames();
+  await refreshSiteNames();
 
-  /* ★★ 2026-10-19（用户要求：同步应当自动执行，不再有「同步到云端」按钮）：
+  /* ★★ 2026-10-21：**读取不再自动建站**。
    *
-   * 账号引用了、但云端站点表里没有的 host，在这里**自动补建**成站点记录。
-   * 旧逻辑把这件事留给用户点「同步到云端」，于是：
-   *   · 列表上一直挂着一个"未同步"的标记（其实只是个本地引用）
-   *   · 用户不理解"同步"是什么、也不知道该不该点
-   * ⇒ 现在由界面自己完成，且**只在刚刚成功拉到云端列表时**做 ——
-   *   拿不到列表就补建会把所有账号站点当成缺失，在网络抖动时造出重复站点。
+   * v4.2.19 及之前，这里会在每次成功拉到站点列表后调用 `ensureMissingSites()`：
+   * 只要某个账号的 `siteHost` 不在刚刚拉到的站点表里，就 POST 一个站点。
+   *
+   * 这个动作在"云端刚删掉站点、扩展还拿着 5 秒账号缓存"时会**把已删站点复活**：
+   *   · 云端删站点 ⇒ 级联删它下面的账号；
+   *   · 扩展的 `/api/accounts` 缓存（5 秒）里仍有旧账号；
+   *   · 下一轮 3 秒轮询拿到"没有该站点"的新站点表；
+   *   · `ensureMissingSites()` 看到旧账号 host 缺失 ⇒ 自动建站并 bump revision。
+   * 用户会看到刚删掉的站点自己回来，且云端/扩展各自说的历史不一样。
+   *
+   * 现在云端账号通过 FK 一定绑定一个站点；正常数据里不存在"账号引用了、
+   * 云端却没有"的悬空 host。站点表与账号表只是**两份独立读取**，短暂错位
+   * 应该由下一轮刷新收敛，而不是由读页面产生写操作。
+   *
+   * 若确实需要补建历史遗留站点，应走显式同步/导入动作，且先强制刷新账号与站点，
+   * 不能用 3 秒轮询的读路径代替。
    */
-  if (fresh && (await ensureMissingSites())) {
-    // 补建成功后重拉一次，让新记录（含 id/baseUrl）进入本轮的渲染
-    await refreshSiteNames();
-  }
-
   const rows = buildSiteRows();
   // ★ 渲染输入要**全进 key**：少了哪一项，"它变了但界面不动"就会静默发生
   //   （v4.2.2 实测到的"改名后下拉不更新"就是这个形态）。
@@ -2026,62 +2118,6 @@ async function loadSites(): Promise<void> {
   }
 
   await purgeLegacyHostLists();
-}
-
-/**
- * ★★ 2026-10-19：把"账号引用了、云端却没有"的站点**自动补建**。
- *
- * 用户要求：「同步数据应该是自动执行的，不用手动执行。」
- * ⇒ 这是旧「同步到云端」按钮做的事，只是挪到了**每一次成功拉取站点列表之后**。
- *
- * 三条约束（缺一条就会造出新问题）：
- *   1. **只在云端列表刚刚成功拉到之后调用**（调用点在 `loadSites` 里）——
- *      拿不到列表时，所有账号站点都会被误判成"缺失"，抖动一次就建一堆重复站点。
- *   2. **建盒参数传 `false`**：用户没有在这个动作里被问过"要不要建盒"，
- *      替他把盒子建出来属于未确认的副作用（建站表单的勾选框才是那个入口）。
- *   3. **失败后 60 秒内不重试**：`loadSites` 挂在 3 秒轮询上，不节流会离线时
- *      每 3 秒打一次云端，把失败日志刷满而信息量不增。
- *
- * 返回 `true` = 至少补建成功一条（调用方据此重拉列表）。
- */
-const siteAutoSyncAt = new Map<string, number>();
-const SITE_AUTOSYNC_RETRY_MS = 60_000;
-
-async function ensureMissingSites(): Promise<boolean> {
-  const known = new Set(cloudSites.map((s) => s.host));
-  const missing: string[] = [];
-  for (const a of browserAccounts) {
-    const host = a.siteHost?.trim();
-    if (!host || host.includes('*') || isCloudHost(host) || known.has(host) || missing.includes(host)) {
-      continue;
-    }
-    missing.push(host);
-  }
-  if (!missing.length) {
-    return false;
-  }
-  let created = false;
-  for (const host of missing) {
-    const last = siteAutoSyncAt.get(host) ?? 0;
-    if (Date.now() - last < SITE_AUTOSYNC_RETRY_MS) {
-      continue;
-    }
-    siteAutoSyncAt.set(host, Date.now());
-    const res = await send({
-      kind: 'par.upsertSite',
-      host,
-      name: siteTitleOf(host).title,
-      createBox: false,
-    }).catch(() => null);
-    if (res && res.kind === 'par.upsertSite' && res.result.ok) {
-      created = true;
-      log.info('站点 %s 不在云端账号库里，已自动补建', host);
-    } else {
-      const why = res && res.kind === 'par.upsertSite' && !res.result.ok ? res.result.error : '无响应';
-      log.warn('站点 %s 自动补建失败（60 秒内不再重试）：%s', host, why);
-    }
-  }
-  return created;
 }
 
 /**
@@ -2191,8 +2227,8 @@ async function refreshSiteNames(): Promise<boolean> {
  *
  * ★ 唯一的并集是**兜底**：`browserAccounts` 里引用的、而云端站点表里没有的 host
  *   仍然列出来（否则出现"账号看得见、站点看不见"的悬空引用）。
- *   ★ 2026-10-19：这种行会被 `ensureMissingSites()` 在后台**自动补建**，
- *   界面上不标任何"未同步" —— 用户没有可执行的动作，标了只会制造焦虑。
+ *   ★ 2026-10-21：兜底行只用于**显示**，不会在读取时自动写回云端；
+ *   两份读取的短暂错位由下一轮轮询收敛，不拿页面刷新当写入口。
  */
 interface SiteRow {
   host: string;
@@ -2222,15 +2258,14 @@ function buildSiteRows(): SiteRow[] {
       host: s.host,
       siteId: s.id,
       title,
-      count: countAccountsFor(s.host),
+      count: s.accountCount ?? countAccountsFor(s.host),
       baseUrl: s.baseUrl || `https://${s.host}`,
       note: s.note ?? '',
     });
   }
   // 兜底：账号引用了、而云端站点表里没有的 host（悬空引用）。
-  // ★ 2026-10-19：**不再标「未同步」** —— 自动同步会在本轮把它补进云端
-  //   （见 `ensureMissingSites`），补不上（离线）时也没有"说它没同步"的意义：
-  //   用户既不能手动同步、也不该为一次轮询抖动担责。
+  // ★ 2026-10-21：**不标「未同步」，也不自动建站**。这只是两份独立读取
+  //   短暂错位时的只读兜底；下一轮成功拉取自然会收敛。读取绝不产生写操作。
   for (const a of browserAccounts) {
     const host = a.siteHost;
     if (!host || seen.has(host)) {
@@ -2295,9 +2330,9 @@ function renderSites(rows: SiteRow[]): void {
     li.dataset.host = host;
 
     /* ① 名称。
-     * ★ 2026-10-19：这里**不再有「未同步」标记**。同步是自动的
-     *   （见 `ensureMissingSites`），而那个标记真正反映的是"上一轮拉取失败了"——
-     *   把一次网络抖动说成"你的站点没同步"，用户既无从处置、也无从分辨。 */
+     * ★ 2026-10-21：这里**不再有「未同步」标记**，也**不再自动建站**。
+     *   站点表与账号表是两份独立读取；短暂错位是同步延迟，不是让用户点什么的按钮，
+     *   更不该由读页面回写云端。下一轮成功拉取会自行收敛。 */
     const head = document.createElement('div');
     head.className = 'site-card-head';
     const alias = document.createElement('div');
@@ -2328,8 +2363,8 @@ function renderSites(rows: SiteRow[]): void {
      * 改前这里只有一个「更改名称」（内联输入框）—— 地址填错了、备注想补，
      * 都只能删站重建，而删站会**连带删掉它下面的账号**。
      * ⇒ 改成与云端控制台同一个「编辑」入口（名称 / 地址 / 备注）。
-     * ★ 「同步到云端」按钮**整体撤掉**：云端没有这条记录时由 `loadSites`
-     *   自动补建（用户要求：同步应当自动执行）。
+     * ★ 「同步到云端」按钮与读取时自动建站都已撤掉：新建站点走站点表单；
+     *   页面轮询只读，不替用户创建云端记录。
      */
     const editBtn = document.createElement('button');
     editBtn.className = 'btn-ghost btn-sm';
@@ -3613,22 +3648,44 @@ let lastRefreshFailures: string[] = [];
  */
 async function refreshAll(): Promise<void> {
   const failures: string[] = [];
-  const step = async (name: string, fn: () => unknown): Promise<void> => {
+  const step = async (name: string, fn: () => unknown): Promise<boolean> => {
     try {
       await fn();
+      return true;
     } catch (e) {
       failures.push(name);
       log.warn('refreshAll：%s 这一步失败，其余步骤继续 → %s', name, (e as Error)?.message ?? String(e));
+      return false;
     }
   };
 
   // 数据源在最前：下面各层的文案/错误提示都要按它分叉
   await step('cloud.state', loadCloudState);
   await step('authBar', renderAuthBar);
-  // 先取盒子配置（含默认盒显示名），再渲染账号列表，避免首绘用回退名
-  await step('盒子', loadBoxes);
-  await step('账号', loadBrowserAccounts);   // ★ 这一步必须**无论如何**都跑到
-  await step('站点', loadSites);
+
+  /* ★★ 2026-10-21：优先一次原子读取。
+   *
+   * `par.state` 成功 ⇒ 账号/站点/盒子来自服务端同一个 revision，直接整页替换；
+   * 旧服务端没有该端点、或离线 ⇒ 回落到原来的三段读取（本地只读副本仍可用）。
+   * ★ 回落**不算失败**：不能因为老服务端没有新端点就在界面上挂一条永久错误。 */
+  const atomic = await loadAtomicState();
+  if (!atomic) {
+    // 先取盒子配置（含默认盒显示名），再渲染账号列表，避免首绘用回退名
+    await step('盒子', loadBoxes);
+    await step('账号', loadBrowserAccounts);   // ★ 这一步必须**无论如何**都跑到
+    /* 账号刷新后再对账一次：第一次 loadBoxes 发生在账号刷新之前，
+     * 对账用的是上一轮账号，云端刚删/改名盒子时旧账号会把它保留成幽灵盒。 */
+    await step('盒子对账', reconcileBoxesWithCloud);
+    await step('站点', loadSites);
+  } else {
+    setStat('stat-accounts', browserAccounts.length);
+    const onlineCount = browserAccounts.filter((a) => a.tabIds.length > 0).length;
+    setStat('stat-online', onlineCount);
+    setStat('nav-online', onlineCount);
+    await step('账号渲染', renderBrowserAccounts);
+    await step('站点渲染', () => renderSites(buildSiteRows()));
+  }
+
   await step('盒子芯片', renderBoxChips);
   await step('盒子台账', renderBoxLedger);
   await step('盒子站点下拉', fillBoxSiteOptions);

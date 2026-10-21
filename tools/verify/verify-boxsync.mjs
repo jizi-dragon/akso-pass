@@ -153,6 +153,84 @@ console.log('\n=== ⑤ 云端独有的空盒子：必须进列表，且报 chang
   else ok('新增盒子报了 changed（会被写回本地记住的名单）');
 }
 
+// ══════════════════════════ ⑥ 数据同步纪律（2026-10-21）
+console.log('\n=== ⑥ 读取不写、账号自足、刷新顺序 ===');
+{
+  const cloudStore = fs.readFileSync(
+    path.join(ROOT, 'packages', 'extension', 'src', 'background', 'core', 'cloud-store.ts'),
+    'utf8',
+  );
+  const parallel = fs.readFileSync(
+    path.join(ROOT, 'packages', 'extension', 'src', 'ui', 'parallel', 'parallel.ts'),
+    'utf8',
+  );
+
+  /* 用户 2026-10-21 报"两端数据不同步"；根因之一是读页面时自动建站：
+   * 云端刚删站点、扩展旧账号缓存还在 5 秒 TTL 内 ⇒ 自动把站点建回来。
+   * ★ 这里只认**函数定义**，不认历史注释里的名字。 */
+  if (parallel.includes('async function ensureMissingSites')) {
+    fail('读取路径仍在自动建站（ensureMissingSites）—— 删站点可能被复活');
+  } else {
+    ok('读取路径不再自动建站');
+  }
+
+  if (cloudStore.includes("CLOUD_DEFAULT_BASE_URL = 'https://www.dragonrain.top'")) {
+    ok('默认云端地址已归一为 443');
+  } else {
+    fail('默认云端地址没有归一为 443');
+  }
+
+  if (cloudStore.includes("cache: 'no-store'")) {
+    ok('云端请求显式 no-store（不读浏览器 HTTP 缓存）');
+  } else {
+    fail('云端请求没有 no-store，可能读到浏览器缓存的旧 JSON');
+  }
+
+  if (cloudStore.includes('accountCount: num(rec.accountCount)')) {
+    ok('站点账号数读取云端 accountCount');
+  } else {
+    fail('站点账号数没有读取云端 accountCount');
+  }
+  if (parallel.includes('count: s.accountCount ?? countAccountsFor(s.host)')) {
+    ok('站点卡片优先使用云端 accountCount');
+  } else {
+    fail('站点卡片没有优先使用云端 accountCount');
+  }
+
+  const refreshAt = parallel.indexOf('async function refreshAll');
+  const refreshSection = refreshAt >= 0 ? parallel.slice(refreshAt) : '';
+  const accountAt = refreshSection.indexOf("await step('账号'");
+  const reconcileAt = refreshSection.indexOf("await step('盒子对账'");
+  if (accountAt >= 0 && reconcileAt > accountAt) {
+    ok('账号刷新后会再对账盒子（避免旧账号保留幽灵盒）');
+  } else {
+    fail('refreshAll 没有在账号刷新后补盒子对账');
+  }
+
+  if (cloudStore.includes("cloudRequest<unknown>('/api/ui/state')")
+      && parallel.includes('async function loadAtomicState')
+      && parallel.includes("kind: 'par.state'")) {
+    ok('扩展已接入 /api/ui/state 与 par.state');
+  } else {
+    fail('扩展没有完整接入原子 UI 状态（fetch/load/消息任一处缺失）');
+  }
+  const sw = fs.readFileSync(
+    path.join(ROOT, 'packages', 'extension', 'src', 'background', 'service-worker.ts'),
+    'utf8',
+  );
+  if (sw.includes("case 'par.state'")) {
+    ok('Service Worker 有 par.state 处理分支');
+  } else {
+    fail('Service Worker 没有 par.state 分支 —— 页面会永远回落三次读取');
+  }
+  if (refreshSection.includes('loadAtomicState()')
+      && refreshSection.includes("await step('盒子'")) {
+    ok('refreshAll 优先原子读取，并保留旧读路径兜底');
+  } else {
+    fail('refreshAll 没有“原子读取优先 + 三次读取兜底”');
+  }
+}
+
 fs.rmSync(OUT, { force: true });
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: ${bad} 处不符`);
 process.exit(bad === 0 ? 0 : 1);

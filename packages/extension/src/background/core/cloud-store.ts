@@ -1,5 +1,5 @@
 import { LOCAL_KEYS, SESSION_COLORS } from '../../shared/constants';
-import type { CloudDeleteSiteResult, CloudSiteSummary, ParallelAccount, ParBox } from '../../shared/types';
+import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount, ParBox } from '../../shared/types';
 import { isOfflineError, OfflineError } from './offline';
 // v4.2.1：站点显示名从地址推导（用户要求：未填名称时从地址截取，如 tonbridge-config）
 import { deriveSiteNameFromHost } from '../../shared/snake-case';
@@ -29,8 +29,13 @@ import type { ParallelStore } from './parallel-store';
  * 所以下载时 `默认盒名 → 无 box 字段`（`toAccount`），上传时 `无 box/默认盒名 → ''`（`uploadBoxName`）。
  */
 
-/** 云端服务地址（与 popup 的 VAULT_URL 同源；写死是现状，接入后改这里一处） */
-export const CLOUD_DEFAULT_BASE_URL = 'https://www.dragonrain.top:8443';
+/** 云端服务地址（与 popup 的 VAULT_URL 同源；写死是现状，接入后改这里一处）
+ *
+ * ★ 2026-10-21：akso-cloud 已迁到标准 443；这里原先是 `:8443`（迁移期的
+ *   iptables 垫片）。垫片还在时能用，但撤掉后新登录/同步会直接失败。
+ *   已保存的旧会话由 `normalizeBaseUrl()` 归一，不需要用户重新授权。
+ */
+export const CLOUD_DEFAULT_BASE_URL = 'https://www.dragonrain.top';
 
 /** 云端会话：授权码换来的令牌 + 账号库口令密钥（fernetKey 当前不参与填表，仅按契约留存） */
 export interface CloudAuth {
@@ -82,6 +87,16 @@ export async function setCloudAuth(auth: CloudAuth | null): Promise<void> {
 
 function normalizeBaseUrl(raw: string | undefined): string {
   const t = (raw ?? '').trim() || CLOUD_DEFAULT_BASE_URL;
+  try {
+    const u = new URL(t);
+    // 旧版默认地址（8443 迁移垫片）→ 443；只对确实的官方 host 做，别动用户自建实例
+    if (u.hostname === 'www.dragonrain.top' && u.port === '8443') {
+      u.port = '';
+      return u.origin;
+    }
+  } catch {
+    // 不是合法 URL 时保持原来的容错：去掉尾斜杠，让后续 request 给出可读错误
+  }
   return t.replace(/\/+$/, '');
 }
 
@@ -200,6 +215,8 @@ async function requestJson<T>(
         ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      // 云端是事实源，读请求不得被浏览器 HTTP 缓存命中（服务端 JSON 未显式带缓存头）
+      cache: 'no-store',
       signal: ctrl.signal,
     });
   } catch {
@@ -332,6 +349,8 @@ interface CloudSite {
   host: string;
   /** 用户备注（云端控制台可编辑；扩展的站点编辑弹窗也带这一格）。 */
   note: string;
+  /** 云端算好的账号数（`/api/sites` 的 `accountCount`）；用于和站点卡片同源。 */
+  accountCount: number;
   /**
    * 显示名（站点管理那一行的**主标题**）。
    *
@@ -373,28 +392,59 @@ async function loadRawAccounts(force = false): Promise<Record<string, unknown>[]
   return rows;
 }
 
+function mapCloudSite(raw: unknown): CloudSite {
+  const rec = asRecord(raw);
+  const baseUrl = str(rec.baseUrl);
+  const host = hostOfUrl(baseUrl) || hostOfUrl(rec.host);
+  const name = str(rec.name);
+  return {
+    id: str(rec.id),
+    name,
+    baseUrl,
+    host,
+    note: str(rec.note),
+    accountCount: num(rec.accountCount) ?? 0,
+    // 显示名口径见接口注释：**name 与 host 不同**才算用户起过名；
+    // 否则用从地址推导的短名（服务端建站时把 name 填成了完整 host，
+    // 直接用 name 就等于永远显示一长串域名）。
+    displayName: name && name !== host ? name : deriveSiteNameFromHost(host),
+  };
+}
+
+function siteSummary(site: CloudSite): CloudSiteSummary {
+  return {
+    id: site.id,
+    host: site.host,
+    name: site.name,
+    displayName: site.displayName,
+    baseUrl: site.baseUrl,
+    note: site.note,
+    accountCount: site.accountCount,
+  };
+}
+
+function mapParBox(raw: unknown): ParBox {
+  const rec = asRecord(raw);
+  return {
+    name: str(rec.name),
+    isDefault: rec.isDefault === true,
+    disabled: rec.disabled === true,
+    autoDisabled: rec.autoDisabled === true,
+    count: num(rec.count) ?? 0,
+    renameable: rec.renameable !== false,
+    deletable: rec.deletable !== false,
+    bindable: rec.bindable !== false,
+    siteId: str(rec.siteId),
+    siteName: str(rec.siteName),
+  };
+}
+
 async function loadSites(force = false): Promise<CloudSite[]> {
   if (!force && siteCache && Date.now() - siteCache.at < META_TTL_MS) {
     return siteCache.rows;
   }
   const rows = pickArray(await cloudRequest<unknown>('/api/sites'), 'sites')
-    .map((raw) => {
-      const rec = asRecord(raw);
-      const baseUrl = str(rec.baseUrl);
-      const host = hostOfUrl(baseUrl) || hostOfUrl(rec.host);
-      const name = str(rec.name);
-      return {
-        id: str(rec.id),
-        name,
-        baseUrl,
-        host,
-        note: str(rec.note),
-        // 显示名口径见接口注释：**name 与 host 不同**才算用户起过名；
-        // 否则用从地址推导的短名（服务端建站时把 name 填成了完整 host，
-        // 直接用 name 就等于永远显示一长串域名）。
-        displayName: name && name !== host ? name : deriveSiteNameFromHost(host),
-      };
-    })
+    .map(mapCloudSite)
     .filter((s) => Boolean(s.id));
   siteCache = { at: Date.now(), rows };
   return rows;
@@ -414,21 +464,7 @@ async function loadBoxes(force = false): Promise<{ rows: ParBox[]; default: stri
    * UI 拿它决定"给不给入口"，**不要**自己判 `name === defaultBox`：
    * 判据只该有一处，而"能点但一定失败"的按钮比没有按钮更糟。
    */
-  const rows = pickArray(data, 'boxes').map((raw) => {
-    const rec = asRecord(raw);
-    return {
-      name: str(rec.name),
-      isDefault: rec.isDefault === true,
-      disabled: rec.disabled === true,
-      autoDisabled: rec.autoDisabled === true,
-      count: num(rec.count) ?? 0,
-      renameable: rec.renameable !== false,
-      deletable: rec.deletable !== false,
-      bindable: rec.bindable !== false,
-      siteId: str(rec.siteId),
-      siteName: str(rec.siteName),
-    };
-  });
+  const rows = pickArray(data, 'boxes').map(mapParBox).filter((b) => Boolean(b.name));
   const def = str(data.default) || rows.find((b) => b.isDefault)?.name || '';
   boxCache = { at: Date.now(), rows, default: def };
   return boxCache;
@@ -610,6 +646,31 @@ async function listAll(): Promise<ParallelAccount[]> {
   return accounts;
 }
 
+async function fetchUiState(): Promise<CloudUiState> {
+  const data = asRecord(await cloudRequest<unknown>('/api/ui/state'));
+  if (str(data.format) !== 'akso-cloud-ui-state') {
+    throw new Error('云端 UI 状态格式不识别（可能是旧服务端）');
+  }
+  const sites = pickArray(data, 'sites').map(mapCloudSite).filter((s) => Boolean(s.id));
+  const boxes = pickArray(data, 'boxes').map(mapParBox).filter((b) => Boolean(b.name));
+  const defaultBox = str(data.defaultBox) || boxes.find((b) => b.isDefault)?.name || '';
+  const siteById = new Map(sites.map((s) => [s.id, s] as const));
+  const accounts = pickArray(data, 'accounts')
+    .map(asRecord)
+    .map((rec) => toAccount(rec, siteById, defaultBox));
+  const broken = accounts.filter((a) => !a.id).length;
+  if (broken > 0) {
+    throw new Error(`云端 UI 状态有 ${broken} 条账号缺少 id：已中止，避免误读列表`);
+  }
+  return {
+    revision: num(data.revision) ?? 0,
+    accounts,
+    sites: sites.map(siteSummary),
+    boxes,
+    defaultBox,
+  };
+}
+
 async function getOne(id: string): Promise<ParallelAccount> {
   const hit = (await listAll()).find((a) => a.id === id);
   if (!hit) {
@@ -640,14 +701,7 @@ async function patchAccount(id: string, patch: Record<string, unknown>): Promise
  */
 async function loadSiteNames(force = false): Promise<CloudSiteSummary[]> {
   const sites = await loadSites(force);
-  return sites.map((s) => ({
-    id: s.id,
-    host: s.host,
-    name: s.name,
-    displayName: s.displayName,
-    baseUrl: s.baseUrl,
-    note: s.note,
-  }));
+  return sites.map(siteSummary);
 }
 
 /**
@@ -730,6 +784,7 @@ async function updateSiteOnCloud(
     displayName: hit.displayName,
     baseUrl: hit.baseUrl,
     note: hit.note,
+    accountCount: hit.accountCount,
   };
 }
 
@@ -1087,6 +1142,11 @@ export const cloudStore = {
   /** 站点清单（host ↔ 用户自定义名称），见 `loadSiteNames` 的说明（★ 2026-10-13 起含 `id`） */
   async listSites(force = false): Promise<CloudSiteSummary[]> {
     return loadSiteNames(force);
+  },
+
+  /** 一次原子读取账号/站点/盒子（见 `fetchUiState` 的说明） */
+  async uiState(): Promise<CloudUiState> {
+    return fetchUiState();
   },
 
   /** 添加站点时落名（站点不存在就建），见 `upsertSiteOnCloud` 的说明 */

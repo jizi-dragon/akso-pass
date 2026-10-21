@@ -329,6 +329,26 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       });
       return { kind: 'par.list', result: r };
     }
+    /**
+     * 一次原子读取 accounts/sites/boxes。
+     * ★ 老页面/新 SW 或新页面/老 SW 的双向版本错配都不能把整页打死：
+     *   页面拿不到这个 kind 时会回落到三次旧读取（见 parallel.ts 的 loadAtomicState）。
+     */
+    case 'par.state': {
+      const r = await tryRun(async () => {
+        const state = await parallelStore.uiState();
+        await warmEnforcementCache(state.accounts.map((a) => a.siteHost));
+        return {
+          ...state,
+          accounts: state.accounts.map((a) => ({
+            ...a,
+            ...parallelSession.statusOf(a),
+            password: a.hasPassword === true,
+          })),
+        };
+      });
+      return { kind: 'par.state', result: r };
+    }
     /* 离线只读副本的可见性。
      * ★ 它在 `par.list` **之后**被调用：`par.list` 是"走云端还是走副本"的**发生地**，
      *   所以先问列表、再问状态，读到的才是与那份列表**同一次**的事实。
