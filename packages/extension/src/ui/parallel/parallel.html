@@ -301,6 +301,18 @@
       </div>
     </div>
 
+    <!-- 关联站点：**选择列表**（站点多时在列表里滚动，不让用户记序号/手输） -->
+    <div id="site-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="site-modal-title">
+      <div class="modal-card">
+        <h3 id="site-modal-title">关联站点</h3>
+        <p id="site-modal-desc" class="desc">选择一个站点。一个盒子只能关联一个站点。</p>
+        <div id="site-modal-list" class="box-options"></div>
+        <div class="modal-actions">
+          <button id="site-modal-cancel" class="btn-ghost" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 云端设备授权（RFC 8628）等待面板：转圈 + 批准页链接 + 取消/重试。
          ★ deviceCode 不进 DOM；这里的链接是服务端拼好的 verificationUrl，原样打开 -->
     <div id="device-modal" class="modal hidden">

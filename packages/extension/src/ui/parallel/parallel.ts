@@ -94,6 +94,12 @@ const boxModalNew = document.getElementById('box-modal-new') as HTMLInputElement
 const boxModalOk = document.getElementById('box-modal-ok') as HTMLButtonElement;
 const boxModalCancel = document.getElementById('box-modal-cancel') as HTMLButtonElement;
 
+const siteModal = document.getElementById('site-modal') as HTMLDivElement;
+const siteModalTitle = document.getElementById('site-modal-title') as HTMLHeadingElement;
+const siteModalDesc = document.getElementById('site-modal-desc') as HTMLParagraphElement;
+const siteModalList = document.getElementById('site-modal-list') as HTMLDivElement;
+const siteModalCancel = document.getElementById('site-modal-cancel') as HTMLButtonElement;
+
 /**
  * ★★★ v4.2.12：**动态弹窗的挂载点**（`body`）。
  *
@@ -1098,7 +1104,7 @@ function renderBoxLedger(): void {
         btn.type = 'button';
         btn.textContent = d.siteId ? '改绑' : '关联站点';
         btn.title = '把这个盒子关联到一个站点（一个盒子只绑一个）';
-        btn.addEventListener('click', () => void bindSitePrompt(name));
+        btn.addEventListener('click', () => void bindSitePicker(name));
         actions.append(btn);
         if (d.siteId) {
           const un = document.createElement('button');
@@ -1124,29 +1130,46 @@ function renderBoxLedger(): void {
   }
 }
 
-/** 「关联站点」：把站点清单编号让用户选（与「移入盒子」弹窗同一套路子，避免新做一个弹窗） */
-function bindSitePrompt(name: string): void {
+/** 「关联站点」：弹出站点选择列表（与「移入盒子」同一套弹层，不让用户记序号/手输）。 */
+function bindSitePicker(name: string): void {
   const usable = cloudSites;
   if (!usable.length) {
     alert('还没有可关联的站点 —— 先在「站点管理」里添加一个站点。');
     return;
   }
-  const lines = usable.map((s, i) => `${i + 1}. ${s.displayName}（${s.host}）`).join('\n');
   const cur = boxDetail.get(name)?.siteId ?? '';
-  const ans = prompt(
-    `把盒子「${name}」关联到哪个站点？输入序号：\n\n${lines}`,
-    cur ? String(Math.max(1, usable.findIndex((s) => s.id === cur) + 1)) : '',
-  );
-  if (ans === null) {
-    return;
+  siteModalTitle.textContent = `关联站点 · ${name}`;
+  siteModalDesc.textContent = cur
+    ? `当前关联：${boxDetail.get(name)?.siteName || cur}。选择另一个站点即可改绑。`
+    : '选择一个站点。一个盒子只能关联一个站点。';
+  siteModalList.innerHTML = '';
+  for (const site of usable) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'box-option' + (site.id === cur ? ' active' : '');
+    row.dataset.siteId = site.id;
+    const label = document.createElement('span');
+    label.textContent = `${site.displayName}（${site.host}）`;
+    row.append(label);
+    row.addEventListener('click', () => {
+      hideSiteModal();
+      void bindBoxSiteFlow(name, site.id);
+    });
+    siteModalList.append(row);
   }
-  const idx = Number.parseInt(ans.trim(), 10);
-  if (!Number.isInteger(idx) || idx < 1 || idx > usable.length) {
-    alert('序号不在范围内。');
-    return;
-  }
-  void bindBoxSiteFlow(name, usable[idx - 1].id);
+  siteModal.classList.remove('hidden');
 }
+
+function hideSiteModal(): void {
+  siteModal.classList.add('hidden');
+}
+
+siteModalCancel.addEventListener('click', hideSiteModal);
+siteModal.addEventListener('click', (e) => {
+  if (e.target === siteModal) {
+    hideSiteModal();
+  }
+});
 
 /**
  * 新建盒子表单里那个站点下拉（"不关联" + 每个可关联的站点）。
@@ -1577,6 +1600,10 @@ boxModal.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') {
+    return;
+  }
+  if (!siteModal.classList.contains('hidden')) {
+    hideSiteModal();
     return;
   }
   if (!boxModal.classList.contains('hidden')) {

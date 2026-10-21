@@ -140,6 +140,25 @@ console.log(`     文本=${offline.text}`);
 if (offline.buttons === 0) ok('没有操作按钮 —— 每个操作都要打到云端，离线时给了也点不动');
 else fail(`离线时画出了 ${offline.buttons} 个按钮（点了必然失败，而那不是用户的错）`);
 
+console.log('\n=== 结构段 ④ 关联站点是**选择列表**，不是让用户记序号 ===');
+const picker = await page.evaluate(() => ({
+  modal: Boolean(document.getElementById('site-modal')),
+  list: Boolean(document.getElementById('site-modal-list')),
+  inputs: document.querySelectorAll('#site-modal input').length,
+}));
+if (picker.modal) ok('存在 #site-modal 弹层');
+else fail('缺 #site-modal —— 关联站点没有选择列表');
+if (picker.list) ok('存在 #site-modal-list 列表容器');
+else fail('缺 #site-modal-list');
+if (picker.inputs === 0) ok('选择弹层里没有输入框（用户不必手输序号/站点）');
+else fail(`选择弹层里有 ${picker.inputs} 个输入框 ⇒ 仍然要求用户输入`);
+const built = fs.readFileSync(path.join(DIST, 'ui', 'parallel', 'parallel.js'), 'utf8');
+if (built.includes('bindSitePicker') && !built.includes('输入序号')) {
+  ok('构建产物走 bindSitePicker，旧「输入序号」文案已清');
+} else {
+  fail('构建产物里仍找不到 bindSitePicker，或还残留「输入序号」文案');
+}
+
 /* ==================== 流程段（要显式开启 + 有会话） ==================== */
 console.log('\n=== 流程段：建盒 / 禁用 / 改名 / 删除（走真实云端） ===');
 const state = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'cloud.state' }).catch(() => null));
