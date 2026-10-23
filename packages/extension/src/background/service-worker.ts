@@ -122,8 +122,7 @@ import { isOfflineError } from './core/offline';
 import { siteAuth, probeScheme } from './core/site-auth';
 // v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
 import { translate } from '../shared/engines';
-import { loadTranslationSettings, TRANSLATION_MAX_CHARS } from '../shared/translate-settings';
-import { limitTranslation } from '../shared/translate-limit';
+import { loadTranslationSettings } from '../shared/translate-settings';
 import { incrementStats } from '../shared/translate-stats';
 import { toSnakeCase, validateTranslation, looksLikeDictionaryEntry } from '../shared/snake-case';
 import {
@@ -1133,16 +1132,10 @@ async function handleTranslateRequest(rawText: string): Promise<{
       };
     }
 
-    const baseText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
-    // 默认限制 50 字符：优先在完整句子/单词边界截断（见 translate-limit.ts），
-    // 不是硬切；关闭开关则完全保留。
-    const finalText = settings.length_limit_enabled
-      ? limitTranslation(baseText, TRANSLATION_MAX_CHARS)
-      : baseText;
+    const finalText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
 
     await incrementStats();
-    log.info('翻译成功 engine=%s snake=%s limit=%s len=%d', result.engine,
-      settings.naming_convention_mode, settings.length_limit_enabled, finalText.length);
+    log.info('翻译成功 engine=%s snake=%s len=%d', result.engine, settings.naming_convention_mode, finalText.length);
     return { success: true, text: finalText, engine: result.engine };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -42,7 +42,6 @@ interface TranslateReply {
 
 interface CachedSettings {
   translate_enabled: boolean;
-  length_limit_enabled: boolean;
   floating_icon_enabled: boolean;
   /** 点图标时是否回填输入框；false 时只复制 */
   icon_fill_enabled: boolean;
@@ -221,7 +220,6 @@ async function getSettings(): Promise<CachedSettings> {
   // 默认值：即使 storage 读不到也必须能翻译（隐私模式下 storage.sync 会失败）
   let out: CachedSettings = {
     translate_enabled: true,
-    length_limit_enabled: true,
     floating_icon_enabled: true,
     icon_fill_enabled: true,
     naming_convention_mode: false,
@@ -231,15 +229,13 @@ async function getSettings(): Promise<CachedSettings> {
   try {
     const stored = await chrome.storage.sync.get({
       translate_enabled: true,
-      length_limit_enabled: true,
-      floating_icon_enabled: true,
+        floating_icon_enabled: true,
       icon_fill_enabled: true,
       naming_convention_mode: false,
       target_language: 'en',
     });
     out = {
       translate_enabled: stored.translate_enabled !== false,
-      length_limit_enabled: stored.length_limit_enabled !== false,
       floating_icon_enabled: stored.floating_icon_enabled !== false,
       icon_fill_enabled: stored.icon_fill_enabled !== false,
       naming_convention_mode: stored.naming_convention_mode === true,
