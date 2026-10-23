@@ -171,9 +171,10 @@ check('翻译面板有「译文长度限制」开关',
 check('长度限制默认开启且上限为 50',
   /length_limit_enabled: true/.test(translateSettings)
   && /TRANSLATION_MAX_CHARS = 50/.test(translateSettings));
-check('后台按开关截断译文',
+check('后台按开关做词边界/句子边界截断',
   /settings\.length_limit_enabled/.test(translateBg)
-  && /slice\(0, TRANSLATION_MAX_CHARS\)/.test(translateBg));
+  && /limitTranslation\(/.test(translateBg)
+  && /translate-limit/.test(translateBg));
 check('用户手册写的是 Ctrl+X 与 50 字符',
   /Ctrl\+X/.test(manual) && /50 个字符/.test(manual));
 

@@ -123,6 +123,7 @@ import { siteAuth, probeScheme } from './core/site-auth';
 // v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
 import { translate } from '../shared/engines';
 import { loadTranslationSettings, TRANSLATION_MAX_CHARS } from '../shared/translate-settings';
+import { limitTranslation } from '../shared/translate-limit';
 import { incrementStats } from '../shared/translate-stats';
 import { toSnakeCase, validateTranslation, looksLikeDictionaryEntry } from '../shared/snake-case';
 import {
@@ -1133,9 +1134,10 @@ async function handleTranslateRequest(rawText: string): Promise<{
     }
 
     const baseText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
-    // 默认限制 50 字符（按 Unicode 码点切，避免把 emoji 劈成半个）；开关关闭则不截断。
+    // 默认限制 50 字符：优先在完整句子/单词边界截断（见 translate-limit.ts），
+    // 不是硬切；关闭开关则完全保留。
     const finalText = settings.length_limit_enabled
-      ? Array.from(baseText).slice(0, TRANSLATION_MAX_CHARS).join('')
+      ? limitTranslation(baseText, TRANSLATION_MAX_CHARS)
       : baseText;
 
     await incrementStats();

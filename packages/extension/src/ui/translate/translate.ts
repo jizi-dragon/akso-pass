@@ -26,6 +26,8 @@
 import { EXT_VERSION, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../../shared/constants';
 import { getForwardingLogger } from '../../shared/log';
 import { toSnakeCase } from '../../shared/snake-case';
+import { limitTranslation } from '../../shared/translate-limit';
+import { TRANSLATION_MAX_CHARS } from '../../shared/translate-settings';
 
 /* ★ 用 `getForwardingLogger` 而不是 `getLogger`：**与 `ui/parallel/parallel.ts` 同一形状**。
  *
@@ -164,7 +166,14 @@ function renderAdvCurrent(): void {
 /* ── 渲染：预览与启用态 ── */
 function renderPreview(): void {
   const src = el.previewIn.value;
-  el.previewOut.textContent = src.trim() ? toSnakeCase(src) : '—';
+  if (!src.trim()) {
+    el.previewOut.textContent = '—';
+    return;
+  }
+  const converted = toSnakeCase(src);
+  el.previewOut.textContent = el.lengthLimit.checked
+    ? limitTranslation(converted, TRANSLATION_MAX_CHARS)
+    : converted;
 }
 
 function renderEnabledState(enabled: boolean): void {
@@ -370,7 +379,10 @@ async function init(): Promise<void> {
     renderIconFillState(el.iconFill.checked);
     void onSave();
   });
-  el.lengthLimit.addEventListener('change', () => void onSave());
+  el.lengthLimit.addEventListener('change', () => {
+    renderPreview();
+    void onSave();
+  });
 
   el.saveBtn.addEventListener('click', () => void onSave());
   el.testBtn.addEventListener('click', () => void onTest());
