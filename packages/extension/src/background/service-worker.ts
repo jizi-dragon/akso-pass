@@ -122,7 +122,7 @@ import { isOfflineError } from './core/offline';
 import { siteAuth, probeScheme } from './core/site-auth';
 // v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
 import { translate } from '../shared/engines';
-import { loadTranslationSettings } from '../shared/translate-settings';
+import { loadTranslationSettings, TRANSLATION_MAX_CHARS } from '../shared/translate-settings';
 import { incrementStats } from '../shared/translate-stats';
 import { toSnakeCase, validateTranslation, looksLikeDictionaryEntry } from '../shared/snake-case';
 import {
@@ -1087,7 +1087,7 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
  * **命名规范转换** → 记统计。
  *
  * ★ 为什么 snake_case 转换放在 background 而不是页面：
- *   两条路径（点图标 / Alt+T）**共用同一份结果**。放在页面里就等于两份调用点，
+ *   两条路径（点图标 / Ctrl+X）**共用同一份结果**。放在页面里就等于两份调用点，
  *   而"其中一条忘了转"不会报错，只会让两个入口给出的格式不一样。
  *
  * ★ 统计**只在这里 +1**：页面拿到的永远是"已成功"的结果，
@@ -1132,10 +1132,15 @@ async function handleTranslateRequest(rawText: string): Promise<{
       };
     }
 
-    const finalText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
+    const baseText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
+    // 默认限制 50 字符（按 Unicode 码点切，避免把 emoji 劈成半个）；开关关闭则不截断。
+    const finalText = settings.length_limit_enabled
+      ? Array.from(baseText).slice(0, TRANSLATION_MAX_CHARS).join('')
+      : baseText;
 
     await incrementStats();
-    log.info('翻译成功 engine=%s snake=%s len=%d', result.engine, settings.naming_convention_mode, finalText.length);
+    log.info('翻译成功 engine=%s snake=%s limit=%s len=%d', result.engine,
+      settings.naming_convention_mode, settings.length_limit_enabled, finalText.length);
     return { success: true, text: finalText, engine: result.engine };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1468,13 +1473,13 @@ chrome.commands.onCommand.addListener((command) => {
     void toggleFavoritesOverlay();
   }
   if (command === TRANSLATE_COMMAND) {
-    // v4.2.0：Alt+T —— 翻译当前输入框内容并只写剪贴板（不回填）
+    // v4.2.0：Ctrl+X —— 翻译当前输入框内容并只写剪贴板（不回填）
     void runTranslateHotkey();
   }
 });
 
 /**
- * `Alt+T` 的实际落地：把命令转给**当前标签页**的内容脚本。
+ * `Ctrl+X` 的实际落地：把命令转给**当前标签页**的内容脚本。
  *
  * ★ 为什么必须在 SW 里转一手：`chrome.commands` 的 `onCommand` **只发给扩展的
  *   service worker**，页面里的内容脚本收不到。所以"快捷键"这条链是

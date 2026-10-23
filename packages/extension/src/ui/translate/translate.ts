@@ -67,6 +67,7 @@ const el = {
   iconPathTitle: $<HTMLElement>('icon-path-title'),
   iconActionDesc: $<HTMLElement>('icon-action-desc'),
   naming: $<HTMLInputElement>('naming_convention_mode'),
+  lengthLimit: $<HTMLInputElement>('length_limit_enabled'),
   targetLang: $<HTMLSelectElement>('target_language'),
   engineList: $<HTMLDivElement>('engine-list'),
   adv: $<HTMLDetailsElement>('adv'),
@@ -169,8 +170,8 @@ function renderPreview(): void {
 function renderEnabledState(enabled: boolean): void {
   el.enabledLabel.textContent = enabled ? '翻译功能已开启' : '翻译功能已关闭';
   el.enabledSub.textContent = enabled
-    ? '页面会出现翻译图标，Alt+T 可用'
-    : '图标不会出现，Alt+T 也不响应';
+    ? '页面会出现翻译图标，Ctrl+X 可用'
+    : '图标不会出现，Ctrl+X 也不响应';
   el.disabledBanner.classList.toggle('hidden', enabled);
 }
 
@@ -204,6 +205,7 @@ async function collect(): Promise<TranslationSettings> {
     floating_icon_enabled: el.floatingIcon.checked,
     icon_fill_enabled: el.iconFill.checked,
     naming_convention_mode: el.naming.checked,
+    length_limit_enabled: el.lengthLimit.checked,
     target_language: el.targetLang.value,
     source_language: 'auto',
     translation_provider: selectedEngine(),
@@ -234,7 +236,7 @@ async function onSave(): Promise<void> {
   }
 }
 
-/* ── 快捷键真实键位（不要写死 "Alt+T"：用户可能已在快捷键页改过） ── */
+/* ── 快捷键真实键位（不要写死 "Ctrl+X"：用户可能已在快捷键页改过） ── */
 async function renderHotkey(): Promise<void> {
   try {
     const commands = await chrome.commands.getAll();
@@ -330,6 +332,7 @@ async function init(): Promise<void> {
       floating_icon_enabled: true,
       icon_fill_enabled: true,
       naming_convention_mode: false,
+      length_limit_enabled: true,
       target_language: 'en',
       source_language: 'auto',
       translation_provider: 'auto',
@@ -340,6 +343,7 @@ async function init(): Promise<void> {
   el.floatingIcon.checked = settings.floating_icon_enabled;
   el.iconFill.checked = settings.icon_fill_enabled;
   el.naming.checked = settings.naming_convention_mode;
+  el.lengthLimit.checked = settings.length_limit_enabled;
   el.targetLang.value = settings.target_language;
   renderEngines(settings.translation_provider);
   renderEnabledState(settings.translate_enabled);
@@ -366,6 +370,7 @@ async function init(): Promise<void> {
     renderIconFillState(el.iconFill.checked);
     void onSave();
   });
+  el.lengthLimit.addEventListener('change', () => void onSave());
 
   el.saveBtn.addEventListener('click', () => void onSave());
   el.testBtn.addEventListener('click', () => void onTest());
@@ -391,6 +396,7 @@ async function init(): Promise<void> {
         el.floatingIcon.checked = next.floating_icon_enabled;
         el.iconFill.checked = next.icon_fill_enabled;
         el.naming.checked = next.naming_convention_mode;
+        el.lengthLimit.checked = next.length_limit_enabled;
         el.targetLang.value = next.target_language;
         renderEngines(next.translation_provider);
         renderEnabledState(next.translate_enabled);

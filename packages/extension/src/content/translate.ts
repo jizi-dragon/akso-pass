@@ -1,12 +1,12 @@
 /**
- * 页面内翻译：浮动图标（可选）+ `Alt+T` 快捷键 → 剪贴板。
+ * 页面内翻译：浮动图标（可选）+ `Ctrl+X` 快捷键 → 剪贴板。
  *
  * # 两条路径的**语义差异**（用户 2026-10-12 明确要求并存）
  *
  * | 触发 | 行为 |
  * |---|---|
  * | **点浮动图标** | 翻译并**回填到输入框**（覆盖原文）—— 原扩展的行为 |
- * | **`Alt+T`** | 翻译并**只写剪贴板**，**不动输入框** —— 便于到下一个输入框直接粘贴 |
+ * | **`Ctrl+X`** | 翻译并**只写剪贴板**，**不动输入框** —— 便于到下一个输入框直接粘贴 |
  *
  * ⇒ 两条路径共用同一套"翻译 + 校验 + 命名规范转换"，**只有落地方式不同**。
  *
@@ -42,6 +42,7 @@ interface TranslateReply {
 
 interface CachedSettings {
   translate_enabled: boolean;
+  length_limit_enabled: boolean;
   floating_icon_enabled: boolean;
   /** 点图标时是否回填输入框；false 时只复制 */
   icon_fill_enabled: boolean;
@@ -53,7 +54,7 @@ interface CachedSettings {
 const SETTINGS_TTL_MS = 3000;
 let settingsCache: CachedSettings | null = null;
 
-/** 当前获得焦点的可翻译元素（焦点跟踪的结果；`Alt+T` 就是冲它来的） */
+/** 当前获得焦点的可翻译元素（焦点跟踪的结果；`Ctrl+X` 就是冲它来的） */
 let targetEl: HTMLElement | null = null;
 let hideTimer: number | undefined;
 
@@ -152,7 +153,7 @@ function writeText(el: HTMLElement, text: string): void {
  *   为一次 `writeText` 不值得（本仓规则 10 的同族判断：别为一行功能加一个权限）。
  *
  * ★ 为什么这里能成功：两条路径**都在用户手势里**发起 ——
- *   `Alt+T` 的 keydown、或图标的 mousedown。缺了这个手势，
+ *   `Ctrl+X` 的 keydown、或图标的 mousedown。缺了这个手势，
  *   `navigator.clipboard` 会以 `NotAllowedError` 拒绝，而**页面不给任何提示**。
  *   ⇒ 所以这里绝不许把 `writeClipboard` 挪到 `await` 之后（与 `permissions.request`
  *     必须最先发起是同一条纪律，AGENTS.md §2 有先例）。
@@ -220,6 +221,7 @@ async function getSettings(): Promise<CachedSettings> {
   // 默认值：即使 storage 读不到也必须能翻译（隐私模式下 storage.sync 会失败）
   let out: CachedSettings = {
     translate_enabled: true,
+    length_limit_enabled: true,
     floating_icon_enabled: true,
     icon_fill_enabled: true,
     naming_convention_mode: false,
@@ -229,6 +231,7 @@ async function getSettings(): Promise<CachedSettings> {
   try {
     const stored = await chrome.storage.sync.get({
       translate_enabled: true,
+      length_limit_enabled: true,
       floating_icon_enabled: true,
       icon_fill_enabled: true,
       naming_convention_mode: false,
@@ -236,6 +239,7 @@ async function getSettings(): Promise<CachedSettings> {
     });
     out = {
       translate_enabled: stored.translate_enabled !== false,
+      length_limit_enabled: stored.length_limit_enabled !== false,
       floating_icon_enabled: stored.floating_icon_enabled !== false,
       icon_fill_enabled: stored.icon_fill_enabled !== false,
       naming_convention_mode: stored.naming_convention_mode === true,
@@ -376,7 +380,7 @@ async function onIconClick(e: MouseEvent): Promise<void> {
       return;
     }
 
-    /* ★ 2026-10-21：用户在翻译面板关掉「点图标时填充」⇒ 点图标与 Alt+T 一样只复制。
+    /* ★ 2026-10-21：用户在翻译面板关掉「点图标时填充」⇒ 点图标与 Ctrl+X 一样只复制。
      *   ★ 绝不能在复制分支里再调 writeText：那会覆盖原文，正好是用户关掉它的原因。 */
     const copied = await writeClipboard(reply.text ?? '');
     if (copied) {
@@ -390,7 +394,7 @@ async function onIconClick(e: MouseEvent): Promise<void> {
 }
 
 /**
- * 路径 B：`Alt+T` → 翻译并**只写剪贴板**（不回填）。
+ * 路径 B：`Ctrl+X` → 翻译并**只写剪贴板**（不回填）。
  *
  * ★ 为什么"不回填"是刻意的：用户要的是"拿到译文去别的输入框粘贴"，
  *   回填会**毁掉原中文**（很多场景原文还要留着，比如对照、或多处复用同一译文）。
@@ -404,7 +408,7 @@ async function translateToClipboard(): Promise<void> {
   if (!el) {
     // ★ 这条提示是"翻译看起来没生效"最常见的真实原因：焦点不在输入框里。
     //   给的是**可执行的下一步**，不是"操作失败"。
-    showToast('⚠️ 请先把光标放进输入框（网页上的文本框/多行框/富文本都可以），再按 Alt+T', 'warning');
+    showToast('⚠️ 请先把光标放进输入框（网页上的文本框/多行框/富文本都可以），再按 Ctrl+X', 'warning');
     return;
   }
   const source = readText(el).trim();
@@ -487,8 +491,9 @@ async function refreshIconVisibility(): Promise<void> {
 }
 
 function onKeyDown(e: KeyboardEvent): void {
-  // Alt+T：`e.code` 用物理键，避免布局/输入法把 key 改掉（中文输入法下 e.key 可能异常）
-  if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyT' || e.key.toLowerCase() === 't')) {
+  // Ctrl+X：只在已聚焦可翻译输入框时接管，避免把页面其它地方的文字剪切掉。
+  // `e.code` 用物理键，避免布局/输入法把 key 改掉。
+  if (targetEl && e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyX') {
     e.preventDefault();
     e.stopPropagation();
     void translateToClipboard();
@@ -523,7 +528,7 @@ function init(): void {
     /* 隐私模式忽略 */
   }
 
-  // background 收到 Alt+T 命令后转过来（`chrome.commands` 的 onCommand 只在 SW 里触发）
+  // background 收到 Ctrl+X 命令后转过来（`chrome.commands` 的 onCommand 只在 SW 里触发）
   chrome.runtime.onMessage.addListener((msg: unknown) => {
     if (msg && typeof msg === 'object' && (msg as { type?: string }).type === TRANSLATE_MESSAGE.hotkey) {
       void translateToClipboard();

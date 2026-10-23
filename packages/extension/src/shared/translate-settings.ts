@@ -40,8 +40,11 @@ export const TARGET_LANGUAGES = [
   { code: 'id', label: '印尼语' },
 ] as const;
 
+/** 译文长度上限（字符数）。关闭 length_limit_enabled 时不应用。 */
+export const TRANSLATION_MAX_CHARS = 50;
+
 export interface TranslationSettings {
-  /** 翻译功能总开关（关掉后：图标不出现、Alt+T 不响应） */
+  /** 翻译功能总开关（关掉后：图标不出现、Ctrl+X 不响应） */
   translate_enabled: boolean;
   /** ★ 浮动翻译图标是否出现（用户 2026-10-12 明确要求把它变成"可选项"） */
   floating_icon_enabled: boolean;
@@ -51,7 +54,7 @@ export interface TranslationSettings {
    * - `true`（默认，保持旧行为）：翻译并**覆盖输入框**；
    * - `false`：翻译并**只复制到剪贴板**，原输入不动。
    *
-   * `Alt+T` 不受此开关影响，始终只复制。
+   * `Ctrl+X` 不受此开关影响，始终只复制。
    */
   icon_fill_enabled: boolean;
   target_language: string;
@@ -59,6 +62,8 @@ export interface TranslationSettings {
   translation_provider: EngineId;
   /** 命名规范模式：结果转 snake_case（字段名场景） */
   naming_convention_mode: boolean;
+  /** 默认开启：译文最多 TRANSLATION_MAX_CHARS 个字符；关闭后不截断 */
+  length_limit_enabled: boolean;
 }
 
 export const TRANSLATION_DEFAULTS: TranslationSettings = {
@@ -69,6 +74,7 @@ export const TRANSLATION_DEFAULTS: TranslationSettings = {
   source_language: 'auto',
   translation_provider: 'auto',
   naming_convention_mode: false,
+  length_limit_enabled: true,
 };
 
 const SYNC_KEYS = Object.keys(TRANSLATION_DEFAULTS) as (keyof TranslationSettings)[];
@@ -89,6 +95,7 @@ export function normalizeTranslationSettings(raw: unknown): TranslationSettings 
     source_language: String(r.source_language ?? TRANSLATION_DEFAULTS.source_language),
     translation_provider: normalizeEngineId(r.translation_provider),
     naming_convention_mode: r.naming_convention_mode === true,
+    length_limit_enabled: r.length_limit_enabled !== false,
   };
 }
 

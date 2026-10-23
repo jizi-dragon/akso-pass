@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.22';
+export const EXT_VERSION = '4.2.23';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -116,7 +116,7 @@ export const TRANSLATE_MESSAGE = {
   /** content → background：翻译一段文本（结果由 background 决定是否转 snake_case） */
   request: 'ql:translateRequest',
   /**
-   * background → content：用户按了 `Alt+T`。
+   * background → content：用户按了 `Ctrl+X`。
    * ★ `chrome.commands` 的 `onCommand` **只在 SW 里触发**（页面拿不到），
    *   所以快捷键链路必须是 SW 转一手 —— 这条消息就是那一手。
    */

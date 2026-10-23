@@ -58,21 +58,21 @@
       <header class="head t-head">
         <div class="brand-text">
           <h1>翻译面板</h1>
-          <p>光标放进输入框 → <kbd>Alt+T</kbd> → 译文进剪贴板</p>
+          <p>光标放进输入框 → <kbd>Ctrl+X</kbd> → 译文进剪贴板</p>
         </div>
         <label class="t-power" for="translate_enabled">
           <input id="translate_enabled" type="checkbox" class="t-switch-input" />
           <span class="t-switch" aria-hidden="true"><i></i></span>
           <span class="t-power-text">
             <b id="enabled_label">翻译功能已开启</b>
-            <small id="enabled_sub">页面会出现翻译图标，Alt+T 可用</small>
+            <small id="enabled_sub">页面会出现翻译图标，Ctrl+X 可用</small>
           </span>
         </label>
       </header>
 
       <!-- 总开关关闭时的整页提示（比"控件灰掉"更明确：一眼知道为什么点不动） -->
       <div id="disabled-banner" class="notice warn hidden" role="status">
-        翻译功能已关闭：页面上不会出现翻译图标，<kbd>Alt+T</kbd> 也不会响应。打开右上角开关即可恢复。
+        翻译功能已关闭：页面上不会出现翻译图标，<kbd>Ctrl+X</kbd> 也不会响应。打开右上角开关即可恢复。
       </div>
 
       <!-- ============================================================
@@ -86,7 +86,7 @@
 
         <div class="t-paths">
           <div class="t-path">
-            <div class="t-path-key"><kbd>Alt+T</kbd></div>
+            <div class="t-path-key"><kbd>Ctrl+X</kbd></div>
             <div class="t-path-body">
               <b>取译文到剪贴板</b>
               <span>光标在输入框内时按一下。翻译并复制，<b>原输入一字不动</b>，到下一个框直接 <kbd>Ctrl+V</kbd>。</span>
@@ -116,8 +116,26 @@
         <p class="hint">
           快捷键改键去
           <a id="shortcut-link" href="#">chrome://extensions/shortcuts</a>
-          —— 当前生效键位：<b id="hotkey-display">Alt+T</b>。
+          —— 当前生效键位：<b id="hotkey-display">Ctrl+X</b>。
           若显示「未设置」，说明被别的扩展占用了，请到该页面重新指定。
+        </p>
+      </section>
+
+      <!-- 译文长度限制：默认 50 字符，可关闭 -->
+      <section class="card block">
+        <div class="block-head row">
+          <div>
+            <h2>译文长度限制</h2>
+            <p class="desc">默认限制译文最多 50 个字符；关闭后引擎返回多长就保留多长。</p>
+          </div>
+          <label class="t-switch-only" for="length_limit_enabled">
+            <input id="length_limit_enabled" type="checkbox" class="t-switch-input" />
+            <span class="t-switch" aria-hidden="true"><i></i></span>
+          </label>
+        </div>
+        <p class="hint">
+          只限制<b>译文</b>，不限制输入框原文；命名规范模式先转换再按 50 字符截断。
+          需要完整长句时把此开关关掉。
         </p>
       </section>
 

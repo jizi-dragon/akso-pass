@@ -158,6 +158,25 @@ check('内容脚本按开关分流到填充/剪贴板',
   && /writeClipboard\(reply\.text/.test(translateContent));
 check('用户手册说明该开关', /点图标时填充输入框/.test(manual) && /只复制到剪贴板/.test(manual));
 
+console.log('\n=== 6. 翻译快捷键与译文长度限制 ===');
+const translateBg = readFileSync(
+  join(ROOT, 'packages', 'extension', 'src', 'background', 'service-worker.ts'),
+  'utf8',
+);
+check('manifest 翻译快捷键是 Ctrl+X',
+  manifest.commands?.['translate-input']?.suggested_key?.default === 'Ctrl+X');
+check('翻译面板有「译文长度限制」开关',
+  /id="length_limit_enabled"/.test(translateHtml)
+  && /for="length_limit_enabled"/.test(translateHtml));
+check('长度限制默认开启且上限为 50',
+  /length_limit_enabled: true/.test(translateSettings)
+  && /TRANSLATION_MAX_CHARS = 50/.test(translateSettings));
+check('后台按开关截断译文',
+  /settings\.length_limit_enabled/.test(translateBg)
+  && /slice\(0, TRANSLATION_MAX_CHARS\)/.test(translateBg));
+check('用户手册写的是 Ctrl+X 与 50 字符',
+  /Ctrl\+X/.test(manual) && /50 个字符/.test(manual));
+
 const passed = results.filter(Boolean).length;
 console.log(`\n=== 汇总：${passed}/${results.length} 通过 ===`);
 if (passed !== results.length) {
