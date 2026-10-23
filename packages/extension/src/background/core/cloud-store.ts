@@ -213,6 +213,8 @@ async function requestJson<T>(
       headers: {
         ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),
         ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        // 云端个人页据此显示“Pass 是否已登录/最近活跃”；只作展示，不参与鉴权。
+        'X-Akso-Client': 'akso-pass',
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       // 云端是事实源，读请求不得被浏览器 HTTP 缓存命中（服务端 JSON 未显式带缓存头）
