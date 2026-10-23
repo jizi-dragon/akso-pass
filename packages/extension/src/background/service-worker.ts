@@ -152,6 +152,7 @@ import {
   loadInstanceStatuses,
   parseInstanceContext,
 } from './core/instance-status';
+import { StatusCache } from './core/status-cache';
 import { hostNoPortOf, tabRules } from './core/tab-rules';
 
 function ok<T>(data: T): Result<T> {
@@ -1146,8 +1147,17 @@ async function handleTranslateRequest(rawText: string): Promise<{
 
 /* ---------------- 实例状态轮盘（v3.15）：上下文 / 读取 / 切换 ---------------- */
 
-/** 切换成功后等页面刷新的宽限（浮层在此期间显示 toast） */
-const STATUS_RELOAD_GRACE_MS = 1200;
+/** 切换成功后等页面刷新的宽限：只够 toast 闪一下，不再让用户干等 1.2s。 */
+const STATUS_RELOAD_GRACE_MS = 300;
+
+/** 同一页签 30 秒内重复打开轮盘不再付两次串行请求；切换成功立即失效。 */
+const STATUS_CACHE_TTL_MS = 30_000;
+const statusCache = new StatusCache<StatusList>(STATUS_CACHE_TTL_MS, 30);
+
+function statusCacheKey(tab: chrome.tabs.Tab, ctx: ReturnType<typeof parseInstanceContext>): string {
+  // tabId 进 key：不同页签可能是不同账号，状态列表不能跨账号复用。
+  return `${tab.id}|${ctx?.origin ?? ''}|${ctx?.objectId ?? ''}|${ctx?.instanceId ?? ''}|${ctx?.menuId ?? ''}`;
+}
 
 function statusContextFor(tab: chrome.tabs.Tab | undefined): Promise<Result<StatusContext>> {
   if (!tab?.id || !tab.url) {
@@ -1182,10 +1192,22 @@ async function statusLoadFor(tab: chrome.tabs.Tab | undefined): Promise<Result<S
   if (!isInstanceContext(ctx)) {
     return fail('当前页面不是对象实例页');
   }
+  const started = Date.now();
+  const key = statusCacheKey(tab, ctx);
+  const cached = statusCache.get(key);
+  if (cached) {
+    log.debug('状态列表缓存命中 tab=%d age<=%dms', tab.id, STATUS_CACHE_TTL_MS);
+    return ok(cached);
+  }
   try {
     const r = await loadInstanceStatuses(tab.id, ctx);
-    return ok({ lifecycleName: r.lifecycleName, currentName: r.currentName, statuses: r.statuses });
+    const data = { lifecycleName: r.lifecycleName, currentName: r.currentName, statuses: r.statuses };
+    statusCache.set(key, data);
+    log.debug('状态列表已加载并缓存 tab=%d elapsed=%dms statuses=%d',
+      tab.id, Date.now() - started, data.statuses.length);
+    return ok(data);
   } catch (e) {
+    log.debug('状态列表加载失败 tab=%d elapsed=%dms', tab.id, Date.now() - started);
     return fail(e);
   }
 }
@@ -1206,6 +1228,7 @@ async function statusChangeFor(
     return fail('当前页面地址里没有 instanceId（id），无法修改状态');
   }
   const tabId = tab.id;
+  const started = Date.now();
   try {
     await changeInstanceStatus(tabId, ctx.instanceId, code);
   } catch (e) {
@@ -1213,7 +1236,10 @@ async function statusChangeFor(
     return fail(e);
   }
   void forensics('status-change', { tabId, instanceId: ctx.instanceId, code, name, ok: true });
-  // 成功：延时刷新该页签 —— 页面必须重载才能反映新状态；宽限期让浮层把 toast 显示完。
+  statusCache.invalidateTab(tabId);
+  log.info('状态切换成功 tab=%d postMs=%d reloadDelayMs=%d',
+    tabId, Date.now() - started, STATUS_RELOAD_GRACE_MS);
+  // 成功：短暂延时刷新该页签 —— 页面必须重载才能反映新状态；只留 toast 一闪的宽限。
   // 注意用裸 setTimeout（ServiceWorkerGlobalScope 没有 window，写 window.setTimeout 会抛且被吞）
   setTimeout(() => {
     void chrome.tabs.reload(tabId).catch(() => undefined);

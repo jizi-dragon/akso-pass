@@ -30,8 +30,8 @@ const WIN = window as typeof window & {
 };
 const HOST_ID = 'ql-status-overlay-host';
 
-/** 切换成功后等页面刷新的宽限（让用户看清 toast） */
-const RELOAD_GRACE_MS = 1200;
+/** 切换成功后等页面刷新的宽限（只留 toast 一闪，不再让用户干等 1.2s） */
+const RELOAD_GRACE_MS = 300;
 
 if (WIN.__QL_STATUS_ACTIVE__) {
   closeExisting();
