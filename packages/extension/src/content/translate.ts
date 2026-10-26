@@ -395,7 +395,7 @@ async function onIconClick(e: MouseEvent): Promise<void> {
  * ★ 为什么"不回填"是刻意的：用户要的是"拿到译文去别的输入框粘贴"，
  *   回填会**毁掉原中文**（很多场景原文还要留着，比如对照、或多处复用同一译文）。
  */
-async function translateToClipboard(): Promise<void> {
+async function translateToClipboard(shortcutLabel = ''): Promise<void> {
   const settings = await getSettings();
   if (!settings.translate_enabled) {
     return; // 总开关关掉时**静默**不做 —— 不是错误，用户自己关的
@@ -404,7 +404,9 @@ async function translateToClipboard(): Promise<void> {
   if (!el) {
     // ★ 这条提示是"翻译看起来没生效"最常见的真实原因：焦点不在输入框里。
     //   给的是**可执行的下一步**，不是"操作失败"。
-    showToast('⚠️ 请先把光标放进输入框（网页上的文本框/多行框/富文本都可以），再按 Ctrl+X', 'warning');
+    // ★ 键位由调用方带进来（SW 转发的命令 / 面板的"试一次"都带 `shortcut`）：
+    //   内容脚本拿不到 `chrome.commands`，写死 `Ctrl+X` 会在用户改键后说谎。
+    showToast(`⚠️ 请先把光标放进输入框（网页上的文本框/多行框/富文本都可以），${shortcutLabel ? `再按 ${shortcutLabel}` : '再按一次翻译快捷键'}`, 'warning');
     return;
   }
   const source = readText(el).trim();
@@ -526,8 +528,14 @@ function init(): void {
 
   // background 收到 Ctrl+X 命令后转过来（`chrome.commands` 的 onCommand 只在 SW 里触发）
   chrome.runtime.onMessage.addListener((msg: unknown) => {
-    if (msg && typeof msg === 'object' && (msg as { type?: string }).type === TRANSLATE_MESSAGE.hotkey) {
-      void translateToClipboard();
+    if (!msg || typeof msg !== 'object') {
+      return undefined;
+    }
+    const m = msg as { type?: string; shortcut?: string };
+    if (m.type === TRANSLATE_MESSAGE.hotkey) {
+      // `shortcut` = 转发方带来的**实际键位**（SW 从 `chrome.commands.getAll()` 取）。
+      // 空串时 Toast 退回"再按一次翻译快捷键"，不猜键位。
+      void translateToClipboard(m.shortcut ?? '');
     }
     return undefined;
   });

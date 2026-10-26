@@ -58,7 +58,9 @@
       <header class="head t-head">
         <div class="brand-text">
           <h1>翻译面板</h1>
-          <p>光标放进输入框 → <kbd>Ctrl+X</kbd> → 译文进剪贴板</p>
+          <!-- ★ 键位文案不在 HTML 里写死：`[data-hotkey]` 由 translate.ts 用
+               `chrome.commands.getAll()` 的**实际键位**填充（此处只是无 JS 时的兜底）。 -->
+          <p>光标放进输入框 → <kbd data-hotkey>Ctrl+X</kbd> → 译文进剪贴板</p>
         </div>
         <label class="t-power" for="translate_enabled">
           <input id="translate_enabled" type="checkbox" class="t-switch-input" />
@@ -72,7 +74,7 @@
 
       <!-- 总开关关闭时的整页提示（比"控件灰掉"更明确：一眼知道为什么点不动） -->
       <div id="disabled-banner" class="notice warn hidden" role="status">
-        翻译功能已关闭：页面上不会出现翻译图标，<kbd>Ctrl+X</kbd> 也不会响应。打开右上角开关即可恢复。
+        翻译功能已关闭：页面上不会出现翻译图标，<kbd data-hotkey>Ctrl+X</kbd> 也不会响应。打开右上角开关即可恢复。
       </div>
 
       <!-- ============================================================
@@ -86,7 +88,7 @@
 
         <div class="t-paths">
           <div class="t-path">
-            <div class="t-path-key"><kbd>Ctrl+X</kbd></div>
+            <div class="t-path-key"><kbd data-hotkey>Ctrl+X</kbd></div>
             <div class="t-path-body">
               <b>取译文到剪贴板</b>
               <span>光标在输入框内时按一下。翻译并复制，<b>原输入一字不动</b>，到下一个框直接 <kbd>Ctrl+V</kbd>。</span>
@@ -116,7 +118,7 @@
         <p class="hint">
           快捷键改键去
           <a id="shortcut-link" href="#">chrome://extensions/shortcuts</a>
-          —— 当前生效键位：<b id="hotkey-display">Ctrl+X</b>。
+          —— 当前生效键位：<b id="hotkey-display" data-hotkey>Ctrl+X</b>。
           若显示「未设置」，说明被别的扩展占用了，请到该页面重新指定。
         </p>
       </section>

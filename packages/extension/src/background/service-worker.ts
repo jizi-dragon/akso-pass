@@ -1516,9 +1516,24 @@ async function runTranslateHotkey(): Promise<void> {
     if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
       return;
     }
-    await chrome.tabs.sendMessage(tab.id, { type: TRANSLATE_MESSAGE.hotkey });
+    // ★ 把**实际键位**一起转发：内容脚本拿不到 `chrome.commands`，而它的 Toast
+    //   要告诉用户"再按 <键位>"。写死 `Ctrl+X` 会在用户改键之后说谎（2026-10-26）。
+    await chrome.tabs.sendMessage(tab.id, {
+      type: TRANSLATE_MESSAGE.hotkey,
+      shortcut: await currentTranslateShortcut(),
+    });
   } catch {
     // 内容脚本未就绪（页面刚打开/正在导航）：下一次按就好了，不必打扰用户
+  }
+}
+
+/** 翻译命令当前生效的键位（用户可在 chrome://extensions/shortcuts 改）；拿不到时返回空串。 */
+async function currentTranslateShortcut(): Promise<string> {
+  try {
+    const commands = await chrome.commands.getAll();
+    return commands.find((c) => c.name === TRANSLATE_COMMAND)?.shortcut ?? '';
+  } catch {
+    return '';
   }
 }
 

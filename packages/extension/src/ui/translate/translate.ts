@@ -170,11 +170,46 @@ function renderPreview(): void {
   el.previewOut.textContent = toSnakeCase(src);
 }
 
+/* ─────────────────────── 键位文案的唯一来源 ───────────────────────
+ * ★ 2026-10-26：面板里原来有 **4 处**写死 `Ctrl+X`（标题、总开关副标题、关闭提示条、
+ *   "怎么用"的键帽），而界面上又明确请用户去 `chrome://extensions/shortcuts` 改键 ——
+ *   改完键位后那 4 处就变成**对用户说谎的描述**（用户实测报的就是这个）。
+ *   ⇒ 现在全部走 `applyHotkeyText()`：一个 `hotkeyLabel` 变量 + `[data-hotkey]` 标记。
+ *   HTML 里那几处字只是**无 JS 时的兜底**，运行时一律被覆盖。
+ * ★ 唯一事实源是 `chrome.commands.getAll()`（用户改键后的**实际**值）；
+ *   `getManifest()` 只给**默认值**，用来在异步结果回来之前先显示一个不会错的值。
+ */
+
+/** manifest 里登记的默认键位（同步可读；拿不到就是空串）。 */
+function manifestDefaultHotkey(): string {
+  try {
+    const cmd = chrome.runtime.getManifest().commands?.[TRANSLATE_COMMAND];
+    return cmd?.suggested_key?.default ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** 原始键位（`''` = 没有生效键位）。要传给内容脚本，故与展示文案分开存。 */
+let hotkeyShortcut = manifestDefaultHotkey();
+
+/** 展示文案：没有键位时说清原因，而不是显示空白。 */
+let hotkeyLabel = hotkeyShortcut || '未设置（可能被别的扩展占用）';
+
+/** 把页面里所有提到键位的地方刷成当前键位（`[data-hotkey]` + 两处 JS 拼的文案）。 */
+function applyHotkeyText(): void {
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>('[data-hotkey]'))) {
+    node.textContent = hotkeyLabel;
+  }
+  // 总开关副标题按 enabled 状态拼，键位变了要按**当前**开关状态重拼一次
+  renderEnabledState(el.enabled.checked);
+}
+
 function renderEnabledState(enabled: boolean): void {
   el.enabledLabel.textContent = enabled ? '翻译功能已开启' : '翻译功能已关闭';
   el.enabledSub.textContent = enabled
-    ? '页面会出现翻译图标，Ctrl+X 可用'
-    : '图标不会出现，Ctrl+X 也不响应';
+    ? `页面会出现翻译图标，${hotkeyLabel} 可用`
+    : `图标不会出现，${hotkeyLabel} 也不响应`;
   el.disabledBanner.classList.toggle('hidden', enabled);
 }
 
@@ -243,17 +278,15 @@ async function renderHotkey(): Promise<void> {
   try {
     const commands = await chrome.commands.getAll();
     const hit = commands.find((c) => c.name === TRANSLATE_COMMAND);
-    const key = hit?.shortcut;
-    if (key && key.length > 0) {
-      el.hotkeyDisplay.textContent = key;
-    } else {
-      // ★ 这条分支很重要：`shortcut` 为空 = 键位被清掉 or 被别的扩展占用，
-      //   而**用户只会看到"按了没反应"**。必须在这里说清楚。
-      el.hotkeyDisplay.textContent = '未设置（可能被别的扩展占用）';
-    }
+    const key = hit?.shortcut ?? '';
+    hotkeyShortcut = key;
+    // ★ 空键位这条分支很重要：`shortcut` 为空 = 键位被清掉 or 被别的扩展占用，
+    //   而**用户只会看到"按了没反应"**。必须在这里说清楚。
+    hotkeyLabel = key || '未设置（可能被别的扩展占用）';
   } catch {
-    // `chrome.commands` 极少数环境不可用 —— 保留 HTML 里的默认文案，不要显示空白
+    // `chrome.commands` 极少数环境不可用 —— 保留 manifest 里的默认键位
   }
+  applyHotkeyText();
 }
 
 /**
@@ -291,7 +324,12 @@ async function onTest(): Promise<void> {
       return;
     }
     try {
-      await chrome.tabs.sendMessage(tab.id, { type: TRANSLATE_MESSAGE.hotkey });
+      // 把**真实键位**一起带过去：内容脚本拿不到 `chrome.commands`，而它的 Toast
+      // 要告诉用户"再按 <键位>"——写死就会在用户改键之后说谎。
+      await chrome.tabs.sendMessage(tab.id, {
+        type: TRANSLATE_MESSAGE.hotkey,
+        shortcut: hotkeyShortcut,
+      });
       showFeedback('已发出（若失败，请看页面底部的提示）');
     } catch {
       // 走到这里通常是：页面在扩展加载/更新**之前**就打开了（内容脚本不在），或 file:// 未授权
