@@ -56,6 +56,15 @@ const bindings = new Map<number, ParBinding>();
  *  expires 超时未导航（如停留在 about:blank）则自动放弃并通知壳回直通。 */
 const pendingAdoptions = new Map<number, { accountId: string; host: string; expires: number }>();
 const PENDING_ADOPT_TTL = 30_000;
+/**
+ * 继承页签落登录页时的「重来额度」（按页签计，绑定生命周期内不重置）。
+ *
+ * 见 `onNavigation` 里那段长注释：落登录页既可能是"用户要用这个页签登录别的号"，
+ * 也可能是"我们自己的种子晚到了一步、平台 SPA 401 后自己跳的"。
+ * 后者重灌一次种子就能恢复，不该当终局。额度用完才按 v3.10.4 转原始页签。
+ */
+const loginGrace = new Map<number, number>();
+const LOGIN_GRACE_LIMIT = 2;
 const tokens = new Map<string, TokenSnapshot>();
 /** 授权健康缓存：host → 是否可执行（已授权且未被手动停用） */
 const enforcement = new Map<string, boolean>();
@@ -1109,6 +1118,7 @@ export const parallelSession = {
 
   /** 解绑单个标签页（不动账号数据）；最后一个绑定页签关闭 = 该账号登录态终结（v3.12.0） */
   async unbindTab(tabId: number): Promise<void> {
+    loginGrace.delete(tabId); // 绑定终结：登录页重来额度一并作废
     const binding = bindings.get(tabId);
     if (bindings.delete(tabId)) {
       await persistBindings();
@@ -1142,17 +1152,37 @@ export const parallelSession = {
     if (!parent || bindings.has(tabId)) {
       return;
     }
+    // ★★ 2026-10-28：**先登记候选，再 await 任何东西**。
+    //
+    //   原来这里先 `await parallelStore.get(...)` 才 `pendingAdoptions.set(...)`。
+    //   而站点自开的新页签，壳（`content/shield-main.ts`）在 document_start 就发
+    //   `hello` —— 它的时序**不归我们管**：SW 一被这条消息叫醒，多半还没跑到
+    //   `onCreated` 的 await 之后。`hello` 查不到候选就答 `unbound`，壳把它当
+    //   **终局**（`settled`），之后候选登记上了、URL 也确认了，迟到的那条 `bind`
+    //   在直通模式下会被丢掉 —— 新页签于是永久停在"原始页签"状态：没有命名空间、
+    //   没有种子 ⇒ 平台读不到 token ⇒ 跳登录页。
+    //   症状正是"用快捷键开好页面后，从页面里点按钮 / 复制打开的页签偶尔要重新登录"。
+    //
+    //   ⇒ 候选的**身份**（accountId/host）此刻就能从父绑定里读出来，登记它不需要
+    //     任何 IO；"账号还在不在"只是确认，留给 `onNavigation` 收编时再判。
+    if (!pendingAdoptions.has(tabId)) {
+      pendingAdoptions.set(tabId, {
+        accountId: parent.accountId,
+        host: parent.host,
+        expires: Date.now() + PENDING_ADOPT_TTL,
+      });
+      void forensics('adopt-candidate', { tabId, accountId: parent.accountId, host: parent.host });
+      void diag(`adopt-candidate tab=${tabId} ← opener=${openerId} 账号=${parent.accountId}（候选，待 URL 确认）`);
+    }
+    // 账号若已被删掉：候选没有意义，撤掉（URL 确认那条路上还会再判一次）。
+    // ★ 撤掉时必须**显式放行**：壳可能已经按上面的候选答了 `hold` 在等，撤销而不
+    //   通知的话它会一直等到 TTL 过期（30s）—— 那段时间页面既不是绑定态也不是
+    //   直通态。这里补一条 `unbound`，语义与"没有候选"完全一致。
     const account = await parallelStore.get(parent.accountId).catch(() => undefined);
     if (!account) {
-      return;
+      pendingAdoptions.delete(tabId);
+      void pushDown(tabId, { op: 'unbound' });
     }
-    pendingAdoptions.set(tabId, {
-      accountId: account.id,
-      host: parent.host,
-      expires: Date.now() + PENDING_ADOPT_TTL,
-    });
-    void forensics('adopt-candidate', { tabId, accountId: account.id, host: parent.host });
-    void diag(`adopt-candidate tab=${tabId} ← opener=${openerId} 账号=${account.id}（候选，待 URL 确认）`);
   },
 
   /** 删除账号：关闭其全部绑定标签页、摘除规则、清 token */
@@ -1192,6 +1222,12 @@ export const parallelSession = {
         if (binding) {
           return buildBindPayload(binding.accountId, tabId);
         }
+        // ★★ 2026-10-28：**迟到竞争的兜底**。候选登记靠 `tabs.onCreated`，
+        //   而壳的 hello 在 document_start 就发 —— 两者谁先到 SW 是掷骰子。
+        //   所以在答"未绑定"之前，先补读一次"父页签是谁"：有已绑定的 opener
+        //   就当场登记候选并答 hold 让壳等着，而不是把它判成原始页签
+        //   （判了之后迟到的 bind 会被壳忽略，页签再也收不回来）。
+        await ensureAdoptionCandidate(tabId);
         if (pendingAdoptions.has(tabId)) {
           // v3.13 收编候选：URL 未确认前不灌种子/不置 settled——壳保持等待（hold），
           // URL 确认授权后再正式收编（防止候选期的种子流入外部域）
@@ -1419,11 +1455,19 @@ export const parallelSession = {
         void pushDown(tabId, { op: 'unbound' });
         return;
       }
-      if (path.includes('login')) {
+      if (path.includes('login') && !tokens.get(pending.accountId)?.token) {
         // v3.10.4 语义：继承页签进登录页 = 用户当独立浏览器用 → 保持原生（丢弃候选）
         void diag(`adopt-candidate tab=${tabId} 进入登录页：丢弃候选（转原始）`);
         void pushDown(tabId, { op: 'unbound' });
         return;
+      }
+      // ★ 2026-10-28：账号快照里**还有 token** 时，落登录页不等于"用户要手登" ——
+      //   平台的 SPA 在种子晚到一步时会自己 401 然后 `location.replace('/login')`。
+      //   按"丢弃候选"处理的话，这次收编机会就永久丢了（页签转原生，只能重登）。
+      //   ⇒ 照常收编；新文档的 hello 会拿到 bind，壳在 loading 期就地激活。
+      if (path.includes('login')) {
+        void forensics('adopt-login-landing', { tabId, accountId: pending.accountId, path });
+        void diag(`adopt-candidate tab=${tabId} 落登录页但账号仍有 token：照常收编（种子晚到的典型形态）`);
       }
       const account = await parallelStore.get(pending.accountId).catch(() => undefined);
       if (!account) {
@@ -1473,6 +1517,26 @@ export const parallelSession = {
           path = '';
         }
         if (path.includes('login')) {
+          // ★★ 2026-10-28：**落登录页先别判死**。
+          //
+          //   v3.10.4 的语义（用户把这个继承页签当独立浏览器用 → 在输入账密之前
+          //   转回原始页签）本身没错，但它把**我们自己的一次失败**也算成了"用户手输"：
+          //   种子晚于页面 bundle 到达时，平台 SPA 会自己 401 后跳 `/login` ——
+          //   那也是"落登录页"。原逻辑这时解绑 + 重载，于是刚收编成功的继承页签
+          //   **第一次**跳登录页就被永久降级成原生页签（用户看到的就是"账号丢了"）。
+          //
+          //   ⇒ 只要账号快照里还有 token，就给**有限次**重灌机会（`pushBind` 让壳
+          //     按绑定态重来，新文档 hello 时会就地激活），额度用完才转原始页签。
+          //     额度按页签计、绑定生命周期内不重置：不会变成无限重载。
+          const snapToken = tokens.get(binding.accountId)?.token;
+          const used = loginGrace.get(tabId) ?? 0;
+          if (snapToken && used < LOGIN_GRACE_LIMIT) {
+            loginGrace.set(tabId, used + 1);
+            void diag(`onNavigation 继承页签 tab=${tabId} 落登录页 ${path}（第 ${used + 1} 次）：重灌种子，暂不解绑`);
+            void forensics('adopt-login-grace', { tabId, accountId: binding.accountId, attempt: used + 1, path });
+            await pushBind(tabId);
+            return;
+          }
           void diag(`onNavigation 继承页签 tab=${tabId} 进入登录页 ${path}：转原始页签`);
           await this.unbindTab(tabId);
           void chrome.tabs.reload(tabId).catch(() => undefined);
@@ -1509,6 +1573,7 @@ export const parallelSession = {
 
   async handleTabRemoved(tabId: number): Promise<void> {
     pendingAdoptions.delete(tabId); // 候选页签关闭：清理（未正式收编无残留）
+    loginGrace.delete(tabId);
     if (bindings.has(tabId)) {
       await this.unbindTab(tabId);
     }
@@ -1552,6 +1617,110 @@ function buildBindPayload(accountId: string, tabId?: number): BridgeDownPayload 
     }
   }
   return { op: 'bind', accountId, tabId, seed, bag };
+}
+
+/**
+ * hello 兜底：用页签自己的 `openerTabId` 把"亲子继承候选"补登记上（见 handleBridge）。
+ *
+ * ★ 为什么这件事不能只在 `tabs.onCreated` 里做：那个回调里的候选登记排在一个
+ *   `await` 之后，而壳的 hello 在 document_start 就发、且**只答一次**算数
+ *   （`unbound` 会让壳 `settled`）。两条消息抢同一个 SW 唤醒，谁先到没有保证。
+ * ★ 这里只做**纯身份补读**：不读账号库、不发种子、不装规则。授权域与登录页
+ *   仍由 `onNavigation` 按落地 URL 判——补登记不会让种子流到外部域。
+ */
+async function ensureAdoptionCandidate(tabId: number): Promise<void> {
+  const existing = pendingAdoptions.get(tabId);
+  if (existing) {
+    if (Date.now() <= existing.expires) {
+      return;
+    }
+    pendingAdoptions.delete(tabId); // 过期候选不该继续 hold（onNavigation 会同样处理）
+  }
+  if (bindings.has(tabId)) {
+    return;
+  }
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return; // 页签已关
+  }
+  const openerId = tab.openerTabId;
+  if (openerId === undefined) {
+    return;
+  }
+  const parent = bindings.get(openerId);
+  if (!parent) {
+    return;
+  }
+  // ★ 只给"可能是本账号站点"的子页签发 hold。
+  //   壳收到 hold 会进入等待态（不激活、也不直通），要等到 `onNavigation` 按落地
+  //   URL 判完才落定。对**已经明确要去外域**的链接（从绑定页签点出去的普通外链）
+  //   多这一段等待没有好处：它们本来就要走直通，晚 100~300ms 才放行只会让首帧
+  //   落在"既非绑定也非直通"的中间态。URL 未知（about:blank / 正在导航但还没定）
+  //   时仍按候选登记——那正是"站点自己开窗、URL 稍后才定"的情形。
+  const pending = (tab as { pendingUrl?: string }).pendingUrl || tab.url || '';
+  if (pending && pending !== 'about:blank') {
+    let host = '';
+    try {
+      host = new URL(pending).host;
+    } catch {
+      host = '';
+    }
+    if (host && host !== parent.host) {
+      return; // 外域子页签：不登记，hello 照旧答 unbound（与没有候选时一致）
+    }
+  }
+  pendingAdoptions.set(tabId, {
+    accountId: parent.accountId,
+    host: parent.host,
+    expires: Date.now() + PENDING_ADOPT_TTL,
+  });
+  void forensics('adopt-candidate', { tabId, accountId: parent.accountId, host: parent.host, via: 'hello' });
+  void diag(`adopt-candidate tab=${tabId} ← opener=${openerId} 账号=${parent.accountId}（hello 兜底登记）`);
+  // ★ 必须自己给一个结算点：候选本来由 `onNavigation`（`tabs.onUpdated` status=loading）
+  //   消费，而走到这里恰恰是"hello 已经发出去了"——那条 loading 事件通常**早于**
+  //   document_start 的 hello 就已触发过（那时还没有候选，`onNavigation` 什么也没做）。
+  //   不收尾的话壳会一直 hold 在"既未激活、也未直通"的裸态，等着一条永远不来的 bind。
+  reapCandidateLater(tabId, 0);
+}
+
+/**
+ * hello 兜底候选的收尾：等 URL 落定 → 交给 `onNavigation` 做同一套判定
+ * （授权域内收编 / 外域或登录页丢弃），最多重试 3 次、约 2.4s，最后按直通放行。
+ *
+ * ★ 为什么不直接用候选 TTL（30s）：壳判 `hold` 之后**不再重试 hello**，页面会以裸态
+ *   跑满那 30 秒；而导航在几十毫秒内就提交，2.4s 已经足够宽裕。
+ * ★ 超时也只答 `unbound`、绝不"猜着收编"：收编要灌种子，宁可退回原生页签。
+ */
+function reapCandidateLater(tabId: number, attempt: number): void {
+  setTimeout(() => {
+    const pending = pendingAdoptions.get(tabId);
+    if (!pending) {
+      return; // 已被 onNavigation 结算，或页签已关/候选已撤
+    }
+    void (async () => {
+      let tab: chrome.tabs.Tab | undefined;
+      try {
+        tab = await chrome.tabs.get(tabId);
+      } catch {
+        pendingAdoptions.delete(tabId); // 页签已关
+        return;
+      }
+      const url = (tab as { pendingUrl?: string }).pendingUrl || tab.url || '';
+      if (/^https?:\/\//i.test(url)) {
+        await parallelSession.onNavigation(tabId); // 复用同一条判定：收编或丢弃都会 pushDown
+        return;
+      }
+      if (attempt < 3) {
+        reapCandidateLater(tabId, attempt + 1);
+        return;
+      }
+      pendingAdoptions.delete(tabId);
+      void diag(`adopt-candidate tab=${tabId} 等待 URL 超时：按直通放行`);
+      void pushDown(tabId, { op: 'unbound' });
+    })();
+  }, 800);
 }
 
 async function pushBind(tabId: number): Promise<void> {

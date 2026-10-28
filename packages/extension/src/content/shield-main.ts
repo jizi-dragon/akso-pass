@@ -825,9 +825,27 @@
         if (bagView) {
           resetBagTo(bagView);
         }
+        return;
       }
-      // passthrough（已判 unbound）收到迟到的旧 bind 应答：必须忽略——
-      // 此时 ns 未定，灌种子会把账号身份写进真实裸层（原始页签泄漏账号会话）
+      // ★★ 2026-10-28：**直通模式下的迟到 bind 不再一律忽略**。
+      //
+      //   以前 `unbound` 是终局：壳一旦判了直通，后台稍后收编成功推来的 bind
+      //   在这里被丢掉。于是"候选登记比 hello 晚了一步"的页签永久停在原始态
+      //   —— 没有命名空间、没有种子 ⇒ 平台读不到 token ⇒ 跳登录页（用户看到的
+      //   就是"新开的页签偶尔要重新登录"）。可那条 bind 恰恰说明后台**已经**
+      //   认定这个页签归某个账号，丢掉它没有任何好处。
+      //   安全前提仍在：`activate()` 是**先定 ns 再灌种子**，所以激活不会把
+      //   账号身份写进真实裸层；但页面 bundle 已经按"无命名空间"跑过了，
+      //   就地激活只会留下半截状态 ⇒ 与下面同一条路：先刷新一次重来（守卫防循环）。
+      if (window.sessionStorage.getItem(BOOT_GUARD_KEY) === '1') {
+        window.sessionStorage.removeItem(BOOT_GUARD_KEY);
+        // settled 保持 true：激活后 mode 已是 active，后续 bind 走上面的幂等重灌，
+        // 不会再落到本分支（否则每条 bind 都会再刷新一次）。
+        activate(accountId, seed, bagView);
+        return;
+      }
+      window.sessionStorage.setItem(BOOT_GUARD_KEY, '1');
+      window.location.reload();
       return;
     }
     settled = true;

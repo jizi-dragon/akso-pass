@@ -5,6 +5,34 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.26（2026-10-28）
+
+### 站点自开的新页签：偶尔"账号丢失要重新登录"
+
+- **根因是时序，不是登录过期**。站点自己 `window.open` 开出来的子页签里，壳
+  （`content/shield-main.ts`）在 **document_start** 就发 `hello`，而"这是个继承候选"
+  的登记排在 `tabs.onCreated` 的 `await parallelStore.get(...)` **之后** —— 两条消息抢
+  同一个 SW 唤醒，谁先到没有保证。`hello` 先到就查不到候选，答 `unbound`；壳把
+  `unbound` 当**终局**（`settled`），此后即使后台按落地 URL 确认了继承、推来 `bind`，
+  也一律被丢掉 ⇒ 页签永久停在"原始页签"：没有命名空间、没有种子，平台读不到 token
+  ⇒ 跳登录页。用户看到的就是"用快捷键开好页面后，复制页面 / 点按钮新开的那个页签
+  偶尔要重新登录"。
+- **五处修正**（`background/core/parallel-session.ts`、`content/shield-main.ts`）：
+  ① `adoptFromOpener` **先登记候选再 await**（候选身份在父绑定里，不需要 IO）；
+  ② `hello` 兜底 —— 答 `unbound` 之前用页签的 `openerTabId` 补读一次父绑定，能继承就
+     当场登记并答 `hold` 让壳等着（只给 `about:blank` / 同 host 的子页签发 hold，
+     已经明确要去外域的外链照旧直通）；
+  ③ 直通模式收到**迟到 bind** 不再丢弃：置一次 `BOOT_GUARD_KEY` 后刷新重来，新文档的
+     `hello` 在 document_start 就拿到种子（守卫防循环，激活后走幂等重灌）；
+  ④ 收编落 **登录页** 不再一律判死：账号快照里**还有 token** 时照常收编（种子晚到一步的
+     典型形态），已绑定页签落登录页也给 **2 次**重灌种子机会再按 v3.10.4 转原始页签；
+  ⑤ ②补登记的候选**自己收尾**：那条 `loading` 事件通常早于 hello 已经触发过，不补一个
+     结算点壳会永远 hold 在裸态。约 800ms 起、最多 3 次等 URL 落定，仍拿不到 http(s)
+     就按直通放行（绝不"猜着收编"：收编要灌种子，宁可退回原生页签）。
+- 附带：候选撤销（账号已删）时补发一条 `unbound` —— 否则壳会一直 hold 到 30s 候选过期。
+- 诊断：`ql:forensics` 新增 `adopt-candidate`（`via:'hello'`）/ `adopt-login-landing` /
+  `adopt-login-grace` 三种事件，可直接看出"这次是抢到了还是丢了"。
+
 ## 4.2.25（2026-10-26）
 
 ### 翻译面板：键位文案跟随实际快捷键
