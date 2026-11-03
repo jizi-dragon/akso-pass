@@ -39,34 +39,45 @@ function report(ev: string, extra: Record<string, unknown> = {}): void {
 
 /** 写入值并触发原生 setter + input/change 事件（兼容 React/Ant Design 受控组件）。
  * 密码框位于 iframe 内，需用该 iframe 自身 realm 的构造器触发，跨 realm 才可靠。 */
-function setValue(el: HTMLInputElement, value: string, win: Window): void {
+function setValue(el: HTMLInputElement, value: string, win: Window, force = false): void {
   const realm = win as unknown as {
     HTMLInputElement: typeof HTMLInputElement;
     Event: typeof Event;
   };
   const setter = Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value')?.set;
-  if (setter) {
-    setter.call(el, value);
-  } else {
-    el.value = value;
+  // ★★ v4.2.31：`force` 表示「即使 DOM 里已经是这个值，也再派发一次 input/change」。
+  //  理由不是洁癖：受控组件（React/AntD）的状态**只认事件**，不认 DOM。
+  //  我们把值写进 DOM 之后，平台的监听器可能**还没挂上**（密码框在同源 srcdoc iframe 里，
+  //  那个 iframe 自己的应用要等它 hydration 完才挂 onChange）⇒ 这一次写入对平台**永久丢失**：
+  //  DOM 有值、平台状态是空。此后 `field.value === credentials.password` 会让填充**跳过写入**，
+  //  于是「DOM 一直是对的、平台一直是空的、点击时 antd 校验报『请输入密码』」——
+  //  这正是用户报的那条症状（`docs/PITFALLS.md` #55 有现场与复现）。
+  //  ⇒ 交付「我要填」这个动作，而不是「这个值在不在 DOM 里」。同一值重复派发对受控组件是无害的
+  //    （React 的 value tracker 若已同步就不再触发 onChange）。
+  if (force || el.value !== value) {
+    if (setter) {
+      setter.call(el, value);
+    } else {
+      el.value = value;
+    }
   }
   el.dispatchEvent(new realm.Event('input', { bubbles: true }));
   el.dispatchEvent(new realm.Event('change', { bubbles: true }));
 }
 
-function fillUsername(): boolean {
+function fillUsername(force = false): boolean {
   const field =
     document.querySelector<HTMLInputElement>('input[placeholder="请输入用户名"]') ||
     document.querySelector<HTMLInputElement>('input[type="text"]');
-  if (field && credentials && field.value !== credentials.username) {
-    setValue(field, credentials.username, window);
+  if (field && credentials && (force || field.value !== credentials.username)) {
+    setValue(field, credentials.username, window, force);
     return true;
   }
   return Boolean(field);
 }
 
 /** 顶层直接访问 srcdoc/同源 iframe，把密码填进 iframe 内的 password 输入框 */
-function fillPasswordInIframes(): boolean {
+function fillPasswordInIframes(force = false): boolean {
   const iframes = document.querySelectorAll<HTMLIFrameElement>('iframe');
   for (const iframe of Array.from(iframes)) {
     try {
@@ -79,9 +90,9 @@ function fillPasswordInIframes(): boolean {
         doc.querySelector<HTMLInputElement>('input[type="password"]') ||
         doc.querySelector<HTMLInputElement>('input[placeholder*="密码"]') ||
         doc.querySelector<HTMLInputElement>('input[placeholder*="password"]');
-      if (field && credentials && field.value !== credentials.password) {
-        // 值为空/被框架重渲染清掉时才回填（防御 srcdoc 重渲染清值）
-        setValue(field, credentials.password, win);
+      if (field && credentials && (force || field.value !== credentials.password)) {
+        // 值为空/被框架重渲染清掉时回填；`force` 时即使值相同也重新派发（见 setValue 注释）
+        setValue(field, credentials.password, win, force);
       }
       return Boolean(field);
     } catch {
@@ -139,6 +150,14 @@ function findSubmit(): HTMLButtonElement | null {
  *  才能定位（见 `docs/FEASIBILITY-SSO-QUICKLOGIN.md` §7.1）。 */
 function runTopFrameFlow(): void {
   const deadline = Date.now() + 30_000;
+  const startedAt = Date.now();
+  /** ★ 首击下限（ms）：平台的表单监听器通常在文档解析之后才挂上，srcdoc iframe 里的应用
+   *  还要等它自己的 hydration。我们**看不到**"挂上了没有"，所以给首击一个下限，避免在监听器
+   *  存在之前就把值写进 DOM —— 那一次写入对平台永久丢失（见 `setValue` 的注释与 PITFALLS #55）。 */
+  const MIN_SETTLE_MS = 1500;
+  /** ★ 平台校验说「请输入密码」但 DOM 里明明有密码 ⇒ 事件没进平台状态。
+   *  这类失败**不是**凭据错，不消耗 `errorSeen`（服务端拒绝配额），单独限次。 */
+  let validationRetries = 0;
   /** ★ 已**送达**的点击次数（= 服务端实际收到几次提交），不是调度次数 */
   let posts = 0;
   let lastClickAt = 0;
@@ -215,6 +234,27 @@ function runTopFrameFlow(): void {
       '.ant-message-error, .ant-message-notice-error, .ant-alert-error, .ant-form-item-explain-error',
     ).length;
 
+  /** 读页面上的错误文案（只取 antd 系那几类节点的文本，不含整页文本） */
+  const readErrorTexts = (): string[] => {
+    const out: string[] = [];
+    document
+      .querySelectorAll<HTMLElement>(
+        '.ant-message-error, .ant-message-notice-error, .ant-alert-error, .ant-form-item-explain-error',
+      )
+      .forEach((n) => {
+        const t = (n.textContent || '').trim();
+        if (t) {
+          out.push(t);
+        }
+      });
+    return out;
+  };
+
+  /** 错误文案像"必填项为空"⇒ 是**我们的值没进平台**，不是凭据错（凭据错的文案是
+   *  「用户名或密码错误」「账号不存在」「密码错误」这类，不含"请输入/不能为空/required"）。 */
+  const looksLikeMissingInput = (texts: string[]): boolean =>
+    texts.some((t) => /请输入密码|密码不能为空|请输入用户名|用户名不能为空|不能为空|is required|required/i.test(t));
+
   /** 读回 iframe 内密码框当前值（提交前回读用） */
   const readPasswordValue = (): string | null => {
     for (const iframe of document.querySelectorAll<HTMLIFrameElement>('iframe')) {
@@ -230,10 +270,12 @@ function runTopFrameFlow(): void {
     return null;
   };
 
-  /** 填充并校验齐备：用户名或密码任一字段未就绪 → false（本轮不进点击流程） */
-  const fillAll = (): boolean => {
-    const uOk = fillUsername();
-    const pOk = fillPasswordInIframes();
+  /** 填充并校验齐备：用户名或密码任一字段未就绪 → false（本轮不进点击流程）
+   *  `force` 用于"点击落地前"与"平台校验说没收到"这两种场合：重新派发 input/change，
+   *  让平台状态有机会补上（DOM 值相同也要发）。 */
+  const fillAll = (force = false): boolean => {
+    const uOk = fillUsername(force);
+    const pOk = fillPasswordInIframes(force);
     checkAgreement();
     return uOk && pOk;
   };
@@ -276,6 +318,10 @@ function runTopFrameFlow(): void {
       return;
     }
     absentStreak = 0;
+    // ★ 首击下限（见 MIN_SETTLE_MS 注释）：只约束第一次提交，之后的补填/重试不再等。
+    if (posts === 0 && Date.now() - startedAt < MIN_SETTLE_MS) {
+      return;
+    }
     // 先检测用户是否已改写凭据（覆盖 srcdoc iframe 密码框等无事件通道的场景），再决定是否回填
     detectUserEdit(
       document.querySelector<HTMLInputElement>('input[placeholder="请输入用户名"]') ||
@@ -292,12 +338,32 @@ function runTopFrameFlow(): void {
       if (now - lastClickAt < 3500) {
         if (!errorFlagged && countErrors() > errorsAtLastClick) {
           errorFlagged = true;
-          errorSeen++;
-          report('rejected', { errorSeen, posts, userClicked });
-          log.debug('submit rejected by server', { errorSeen });
-          if (errorSeen >= 2) {
-            stop('server-rejected-twice');
-            return;
+          // ★★ v4.2.31：两类失败必须分开处置。判据有两条，任一成立就是"值没进平台"：
+          //   · DOM 里密码还是我们的值 ⇒ 平台 state 空而 DOM 有（事件丢了）；
+          //   · 错误文案是"必填项为空"（「请输入密码」/「不能为空」/required）⇒ 客户端校验
+          //     当场说的就是"没有值"，而真凭据错的文案是「用户名或密码错误」这类。
+          //   这两种都不是凭据错，重试有意义，也**不该消耗**服务端拒绝配额（errorSeen）。
+          //   现场截图里密码框是空的，正是因为 antd 报错后按自己的 state（空）重渲染了一次 ——
+          //   所以第二条判据才是真机那种形态的判据。
+          const stillFilled = readPasswordValue() === credentials.password;
+          const missingInput = looksLikeMissingInput(readErrorTexts());
+          if (stillFilled || missingInput) {
+            validationRetries++;
+            report('validation-error', { validationRetries, posts, stillFilled, missingInput });
+            log.debug('client-side validation says value missing', { validationRetries, stillFilled, missingInput });
+            fillAll(true);
+            if (validationRetries >= 3) {
+              stop('validation-retries');
+              return;
+            }
+          } else {
+            errorSeen++;
+            report('rejected', { errorSeen, posts, userClicked });
+            log.debug('submit rejected by server', { errorSeen });
+            if (errorSeen >= 2) {
+              stop('server-rejected-twice');
+              return;
+            }
           }
         }
         return; // 点击观察期：给登录请求时间，避免连点
@@ -324,7 +390,9 @@ function runTopFrameFlow(): void {
       }
       // ★★ 点击落地前重新确认「三件事实」同时成立——不靠时序猜，靠当场读 DOM。
       //   读-点之间仍有极小窗口，但它不再是"4 次机会都被白吃"那种放大态。
-      if (!fillAll()) {
+      //   v4.2.31：这里改用 `fillAll(true)` —— 强制重新派发 input/change。点击前最后一次
+      //   写入必须是**带事件**的，否则"值在 DOM、平台状态为空"时点击必然报校验错误。
+      if (!fillAll(true)) {
         report('click-aborted', { posts, reason: 'fields-reset' });
         return; // 字段被重渲染清掉/移除 → 放弃本轮，**不消耗试次**，等下轮重填
       }

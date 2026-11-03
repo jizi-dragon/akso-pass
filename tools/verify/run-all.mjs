@@ -70,6 +70,7 @@ const TIMEOUT_MS = timeoutIdx >= 0 ? Number(args[timeoutIdx + 1]) : 180_000;
 const BROWSER_SCRIPTS = new Set([
   'verify-acct-grid.mjs',
   'verify-adopt.mjs',
+  'verify-autologin-gap.mjs',
   'verify-autologin.mjs',
   'verify-boxmgmt.mjs',
   'verify-defbox.mjs',
