@@ -81,6 +81,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-impgrant.mjs',
   'verify-jarhygiene.mjs',
   'verify-load.mjs',
+  'verify-translate-focus.mjs',
   'verify-ui-select.mjs',
   'verify-v310.mjs',
 ]);

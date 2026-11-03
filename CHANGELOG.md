@@ -5,6 +5,29 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.30（2026-11-03）
+
+### 输入框翻译：焦点在「我们到之前」就有了 / 在 shadow root 里，也能用
+
+- **症状**：部分页面上点进输入框**什么都不出现**（没有右下角小图标），按 `Ctrl+X`
+  **毫无反应**（不弹提示、不复制、不报错）；同一台机器换个页面又完全正常，很容易被当成
+  "翻译服务挂了 / 网络不通"。更糟的是：我们没接管这个按键，浏览器执行了**它自己的剪切**
+  ⇒ 用户的文字被剪进剪贴板、输入框被清空，而译文根本没产生。
+- **根因**（两处，都是"没听见焦点"）：
+  ① `translate` 内容脚本在 `document_idle` 注入，而登录页 / 弹窗首个字段 / 聊天框普遍在
+  `DOMContentLoaded` 就 `focus()` 了 —— 那次 `focusin` 发生时我们还没有监听器，`targetEl`
+  一直是 `null`；而 `onKeyDown` 的门控是 `if (targetEl && …)` ⇒ 整条热键链路**静默失效**。
+  ② `FocusEvent.target` 在 Web Component 里只给出 shadow host（真正的输入框在
+  `host.shadowRoot.activeElement`）⇒ `isTranslatable(host)` 为 false ⇒ 同样无声。
+- **修正**：新增 `deepActiveElement()`（沿 `shadowRoot.activeElement` 往下钻）与
+  `focusEventTarget(e)`（`composedPath()[0]`），`onFocusIn` / `onFocusOut` 都改用后者；
+  `init()` 末尾主动读一次当前焦点（已是可翻译输入框就立刻认下来并出图标）；`onKeyDown`
+  改成**按键那一刻重新判定焦点** —— 自愈，且焦点已离开时不再误译上一个框。
+- **验证**：新增 `tools/verify/verify-translate-focus.mjs`（8 项）：自动聚焦页 / shadow 页的
+  图标与剪贴板、"焦点不在输入框时不接管 `Ctrl+X`"、普通输入框回归。改前实测 **4 项失败**、
+  改后 **8/8**。
+- 记录于 `docs/PITFALLS.md` #54。
+
 ## 4.2.29（2026-11-03）
 
 ### 「添加账号」里的站点 / 盒子选择不再每 3 秒被改回默认值

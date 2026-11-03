@@ -96,6 +96,37 @@ function isEditableHost(el: HTMLElement): boolean {
   return el.isContentEditable;
 }
 
+/**
+ * 当前**真正**持有焦点的元素（会穿过 shadow DOM）。
+ *
+ * ★★ 2026-11-03 实测补：Web Component 里 `document.activeElement` 只给出 **shadow host**
+ *   （`<my-input>` 那一层），真正承载输入的是 `host.shadowRoot.activeElement`。
+ *   老实现只认 `e.target`（会被重定向到 host）⇒「输入框在 shadow root 里」这一整类页面
+ *   **既不出图标、热键也完全没有反应**，而且**一点提示都没有**，用户只能得出"翻译坏了"。
+ *   判据：`tools/verify/verify-translate-focus.mjs` 的 shadow 场景（改前两项全挂）。
+ *
+ * ★ 只走**开放** shadow root（`el.shadowRoot`）：closed 的拿不到，这是浏览器边界，
+ *   不在这里硬凿 —— 真遇到就退化成"host 本身是否可翻译"。
+ */
+function deepActiveElement(): Element | null {
+  let el: Element | null = document.activeElement;
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+    el = el.shadowRoot.activeElement;
+  }
+  return el;
+}
+
+/**
+ * 焦点事件的真实目标（穿过 shadow 边界）。
+ *
+ * `FocusEvent.target` 会被**重定向**到 shadow host，`composedPath()[0]` 才是里面那个输入框。
+ * `focusin`/`focusout` 是 composed 事件，监听器执行期间 `composedPath()` 一定拿得到。
+ */
+function focusEventTarget(e: Event): EventTarget | null {
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  return path.length > 0 ? path[0] : e.target;
+}
+
 function readText(el: HTMLElement): string {
   if (isEditableHost(el)) {
     return el.innerText || el.textContent || '';
@@ -443,7 +474,9 @@ function firstLine(s: string): string {
 /* ────────────────────────── 焦点跟踪与快捷键 ────────────────────────── */
 
 function onFocusIn(e: Event): void {
-  const el = e.target;
+  // ★ 用 `focusEventTarget`（composedPath[0]）而不是 `e.target`：shadow root 里的输入框
+  //   在 `e.target` 上只剩下 host，见 `deepActiveElement()` 的注释。
+  const el = focusEventTarget(e);
   if (!isTranslatable(el)) {
     return;
   }
@@ -462,7 +495,9 @@ function onFocusIn(e: Event): void {
 
 function onFocusOut(e: Event): void {
   // 只有"当前目标"失焦才隐藏；切到另一个输入框时不隐藏（`focusout` 先于 `focusin`）
-  if (e.target !== targetEl) {
+  // ★ 同样走 `focusEventTarget`：`targetEl` 现在可能是 shadow root **里面**那个输入框，
+  //    拿被重定向过的 `e.target` 去比会永远不相等 ⇒ 图标永远不消失（比不出现更糟）。
+  if (focusEventTarget(e) !== targetEl) {
     return;
   }
   hideTimer = window.setTimeout(() => {
@@ -491,11 +526,27 @@ async function refreshIconVisibility(): Promise<void> {
 function onKeyDown(e: KeyboardEvent): void {
   // Ctrl+X：只在已聚焦可翻译输入框时接管，避免把页面其它地方的文字剪切掉。
   // `e.code` 用物理键，避免布局/输入法把 key 改掉。
-  if (targetEl && e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyX') {
-    e.preventDefault();
-    e.stopPropagation();
-    void translateToClipboard();
+  if (!(e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyX')) {
+    return;
   }
+  // ★★ 按下的这一刻**重新问一次**焦点在哪（自愈，2026-11-03）：
+  //   ① 页面在 content script 注入前就 `focus()` 了输入框 —— 登录页、对话框首字段、
+  //      聊天输入框都这样。那一次 `focusin` 我们根本没听见，`targetEl` 会一直是 null；
+  //   ② 焦点在 shadow root 内的输入框上 —— 老的 `focusin` 只听到被重定向的 host。
+  //   这两种情况下老实现都是**完全无声**：不出图标、不阻止默认行为、不弹提示，
+  //   浏览器接着执行自己的「剪切」⇒ 用户的文字被剪走，还以为插件坏了。
+  //   判据：`verify-translate-focus.mjs` 的 autofocus / shadow 场景。
+  const live = deepActiveElement();
+  // ★ 严格按"按下的这一刻焦点在哪"来判：焦点已经离开可翻译元素（点了按钮、点了空白）
+  //   就**不能**拿旧的 `targetEl` 去翻译 —— 那会把上一个框里的内容复制走，
+  //   而用户心里的对象是刚点的那个地方。清空后走下面的静默返回。
+  targetEl = isTranslatable(live) ? live : null;
+  if (!targetEl) {
+    return; // 焦点真的不在可翻译元素上：不接管 Ctrl+X（保留浏览器原生剪切）
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  void translateToClipboard();
 }
 
 /* ────────────────────────── 装配 ────────────────────────── */
@@ -541,6 +592,17 @@ function init(): void {
   });
 
   log.debug('translate content script installed');
+
+  // ★ 注入时**已经**有焦点的输入框：立刻认下来。
+  //   页面在 `DOMContentLoaded`/首帧就 `focus()` 的表单（登录页、弹窗首字段、聊天框）
+  //   远比想象中常见，而 `document_idle` 注入的我们是**听不到**那次 `focusin` 的
+  //   ⇒ 少了这一步，图标要等用户"点走再点回来"才出现，热键在此之前完全无反应。
+  //   判据：`verify-translate-focus.mjs` 的 autofocus 场景（改前图标不存在、热键无声）。
+  const initial = deepActiveElement();
+  if (isTranslatable(initial)) {
+    targetEl = initial;
+    void refreshIconVisibility();
+  }
 }
 
 if (document.readyState === 'loading') {

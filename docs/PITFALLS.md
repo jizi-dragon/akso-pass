@@ -2657,6 +2657,50 @@ background 只做"弹窗被拦"的新页签兜底。
 
 ---
 
+## #54 【已修】输入框「在我们到之前」就聚焦了 / 在 shadow root 里 ⇒ 翻译图标不出、Ctrl+X 完全无声
+
+**症状**（2026-11-03 用户报「翻译功能用不了」）：在某些页面上，点进输入框**什么都不出现**
+（右下角没有蓝色小图标），按 `Ctrl+X` 也**一点反应都没有** —— 不弹 Toast、不复制、不报错。
+同一台机器换一个页面又完全正常，所以很容易被当成"翻译服务挂了 / 网络不通"。
+更糟的是：既然我们没接管这个按键，浏览器就执行**它自己的剪切** ⇒ 用户的文字被剪走、
+输入框被清空，而译文根本没产生。
+
+**根因**（两处独立，都属于"我们没听见焦点"）：
+
+1. **注入时机**：`translate` 内容脚本在 `document_idle` 注入，而登录页、弹窗首个字段、
+   聊天输入框普遍在 `DOMContentLoaded` / 首帧就 `input.focus()` 了 —— 那次 `focusin`
+   发生时我们**还没有监听器** ⇒ `targetEl` 一直是 `null`。而 `onKeyDown` 的门控是
+   `if (targetEl && …)` ⇒ **整条热键链路静默失效**，连"请先把光标放进输入框"都不弹
+   （那句提示挂在 `translateToClipboard` 里，而它根本进不去）。
+2. **shadow DOM 重定向**：`FocusEvent.target` 在 Web Component 里只会给出 shadow host，
+   真正的输入框是 `host.shadowRoot.activeElement`。老实现用 `e.target` ⇒
+   `isTranslatable(host)` 为 false ⇒ 同样不出图标、热键无声。
+
+**判据**（可执行）：`node tools/verify/verify-translate-focus.mjs`（8 项）。改前实测
+**4 项失败**：自动聚焦页"图标不存在 / 剪贴板仍是哨兵值"、shadow 页"图标不存在 / 剪贴板仍是
+哨兵值"；改后 8/8。它还反向证明"没有把页面别处的 `Ctrl+X` 抢走"（焦点在普通元素上按键，
+剪贴板保持哨兵值）。
+
+**处置**：① 新增 `deepActiveElement()`（沿 `shadowRoot.activeElement` 往下钻）与
+`focusEventTarget(e)`（`composedPath()[0]`），`onFocusIn` / `onFocusOut` 都改用它；
+② `init()` 末尾主动读一次当前焦点，已是可翻译输入框就立刻认下来并显示图标 ——
+补上"注入前就聚焦"这一课；③ `onKeyDown` 改成**按键那一刻重新判定焦点**
+（`targetEl = isTranslatable(deepActiveElement()) ? … : null` 再决定要不要接管）：
+自愈 + 焦点已离开时不再误译上一个框。
+
+**推广**：
+
+- ★★ **"事件驱动的目标元素"必须能被"当前状态"重新算出来**。只靠 `focusin` 记账，等于把功能
+  挂在"我们一定在用户第一次操作之前就到了"这个假设上 —— 内容脚本、SPA、组件库都不保证。
+- ★★ **跨 shadow 边界读焦点用 `composedPath()[0]` / `shadowRoot.activeElement`，不要用
+  `e.target` / `document.activeElement`**：两者在 Web Component 上都只给 host。
+- ★ **静默失效是最坏的一类**：用户拿不到任何线索，还会被浏览器的默认行为（这里是**剪切**）
+  二次伤害。凡是"接管快捷键"的功能，都要有一条"没接管时也必须说明为什么"的路径。
+- ★ 判据优先用**剪贴板 / 输入框内容**这种外部可观测结果，而不是内部变量 ——
+  这次正是"剪贴板还是哨兵值"一眼看出"根本没翻译"。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。
