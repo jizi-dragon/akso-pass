@@ -5,6 +5,46 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.27（2026-11-03）
+
+### 复制页签丢账号 / 开新页偶发丢登录：`openerTabId` 的语义错 + 收编被云端请求卡住
+
+- **症状**：复制一个已登录账号的页签，复制出来的页签直接落登录页；站点里点按钮开
+  新页签偶尔也要重新登录；个别情况下新页签甚至变成**另一个账号**的登录态（串号）。
+- **根因（三处，前两处是这次新查出来的）**：
+  1. **`openerTabId` 不是"亲缘"，是"打开那一刻的前台页签"**。实测（
+     `tools/verify/verify-duplicate.mjs` 与 `tmp/probe-duplicate4/8.mjs`）：
+     前台是 B 的页签时复制 A 的页签，新页签的 `openerTabId` 指向 **B**。老实现无条件
+     按它继承 ⇒ 前台是别的账号就**串号**；前台没绑定就连候选都没有 ⇒ 页签永久直通
+     ⇒ 平台读不到 token（真实 jar / 真实 localStorage 早按规则 4 清干净了）⇒ 登录页。
+  2. **收编判定被云端请求卡住**。`onNavigation` 里 `await parallelStore.get()` 成功后
+     才落绑定，而候选在 await 之前就已从 `pendingAdoptions` 摘掉 ⇒ 离线/慢网时那段窗口里
+     "候选没了、绑定也没落"，壳一直 `hold`，平台 SPA 首屏读到 `null` 就跳登录页；
+     同一窗口里 `ensureAdoptionCandidate` 还会按前台页签补登记一个**错账号**候选。
+  3. **SW 冷启动窗口**：`registerParallelHandlers()` 第一行 `void restore()` 不 await，
+     `bindings` 为空的那几十毫秒里，`adoptFromOpener` / 壳的 `hello` 都会把"有父绑定"
+     误判成"没有父绑定"。
+- **修正**（`background/core/parallel-session.ts`）：
+  ① `adoptFromOpener` 用**创建那一刻 `pendingUrl` 有没有落地**分流：没落地＝站点开窗
+    （立刻按 `openerTabId` 登记候选，不拖慢种子下发）；已落地＝复制页签（挂进
+    `adoptProbe` 待判 40ms，让 `webNavigation.onCreatedNavigationTarget` 的
+    `sourceTabId`、或"同窗口 `index±1` 且 URL 相同"的已绑定邻居来定夺；判不出就
+    保持原生 —— **宁可让用户点一下，也绝不串号**）。
+  ② 收编改成**先落绑定、再补元数据**：`bindings.set` → `persistBindings` →
+    `syncAccountRules` → `pushBind` 一气做完，云端存在性校验**后置**为"真没了才解绑 + 转原生"。
+  ③ 新增记忆化 `ensureReady()` 冷启动门，`adoptFromOpener` / `ensureAdoptionCandidate` /
+    `onNavigation` / 壳的 `hello` 分支都先 await 它。
+  ④ `hello` 在待判期答 `hold`（而不是终局的 `unbound`），壳的 840ms 重试窗才有意义。
+  ⑤ `onNavigation` 候选分支取 URL 改用 `pendingUrl || url`（`status=loading` 时 `url`
+    偶尔还是旧文档），并给每个静默 return 补上 `diag`。
+- **验证**：新增 `tools/verify/verify-duplicate.mjs`（假平台 + 离线快照造两个真账号，
+  已登记进 `run-all.mjs` 的 `BROWSER_SCRIPTS`）。三个场景：站点开窗 / 前台是别的账号时
+  复制 / 前台未绑定时复制 —— **修复前 3/3 都是"未绑定"，修复后 3/3 绑到源页签的账号**，
+  且复制页签读到的是源账号的票据。
+- **诊断**：`ql:forensics` 新增 `adopt-probe`（待判登记，带 `pendingUrl`）/
+  `adopt-duplicate`（按相邻源页签判定）/ `adopt-duplicate-unresolved`（判不出，保持原生）/
+  `adopt-failed`（收编序列抛错）；排查时先看 `ql:diag` 里有没有 `adopt`。
+
 ## 4.2.26（2026-10-28）
 
 ### 站点自开的新页签：偶尔"账号丢失要重新登录"

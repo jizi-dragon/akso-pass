@@ -65,6 +65,40 @@ const PENDING_ADOPT_TTL = 30_000;
  */
 const loginGrace = new Map<number, number>();
 const LOGIN_GRACE_LIMIT = 2;
+/**
+ * 「新页签亲缘待判」窗口（v4.2.27 / PITFALLS #51）。
+ *
+ * ★ `tabs.onCreated` 里的 `openerTabId` 有**两种语义**，长得一模一样：
+ *   ① 站点自己开窗（`window.open` / `target=_blank`）—— opener 就是真实来源页签；
+ *   ② 用户复制页签（右键「复制」/ `chrome.tabs.duplicate`）—— opener 是**复制那一刻
+ *      的前台页签**，不是被复制的页签。实测：前台是 B 页签（账号 B），复制后台的
+ *      A 页签（账号 A），新页签的 `openerTabId` 指向 **B**。
+ *   旧实现一律按 ① 处理，于是复制出来的页签被收编成**前台那个账号**（串号），
+ *   或在前台页签未绑定时连候选都没有 ⇒ 永久直通 ⇒ 平台读不到 token ⇒ 直接跳登录页。
+ *
+ * ⇒ 判据（都是同步/近同步信号，无需新权限）：
+ *   · `onCreated` 时 `pendingUrl` 还没落地（空 / about:blank）= 站点开窗的典型形态
+ *     ⇒ 立刻按 `openerTabId` 继承（不等，避免拖慢种子下发）；
+ *     ~1ms 后 `webNavigation.onCreatedNavigationTarget` 还会带真实 `sourceTabId`，
+ *     若它到了而 opener 指向的是前台页签，以 `sourceTabId` 为准（见 decideAdoption）。
+ *   · `onCreated` 时 `pendingUrl` **已经是源 URL** = 复制页签（或提交极快的新窗）
+ *     ⇒ 挂进本表等 40ms 看上面那个事件，再决定"按 sourceTabId / 相邻源页签继承"。
+ *     判不出来就保持原生 —— 宁可让用户自己点一下，也绝不串号。
+ */
+const adoptProbe = new Map<number, { openerId: number; at: number }>();
+/** 站点开窗的同步证据：新页签 tabId → 真实来源 tabId（`onCreatedNavigationTarget` 写入） */
+const pageOpenTargets = new Map<number, number>();
+/** 待判窗口：够 `onCreatedNavigationTarget` 落地（实测 ~1ms），又不明显拖慢站点开窗 */
+const ADOPT_PROBE_DELAY = 40;
+/** 待判表兜底 TTL：页签被立刻关掉、或事件没来时靠它清 */
+const ADOPT_PROBE_TTL = 10_000;
+/**
+ * 冷启动门（v4.2.27）：`registerParallelHandlers()` 里那次 `restore()` 是 `void` 异步，
+ * 而 `tabs.onCreated` / 壳的 `hello` 完全可能赶在它完成之前到达 —— 那段时间 `bindings`
+ * 是**空的**，父子继承必然被误判成"没有父绑定"（症状：冷启动后头几个新页签丢账号）。
+ * 所有要读 `bindings` 的入口先 await 这道门；`restore()` 记忆化，只跑一次。
+ */
+let readyPromise: Promise<void> | undefined;
 const tokens = new Map<string, TokenSnapshot>();
 /** 授权健康缓存：host → 是否可执行（已授权且未被手动停用） */
 const enforcement = new Map<string, boolean>();
@@ -908,6 +942,14 @@ async function syncAccountRules(accountId: string, host: string): Promise<void> 
 
 /* ---------------- 绑定生命周期 ---------------- */
 
+/** 冷启动门（见 `readyPromise` 的注释）：首次调用触发一次 `restore()`，之后复用同一个 promise */
+function ensureReady(): Promise<void> {
+  if (!readyPromise) {
+    readyPromise = parallelSession.restore().catch(() => undefined);
+  }
+  return readyPromise;
+}
+
 export const parallelSession = {
   /**
    * 打开（或新建）账号标签页并完成绑定。
@@ -1136,11 +1178,15 @@ export const parallelSession = {
   },
 
   /**
-   * 站点自开的新页签亲子继承（window.open / target=_blank）：opener 已绑定账号 A
-   * → 新页签登记为**收编候选**（v3.13 加固：此时 URL 尚未落地，不立即绑定）。
-   * 首次导航 URL 由 onNavigation 确认：授权域内 → 正式收编（种子/规则此时才下发）；
-   * 授权域之外或登录页 → 丢弃候选，页签保持原生（根本原则：外部链接零接触）。
-   * 手动 Ctrl+T（无 openerTabId）连候选都不是。
+   * 新页签的亲子继承：`window.open` / `target=_blank` 开出来的页签，以及**用户复制页签**。
+   *
+   * ★ 站点开窗（opener 已绑定账号 A）→ 新页签登记为**收编候选**（v3.13 加固：此时 URL
+   *   尚未落地，不立即绑定）。首次导航 URL 由 onNavigation 确认：授权域内 → 正式收编
+   *   （种子/规则此时才下发）；授权域之外或登录页 → 丢弃候选，页签保持原生
+   *   （根本原则：外部链接零接触）。手动 Ctrl+T（无 openerTabId）连候选都不是。
+   * ★ 复制页签（v4.2.27）：`openerTabId` 指向的是**复制那一刻的前台页签**，不是源页签
+   *   ⇒ 不能按它继承（否则串号）。走 `decideAdoption` 用 `onCreatedNavigationTarget`
+   *   区分两种来源，复制场景改按"紧邻的源页签"继承。详见 `adoptProbe` 的注释。
    */
   async adoptFromOpener(tab: chrome.tabs.Tab): Promise<void> {
     const openerId = tab.openerTabId;
@@ -1148,40 +1194,44 @@ export const parallelSession = {
     if (openerId === undefined || tabId === undefined) {
       return;
     }
-    const parent = bindings.get(openerId);
-    if (!parent || bindings.has(tabId)) {
+    // ★ 冷启动门（v4.2.27）：SW 刚被叫醒时 `bindings` 还是空的 ⇒ 这里会直接把
+    //   "有父绑定"误判成"没有父绑定"，冷启动后头几个新页签就这么丢了账号。
+    await ensureReady();
+    if (bindings.has(tabId)) {
       return;
     }
-    // ★★ 2026-10-28：**先登记候选，再 await 任何东西**。
-    //
-    //   原来这里先 `await parallelStore.get(...)` 才 `pendingAdoptions.set(...)`。
-    //   而站点自开的新页签，壳（`content/shield-main.ts`）在 document_start 就发
-    //   `hello` —— 它的时序**不归我们管**：SW 一被这条消息叫醒，多半还没跑到
-    //   `onCreated` 的 await 之后。`hello` 查不到候选就答 `unbound`，壳把它当
-    //   **终局**（`settled`），之后候选登记上了、URL 也确认了，迟到的那条 `bind`
-    //   在直通模式下会被丢掉 —— 新页签于是永久停在"原始页签"状态：没有命名空间、
-    //   没有种子 ⇒ 平台读不到 token ⇒ 跳登录页。
-    //   症状正是"用快捷键开好页面后，从页面里点按钮 / 复制打开的页签偶尔要重新登录"。
-    //
-    //   ⇒ 候选的**身份**（accountId/host）此刻就能从父绑定里读出来，登记它不需要
-    //     任何 IO；"账号还在不在"只是确认，留给 `onNavigation` 收编时再判。
-    if (!pendingAdoptions.has(tabId)) {
-      pendingAdoptions.set(tabId, {
-        accountId: parent.accountId,
-        host: parent.host,
-        expires: Date.now() + PENDING_ADOPT_TTL,
-      });
-      void forensics('adopt-candidate', { tabId, accountId: parent.accountId, host: parent.host });
-      void diag(`adopt-candidate tab=${tabId} ← opener=${openerId} 账号=${parent.accountId}（候选，待 URL 确认）`);
+    // ★★ v4.2.27：`openerTabId` **不能直接当亲子依据**，但它也不是没用：
+    //   实测（探针 probe-dup4/5/8，headless Chrome 151）这个字段里装的是
+    //   「创建那一刻**前台**的页签」：
+    //     · 复制页签：前台是别的账号的页签 ⇒ 照它继承就是**串号**；
+    //     · 后台页签里 `window.open`：同样是前台页签 ⇒ 同上；
+    //     · 前台正好就是来源（用户就在那个页签上操作）：这才是老代码假设的形态。
+    //   ⇒ 用**创建那一刻 `pendingUrl` 有没有落地**先把两种形态分开：
+    //     · 没落地（'' / about:blank）= 站点开窗的典型形态，渲染进程还没提交导航，
+    //       `openerTabId` 就是来源 ⇒ **立刻**按父绑定登记候选（不能等：壳在
+    //       document_start 就发 hello，等 40ms 就可能把种子让给 SPA 的首屏读取）；
+    //     · 已落地（复制页签在 `onCreated` 时 `pendingUrl` 就已等于源 URL）
+    //       ⇒ 挂进 `adoptProbe` 待判，由 `decideAdoption` 找真正的源页签。
+    const pendingUrl = ((tab as { pendingUrl?: string }).pendingUrl || '').trim();
+    if (!pendingUrl || pendingUrl === 'about:blank') {
+      const parent = bindings.get(openerId);
+      if (!parent) {
+        return;
+      }
+      // ★ 2026-10-28：**先登记候选，再 await 任何东西**（迟到的 bind 会被直通模式丢掉）。
+      // ★ v4.2.27：这里**不再**等云端确认账号存在 —— 离线时 `parallelStore.get()`
+      //   要走一次完整网络超时（秒级），而候选登记被卡在它后面，壳就一直 hold、
+      //   SPA 早就跳登录页了。身份的权威来源是父页签的现有绑定（本地事实）；
+      //   账号真没了由 `onNavigation` 收编后置校验兜底。
+      registerAdoptCandidate(tabId, parent.accountId, parent.host, `opener=${openerId}`);
+      return;
     }
-    // 账号若已被删掉：候选没有意义，撤掉（URL 确认那条路上还会再判一次）。
-    // ★ 撤掉时必须**显式放行**：壳可能已经按上面的候选答了 `hold` 在等，撤销而不
-    //   通知的话它会一直等到 TTL 过期（30s）—— 那段时间页面既不是绑定态也不是
-    //   直通态。这里补一条 `unbound`，语义与"没有候选"完全一致。
-    const account = await parallelStore.get(parent.accountId).catch(() => undefined);
-    if (!account) {
-      pendingAdoptions.delete(tabId);
-      void pushDown(tabId, { op: 'unbound' });
+    if (!adoptProbe.has(tabId)) {
+      adoptProbe.set(tabId, { openerId, at: Date.now() });
+      void forensics('adopt-probe', { tabId, openerId, pendingUrl: pendingUrl.slice(0, 200) });
+      setTimeout(() => {
+        void decideAdoption(tabId);
+      }, ADOPT_PROBE_DELAY);
     }
   },
 
@@ -1227,10 +1277,14 @@ export const parallelSession = {
         //   所以在答"未绑定"之前，先补读一次"父页签是谁"：有已绑定的 opener
         //   就当场登记候选并答 hold 让壳等着，而不是把它判成原始页签
         //   （判了之后迟到的 bind 会被壳忽略，页签再也收不回来）。
+        await ensureReady(); // ★ v4.2.27：冷启动时 bindings 还没恢复，别急着判"未绑定"
         await ensureAdoptionCandidate(tabId);
-        if (pendingAdoptions.has(tabId)) {
+        if (pendingAdoptions.has(tabId) || adoptProbe.has(tabId)) {
           // v3.13 收编候选：URL 未确认前不灌种子/不置 settled——壳保持等待（hold），
-          // URL 确认授权后再正式收编（防止候选期的种子流入外部域）
+          // URL 确认授权后再正式收编（防止候选期的种子流入外部域）。
+          // ★ v4.2.27：复制页签待判期（adoptProbe）同样答 hold —— 旧实现这里答
+          //   `unbound`，壳把它当终局，等 `decideAdoption` 判出"其实该继承 accA"
+          //   时已经晚了（直通模式忽略迟到的 bind）⇒ 登录页。
           return { op: 'hold' };
         }
       }
@@ -1413,6 +1467,9 @@ export const parallelSession = {
 
   /** 标签页导航开始：重新推绑定种子与标题（SPA/整页刷新都会重置） */
   async onNavigation(tabId: number): Promise<void> {
+    // ★ v4.2.27：冷启动窗口内 bindings 尚空，先等一次 restore 再判（否则复制/开窗的新
+    //   页签会被判成"未绑定"）。
+    await ensureReady();
     // v3.13 收编加固：候选页签的首个真实导航落地 → 按目标 URL 决定收编或放弃。
     // 授权域内（host 或 *.父域）→ 正式收编（此刻才发种子/装规则）；
     // 授权域之外 / 登录页 → 丢弃候选（页签保持原生，种子/规则零接触）。
@@ -1426,14 +1483,19 @@ export const parallelSession = {
       }
       let url = '';
       try {
-        url = (await chrome.tabs.get(tabId)).url ?? '';
+        const tab = await chrome.tabs.get(tabId);
+        // ★ v4.2.27：`pendingUrl` 优先 —— `status=loading` 到达时 `url` 偶尔还是旧文档
+        //   （尤其复制页签 + 前一个文档被缓存时），拿旧 URL 判授权域会误判成"外部域"。
+        url = (tab as { pendingUrl?: string }).pendingUrl || tab.url || '';
       } catch {
         pendingAdoptions.delete(tabId);
         return;
       }
       if (!/^https?:\/\//i.test(url)) {
+        void diag(`adopt-candidate tab=${tabId} URL 尚未落地（${url || '空'}）：保留候选继续等`);
         return; // 尚未发生真实导航（about:blank 等），继续等待
       }
+      void diag(`adopt-candidate tab=${tabId} 结算 url=${url} 账号=${pending.accountId}`);
       pendingAdoptions.delete(tabId);
       let urlHost = '';
       let path = '';
@@ -1469,21 +1531,37 @@ export const parallelSession = {
         void forensics('adopt-login-landing', { tabId, accountId: pending.accountId, path });
         void diag(`adopt-candidate tab=${tabId} 落登录页但账号仍有 token：照常收编（种子晚到的典型形态）`);
       }
-      const account = await parallelStore.get(pending.accountId).catch(() => undefined);
-      if (!account) {
-        void pushDown(tabId, { op: 'unbound' });
+      if (!tokens.get(pending.accountId)?.token) {
+        await capturePreJar(pending.accountId, pending.host);
+      }
+      // ★★ v4.2.27：**先把身份落进绑定表，再去云端补元数据**。
+      //   身份（accountId/host）来自父页签/复制源的**现有绑定**，是本地事实；
+      //   `parallelStore.get()` 在离线时是秒级网络超时，把它放在前面会让收编
+      //   晚到几秒 —— 那时平台的 SPA 早就 401 跳登录页了（"偶尔丢登录"）。
+      try {
+        bindings.set(tabId, { accountId: pending.accountId, host: pending.host, adopted: true });
+        await persistBindings();
+        await syncAccountRules(pending.accountId, pending.host);
+        await pushBind(tabId);
+        void forensics('adopt', { tabId, accountId: pending.accountId, host: pending.host, url });
+        void diag(`adopt tab=${tabId} ← 账号=${pending.accountId}（URL 确认后立即收编）`);
+      } catch (e) {
+        // 收编中途失败必须留痕：否则页签停在"表里有绑定、却没有规则/种子"的半截态，
+        // 看起来像"偶发丢账号"，而 diag 里一条记录都没有。
+        void diag(`adopt tab=${tabId} 账号=${pending.accountId} 收编失败：${String(e)}`);
+        void forensics('adopt-failed', { tabId, accountId: pending.accountId, error: String(e) });
         return;
       }
-      if (!tokens.get(account.id)?.token) {
-        await capturePreJar(account.id, pending.host);
+      // 存在性校验后置：账号真被删了 ⇒ 解绑 + 转原始页签（规则/种子一并摘掉）
+      const account = await parallelStore.get(pending.accountId).catch(() => undefined);
+      if (!account) {
+        void diag(`adopt tab=${tabId} 账号 ${pending.accountId} 已不存在：解绑转原始`);
+        void forensics('adopt-dropped', { tabId, accountId: pending.accountId, reason: 'account-missing' });
+        await this.unbindTab(tabId);
+        void chrome.tabs.reload(tabId).catch(() => undefined);
+        return;
       }
-      bindings.set(tabId, { accountId: account.id, host: pending.host, adopted: true });
-      await persistBindings();
-      await syncAccountRules(account.id, pending.host);
-      await pushBind(tabId);
       await applyTitle(tabId, account.tabName);
-      void forensics('adopt', { tabId, accountId: account.id, host: pending.host, url });
-      void diag(`adopt tab=${tabId} ← 账号=${account.id}（URL 确认后正式收编）`);
       return;
     }
 
@@ -1573,6 +1651,8 @@ export const parallelSession = {
 
   async handleTabRemoved(tabId: number): Promise<void> {
     pendingAdoptions.delete(tabId); // 候选页签关闭：清理（未正式收编无残留）
+    adoptProbe.delete(tabId); // v4.2.27：待判页签关闭，别让 150ms 后的定时器白跑
+    pageOpenTargets.delete(tabId);
     loginGrace.delete(tabId);
     if (bindings.has(tabId)) {
       await this.unbindTab(tabId);
@@ -1619,6 +1699,145 @@ function buildBindPayload(accountId: string, tabId?: number): BridgeDownPayload 
   return { op: 'bind', accountId, tabId, seed, bag };
 }
 
+/* ---------------- 新页签亲缘判定（v4.2.27） ----------------
+ * 这段是"复制页签丢账号"的正面修复，读之前先看 `adoptProbe` 的注释：
+ * `openerTabId` 在"站点开窗"与"用户复制"两种场景下含义不同，而后者指向的是
+ * 复制那一刻的**前台页签** —— 照它继承就是串号，不继承就是登录页。
+ */
+
+/** 比对"是不是同一个文档"：忽略 hash（SPA 路由常只改 hash） */
+function stripHash(url: string): string {
+  const i = url.indexOf('#');
+  return (i >= 0 ? url.slice(0, i) : url).trim();
+}
+
+/**
+ * 登记收编候选（唯一点：身份 + 自我结算）。
+ *
+ * ★ 为什么登记完要立刻自己结算一次：候选本来由 `onNavigation`（status=loading）消费，
+ *   而复制页签/hello 兜底这两条路上，那条 loading **往往已经过去**（那时还没有候选）。
+ *   不补这一次判定，壳就一直 hold 在"既未激活、也未直通"的裸态等一条不来的 bind。
+ */
+function registerAdoptCandidate(tabId: number, accountId: string, host: string, via: string): void {
+  if (bindings.has(tabId) || pendingAdoptions.has(tabId)) {
+    return;
+  }
+  pendingAdoptions.set(tabId, { accountId, host, expires: Date.now() + PENDING_ADOPT_TTL });
+  void forensics('adopt-candidate', { tabId, accountId, host, via });
+  void diag(`adopt-candidate tab=${tabId} ← ${via} 账号=${accountId}（候选，待 URL 确认）`);
+  void (async () => {
+    try {
+      await parallelSession.onNavigation(tabId); // URL 已落地就地收编；没落地会原样保留候选
+    } catch {
+      // onNavigation 内部自己兜：这里只是不让 promise 悬空
+    }
+    reapCandidateLater(tabId, 0); // 还没落地 ⇒ 800ms×3 后按直通放行
+  })();
+}
+
+/**
+ * 复制页签的"源页签"：Chrome 把复制出来的页签**插在源页签右边**，
+ * 所以源就是 `index-1`（也兜一个 `index+1`，防某些版本上报的是插入前的 index）。
+ *
+ * ★ 只认"已绑定 + URL 与待导航 URL 相同"的邻居：URL 不同就不是同一次复制，
+ *   宁可返回 undefined 让页签保持原生，也绝不猜一个账号塞进去（串号比丢账号更难查）。
+ */
+async function findDuplicateSource(
+  tab: chrome.tabs.Tab,
+): Promise<{ tabId: number; binding: ParBinding } | undefined> {
+  const tabId = tab.id;
+  if (tabId === undefined) {
+    return undefined;
+  }
+  const wanted = stripHash((tab as { pendingUrl?: string }).pendingUrl || tab.url || '');
+  if (!wanted) {
+    return undefined;
+  }
+  let siblings: chrome.tabs.Tab[];
+  try {
+    siblings = await chrome.tabs.query({ windowId: tab.windowId });
+  } catch {
+    return undefined;
+  }
+  for (const index of [tab.index - 1, tab.index + 1]) {
+    if (index < 0) {
+      continue;
+    }
+    const cand = siblings.find((t) => t.id !== tabId && t.index === index);
+    if (!cand || cand.id === undefined) {
+      continue;
+    }
+    const binding = bindings.get(cand.id);
+    if (!binding) {
+      continue;
+    }
+    if (stripHash(cand.url || '') !== wanted) {
+      continue;
+    }
+    return { tabId: cand.id, binding };
+  }
+  return undefined;
+}
+
+/**
+ * 待判页签的定夺（`ADOPT_PROBE_DELAY` 之后跑一次）。
+ *
+ * 判据只有一条：**等没等到 `onCreatedNavigationTarget`**。
+ *  - 等到了 ⇒ 站点自己开的窗，`sourceTabId` 才是真来源（比 openerTabId 还准）；
+ *  - 没等到 ⇒ 用户复制页签，`openerTabId` 是前台页签，改用相邻的源页签继承；
+ *  - 都不成立 ⇒ 先 `pushDown(unbound)` 放行（页签保持原生，绝不串号）。
+ */
+async function decideAdoption(tabId: number): Promise<void> {
+  const probe = adoptProbe.get(tabId);
+  if (!probe) {
+    return;
+  }
+  if (Date.now() - probe.at > ADOPT_PROBE_TTL) {
+    adoptProbe.delete(tabId);
+    return;
+  }
+  await ensureReady();
+  if (bindings.has(tabId) || pendingAdoptions.has(tabId)) {
+    adoptProbe.delete(tabId);
+    return;
+  }
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    adoptProbe.delete(tabId); // 页签已关
+    return;
+  }
+  const sourceTabId = pageOpenTargets.get(tabId);
+  pageOpenTargets.delete(tabId);
+  adoptProbe.delete(tabId);
+  if (sourceTabId !== undefined) {
+    const parent = bindings.get(sourceTabId) ?? bindings.get(probe.openerId);
+    if (!parent) {
+      void pushDown(tabId, { op: 'unbound' });
+      return;
+    }
+    registerAdoptCandidate(tabId, parent.accountId, parent.host, `page-open←${sourceTabId}`);
+    return;
+  }
+  // 没有 onCreatedNavigationTarget = 用户复制页签：openerTabId 是前台页签，绝不能用
+  const source = await findDuplicateSource(tab);
+  if (!source) {
+    void forensics('adopt-duplicate-unresolved', { tabId, openerId: probe.openerId });
+    void diag(`adopt-probe tab=${tabId} 判为复制页签但找不到源页签：保持原生（绝不串号）`);
+    void pushDown(tabId, { op: 'unbound' });
+    return;
+  }
+  void forensics('adopt-duplicate', {
+    tabId,
+    openerId: probe.openerId,
+    sourceTabId: source.tabId,
+    accountId: source.binding.accountId,
+  });
+  void diag(`adopt-probe tab=${tabId} 判为复制页签：源=${source.tabId} 账号=${source.binding.accountId}`);
+  registerAdoptCandidate(tabId, source.binding.accountId, source.binding.host, `duplicate←${source.tabId}`);
+}
+
 /**
  * hello 兜底：用页签自己的 `openerTabId` 把"亲子继承候选"补登记上（见 handleBridge）。
  *
@@ -1636,7 +1855,14 @@ async function ensureAdoptionCandidate(tabId: number): Promise<void> {
     }
     pendingAdoptions.delete(tabId); // 过期候选不该继续 hold（onNavigation 会同样处理）
   }
+  await ensureReady();
   if (bindings.has(tabId)) {
+    return;
+  }
+  // ★ v4.2.27：复制页签待判期**不能**按 openerTabId 补登记 —— 那个 opener 是
+  //   复制那一刻的前台页签，照它登记就是串号。交给 `decideAdoption` 定夺，
+  //   hello 先答 hold 让壳等着（等它判完必然会有 bind 或 unbound 下来）。
+  if (adoptProbe.has(tabId)) {
     return;
   }
   let tab: chrome.tabs.Tab;
@@ -1742,10 +1968,14 @@ async function pushDown(tabId: number, payload: BridgeDownPayload): Promise<void
 
 /** 装载事件监听；由 service-worker 调用一次 */
 export function registerParallelHandlers(): void {
-  void parallelSession.restore();
+  // ★ v4.2.27：走记忆化的 ensureReady()（`restore()` 仍在里面跑），这样所有事件处理器
+  //   都能 await 同一个 promise —— 不再有"监听已装、bindings 还是空的"那个窗口。
+  void ensureReady();
 
   chrome.runtime.onStartup?.addListener(() => {
-    void parallelSession.restore();
+    // 浏览器启动：上一轮的 session 存储可能是脏的，重读一次（重置记忆化 promise）
+    readyPromise = undefined;
+    void ensureReady();
   });
 
   chrome.tabs.onRemoved.addListener((tabId) => {
@@ -1755,6 +1985,23 @@ export function registerParallelHandlers(): void {
   // 站点自开的新页签：opener 已绑定 → 亲子继承（低代码平台弹窗编辑保持同一账号身份）
   chrome.tabs.onCreated.addListener((tab) => {
     void parallelSession.adoptFromOpener(tab);
+  });
+
+  // ★★ v4.2.27：`window.open` / `target=_blank` 的**同步证据**（复制页签不触发它）。
+  //   `tabs.onCreated` 里报的 `openerTabId` 在"复制页签"场景指向的是复制那一刻的
+  //   前台页签，靠它继承会串号；真正区分两种来源的就是这条事件的有无。
+  chrome.webNavigation.onCreatedNavigationTarget.addListener((details) => {
+    const tabId = details.tabId;
+    const sourceTabId = details.sourceTabId;
+    if (typeof tabId !== 'number' || typeof sourceTabId !== 'number' || sourceTabId < 0) {
+      return;
+    }
+    pageOpenTargets.set(tabId, sourceTabId);
+    if (pageOpenTargets.size > 200) {
+      // 正常情况下条目会被 decideAdoption 消费掉；这里只是防泄漏的兜底
+      pageOpenTargets.clear();
+      pageOpenTargets.set(tabId, sourceTabId);
+    }
   });
 
   // 导航提交近似信号：status=loading 时重推种子/标题（不引入 webNavigation 权限）

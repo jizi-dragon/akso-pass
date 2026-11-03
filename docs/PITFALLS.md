@@ -2508,6 +2508,73 @@ background 只做"弹窗被拦"的新页签兜底。
 
 ---
 
+## #51 【已修】复制页签：`openerTabId` 是"那一刻的前台页签"，而收编判定还卡在云端请求上
+
+**症状**：复制一个已登录账号的页签 ⇒ 复制出来的页签**直接落登录页**；站点里点按钮
+开新页签偶尔也要重新登录；偶尔更糟 —— 新页签沉默地变成了**另一个账号**的登录态
+（数据串到别人名下，界面上一切正常）。
+
+**根因**（三个缺陷叠在一起，前两个都没有任何报错）：
+
+1. **`openerTabId` 的语义不是"亲缘"**。实测（`tmp/probe-duplicate4/8.mjs`，
+   `chrome.tabs.duplicate()` + `tabs.onCreated` 抓字段）：
+   - 前台是 B 的页签、复制 A 的页签 ⇒ 新页签 `openerTabId = B`（**不是 A**）；
+   - 前台是未绑定页签 ⇒ `openerTabId` = 那个未绑定页签；
+   - `tabs.create()` 的页签 ⇒ 无 `openerTabId`（所以复制 ≠ 新建，两者别混）。
+   老 `adoptFromOpener` 无条件按它继承：前台是别的账号 ⇒ **串号**；前台没绑定 ⇒ 连候选
+   都不登记 ⇒ 页签永久直通 ⇒ 平台读不到 token（真实 jar / 真实 localStorage 早按规则 4
+   清干净了）⇒ 跳登录页。**这是"复制页签必丢账号"的确定性原因，不是竞态。**
+2. **收编判定被云端请求撕成两半**。`onNavigation` 候选分支里
+   `const account = await parallelStore.get(pending.accountId)` 成功后才 `bindings.set()`，
+   而候选在 await **之前**就已 `pendingAdoptions.delete()`。离线时那次请求要走完整网络
+   超时（秒级）⇒ 这整段时间里"候选没了、绑定也没落"：
+   ① 壳收到 `hold` 一直等，平台 SPA 首屏读到 `null` ⇒ 跳登录页（"偶尔丢登录"）；
+   ② 同一窗口里 `ensureAdoptionCandidate` 查不到候选，就按 `openerTabId` = **前台页签**
+      补登记了一个错账号候选 ⇒ 收编成别人的账号（串号）。
+3. **SW 冷启动窗口**：`registerParallelHandlers()` 第一行是 `void parallelSession.restore()`，
+   `restore()` 自己也要 await 存储 ⇒ 这几十毫秒里 `bindings` 是**空的**，
+   `adoptFromOpener` / 壳的 `hello` 都把"有父绑定"看成"没有父绑定"。
+
+**判据**：`node tools/verify/verify-duplicate.mjs`（假平台 + 离线快照造两个真账号）。
+
+- 场景 0（站点开窗，前台就是源页签）⇒ 新页签绑 `accA`；
+- 场景 1（前台是 **accB** 的页签，复制 A 的页签）⇒ 必须绑 **`accA`**（不是 `accB`）；
+- 场景 2（前台是未绑定页签，复制 A 的页签）⇒ 必须绑 `accA`，且前台那个页签**仍为未绑定**；
+- 粘贴页签读到的是 `accA` 的票据（页面 hash `#tok=OK(a)`）。
+
+反证（换个 4.2.26 的 `dist` 跑同一脚本）：三个场景**全部"未绑定"**（`tmp/dist-before` 可复现）。
+真机一眼认：`ql:diag` 里找 `adopt` —— 有 `adopt-candidate` 却始终没有 `adopt`，
+就是收编被卡住；只有 `adopt-probe` 没有后续，就是复制页签判定没找到源页签。
+
+**处置**：**已修**（v4.2.27，`background/core/parallel-session.ts`）。
+
+- `adoptFromOpener` 按**创建那一刻 `pendingUrl` 有没有落地**分流：
+  空/`about:blank` ⇒ 站点开窗，立刻按 `openerTabId` 登记候选（不等，避免拖慢种子）；
+  已落地（复制页签在 `onCreated` 时 `pendingUrl` 就已等于源 URL）⇒ 挂 `adoptProbe`
+  待判 40ms，由 `webNavigation.onCreatedNavigationTarget` 的 `sourceTabId`、
+  或"同窗口 `index±1` 且 `stripHash(url)` 相同"的已绑定邻居定夺；
+  都判不出 ⇒ `pushDown(unbound)` 保持原生（**绝不串号**）。
+- 收编序列改成**先落绑定、再补元数据**（`bindings.set` → `persistBindings` →
+  `syncAccountRules` → `pushBind`），云端存在性校验后置：真没了才 `unbindTab()` + 转原生。
+- 新增记忆化 `ensureReady()`，所有读 `bindings` 的入口先 await 它。
+- `hello` 在待判期（`pendingAdoptions` 或 `adoptProbe` 命中）答 `hold`，不是 `unbound`。
+
+**推广**：
+
+- ★★ **`openerTabId` 只说明"谁在当时前台开的东西"，不说明"这是谁的孩子"。**
+  凡是拿它当父子关系的地方都要复核：复制页签、后台页签 `window.open`、
+  `about:blank` 预开窗再 `location.replace`。判亲缘要另找**内容证据**
+  （`onCreatedNavigationTarget.sourceTabId`、相邻位置 + URL 相同）。
+- ★★ **身份判定不要跨网络**。能在本地用的事实（父页签已有绑定、复制源已有绑定）
+  别再去 `await` 云端：一个 await 就能把"收编"变成"丢账号"，还能顺手把候选摘掉让
+  重试路径也失效。IO 只该影响**确认**，不该影响**登记**。
+- ★★ **判不出来时选"保持原生"，不要选"猜一个账号"。** 串号在 GMP 场景是数据事故，
+  重新登录只是麻烦 —— 两个方向的代价完全不对称。
+- ★ **`unbound` 是终局**（壳收到就 `settled`）。任何"等等也许还有救"的状态都必须答
+  `hold`，否则 840ms 的重试窗白等，迟到的 `bind` 会被直通模式丢掉。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。
