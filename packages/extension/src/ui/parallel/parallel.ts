@@ -387,8 +387,18 @@ async function loadAtomicState(): Promise<boolean> {
   lastSitesKey = '';
   lastChipsKey = '';
   lastLedgerKey = '';
-  lastHostOptions = '';
-  lastBoxOptions = '';
+  /* ★★ v4.2.29：**不要**再清 `lastHostOptions` / `lastBoxOptions`。
+   *
+   * 那两个 key 是**从数据算出来**的（`fillSiteOptions` 用 `[host,title]`、
+   * `fillBoxOptions` 用 `boxes.join('|')`）：数据真变了 key 自然变、自然会重建，
+   * 数据没变就没必要重建。这里无条件清空 = "每 3 秒轮询都重建一次下拉"，
+   * 后果有两层：
+   *   ① 防闪烁失效 —— 每次重建都会关掉正在展开的下拉、丢焦点；
+   *   ② **用户正在表单里的选择被抹掉** —— `fillSiteOptions` 重建后会把 `value`
+   *      写回"上次提交的站点 / 首选站点 / 列表第一个"，于是"添加账号"里刚选的
+   *      站点每隔三秒被强制改回默认值（用户报的就是这个）。
+   * 列表类 key（`lastListKey` 等）保留清空：它们的 key 只用来抑制重画，
+   * 清空最多多画一次，不会改用户输入。 */
   return true;
 }
 
@@ -3058,6 +3068,13 @@ async function fillSiteOptions(): Promise<void> {
     return;
   }
   lastHostOptions = key;
+  /* ★ v4.2.29：重建前先记下用户**当前**选中的站点。
+   *
+   * 只要走到重建（数据变了、或从别处显式失效），旧实现就无条件把 `value` 写成
+   * `preferred`（上次提交的 / 首选 / 第一个）—— 用户在"添加账号"里挑的站点会被
+   * 悄悄换掉，看起来就像"下拉每隔几秒自己变回默认值"。选中项还在新列表里就留着，
+   * 只有它真的没了（站点被删/改名）才退回 `preferred`。 */
+  const prevHost = pHostSelect.value;
   pHostSelect.innerHTML = '';
 
   if (!rows.length) {
@@ -3085,11 +3102,13 @@ async function fillSiteOptions(): Promise<void> {
   const last = stored[LAST_HOST_KEY] as string | undefined;
   const hosts = rows.map((r) => r.host);
   const preferred =
-    last && hosts.includes(last)
-      ? last
-      : hosts.includes(PREFERRED_HOST)
-        ? PREFERRED_HOST
-        : hosts[0];
+    prevHost && hosts.includes(prevHost)
+      ? prevHost
+      : last && hosts.includes(last)
+        ? last
+        : hosts.includes(PREFERRED_HOST)
+          ? PREFERRED_HOST
+          : hosts[0];
   pHostSelect.value = preferred;
 }
 
@@ -3100,6 +3119,8 @@ async function fillBoxOptions(): Promise<void> {
     return;
   }
   lastBoxOptions = key;
+  // ★ v4.2.29：同 `fillSiteOptions` —— 重建时保留用户当前选中的盒子（它还在列表里的话）
+  const prevBox = pBoxSelect.value;
   pBoxSelect.innerHTML = '';
   for (const name of boxes) {
     const opt = document.createElement('option');
@@ -3109,7 +3130,14 @@ async function fillBoxOptions(): Promise<void> {
   }
   const stored = await chrome.storage.local.get(LAST_BOX_KEY);
   const last = stored[LAST_BOX_KEY] as string | undefined;
-  pBoxSelect.value = currentBox !== '全部' && boxes.includes(currentBox) ? currentBox : last && boxes.includes(last) ? last : defaultBox;
+  pBoxSelect.value =
+    prevBox && boxes.includes(prevBox)
+      ? prevBox
+      : currentBox !== '全部' && boxes.includes(currentBox)
+        ? currentBox
+        : last && boxes.includes(last)
+          ? last
+          : defaultBox;
 }
 
 /* ==================== 站点授权表单 ==================== */
