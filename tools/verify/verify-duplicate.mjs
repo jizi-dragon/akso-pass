@@ -1,17 +1,22 @@
 /**
- * verify-duplicate（v4.2.27）：**复制页签 / 站点开窗的账号归属**
+ * verify-duplicate（v4.2.28）：**复制页签 / 站点开窗的账号归属** + **导航在途不被打断**
  *
- * 为什么需要这个探针（PITFALLS #51）：
+ * 为什么需要这个探针（PITFALLS #51 / #52）：
  *  · `chrome.tabs.duplicate()` 复制出来的页签，`openerTabId` 指向的是**复制那一刻的前台页签**，
  *    不是被复制的页签（实测见下）。老实现无条件按 `openerTabId` 继承 ⇒ 前台是别的账号就**串号**，
  *    前台没绑定就连候选都没有 ⇒ 页签永久直通 ⇒ 平台读不到 token ⇒ 直接跳登录页。
  *  · 收编判定里那个 `await parallelStore.get()` 会把"登记候选"和"落下绑定"撕开：离线/慢网时
  *    候选已被摘掉、绑定还没落，壳一直 hold，平台 SPA 首屏读到 null 就跳登录页。
+ *  · 壳在直通态收到迟到 bind 时曾自己 `location.reload()`，而那条 reload 打在**已提交的旧文档**
+ *    上 —— 导航在途时会把它打断（用户刚点的 URL 被丢掉）。现在刷新由后台决定、在途跳过。
  *
- * 三个场景（都必须绑到**源页签**的账号 accA）：
+ * 三个归属场景（都必须绑到**源页签**的账号 accA）：
  *   0. 站点开窗（前台就是源页签）—— 老路径的回归护栏
  *   1. 复制页签，前台是**另一个账号**的页签 B —— 修复前会串到 accB / 或完全没绑定
  *   2. 复制页签，前台是**未绑定**页签 —— 修复前完全没绑定
+ * 另两个刷新守护场景：
+ *   3. 导航在途（`/slow`：响应头拖 600ms）时请求刷新 ⇒ 必须跳过、URL 不退回
+ *   3b. 导航结束后再请求刷新 ⇒ 必须真的刷新、URL 不变
  *
  * 台架要点（踩过的坑都写在注释里）：
  *  · `par.create` 要云端授权，本机通常不可用 ⇒ 直接往 IDB `accounts` + `ql:cacheMeta` 写
@@ -21,6 +26,7 @@
  *  · 假平台文档故意做成“慢文档”（先写 120 字节，400ms 后再写完）：壳收到 bind 时
  *    `document.readyState` 仍是 `loading`，于是走 `activate()` 而不是 BOOT_GUARD 的
  *    `location.reload()` —— 那个 reload 会落到"已提交的旧 URL"，把正在进行的导航吃掉。
+ *    （v4.2.28 起壳不再自己 reload，但慢文档仍让场景可复现、时序稳定。）
  *  · 断言用 URL / 绑定表，**不要用 title**：`applyTitle` 会把 title 改成账号名。
  *
  * 用法：node tools/verify/verify-duplicate.mjs
@@ -85,6 +91,15 @@ const server = http.createServer((req, res) => {
   reqs.push(req.url);
   const u = new URL(req.url, 'http://x');
   const who = u.searchParams.get('who') ?? '';
+  // /slow：**先拖住响应头** —— 让导航处于"已开始、尚未提交"的状态（旧文档还在）。
+  // 这正是"壳要求刷新"最容易打断导航的窗口（PITFALLS #52）。
+  if (u.pathname === '/slow') {
+    setTimeout(() => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(`<!doctype html><meta charset="utf-8"><title>slow</title><body>slow ${who}</body>`);
+    }, 600);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
   const body = `<!doctype html><meta charset="utf-8"><title>${u.pathname}</title>
 <body><h1>${u.pathname}</h1>
@@ -233,6 +248,59 @@ try {
       ((await tabInfo(dup2.id))?.url ?? '').includes('tok=OK(a)'),
       (await tabInfo(dup2.id))?.url ?? '',
     );
+
+    /* ---- 场景 3：迟到 bind 要求刷新时，**导航在途就不许刷新**（PITFALLS #52） ----
+     *
+     * 旧实现是壳自己 `location.reload()`：那条 reload 打在**已提交的旧文档**上，
+     * 会打断正在提交的那次导航（用户刚点的地址被丢掉、页签退回旧 URL/登录页）。
+     * 现在刷新改由后台决定，判据是**同步状态**（`tab.pendingUrl !== tab.url`）——
+     * 不用 `tabs.onUpdated status=loading` 记账：实测那条事件在 SW 睡眠期会丢
+     * （见 `tmp/dbg-nav.mjs`），拿它当判据会漏判。
+     * 这里用 `chrome.scripting.executeScript` 在真页签里伪造那条上行消息，
+     * 直接验后台的判定（不走壳，避免依赖时序运气）。 */
+    console.log('\n▶ 场景 3：导航在途时收到"请刷新" —— 必须跳过');
+    const forensics = async () =>
+      ((await page.evaluate(() => chrome.storage.local.get('ql:forensics')))['ql:forensics'] ?? []);
+    const injectNeedsReload = (tabId) =>
+      page.evaluate(async (t) => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: t },
+            world: 'ISOLATED',
+            func: () => {
+              void chrome.runtime.sendMessage({ type: 'ql:bridgeUp', payload: { op: 'needsReload', reason: 'verify' } });
+            },
+          });
+          return 'ok';
+        } catch (e) {
+          return String(e);
+        }
+      }, tabId);
+
+    const before = (await forensics()).length;
+    await nav(a.tabId, `http://${HOST}/slow?who=a`); // 导航开始，600ms 后才提交
+    await page.waitForTimeout(150);
+    const inj = await injectNeedsReload(a.tabId);
+    await page.waitForTimeout(1800);
+    const fsNew = (await forensics()).slice(before);
+    const skipped = fsNew.find((f) => f.ev === 'recover-skipped' && f.tabId === a.tabId && f.why === 'navigating');
+    // 只认**注入的这次**请求（reason='verify'）：/slow 提交后壳自己可能还会因"迟到 bind"
+    // 请求刷新一次（那是设计内的恢复路径，reason 为 late-bind-*），不该算到这条断言头上。
+    const reloaded = fsNew.find((f) => f.ev === 'recover-reload' && f.tabId === a.tabId && f.reason === 'verify');
+    const slowUrl = ((await tabInfo(a.tabId))?.url ?? '');
+    check('注入成功（真页签 + ISOLATED 世界）', inj === 'ok', inj);
+    check('导航在途 ⇒ 后台跳过刷新（记 recover-skipped/navigating）', !!skipped);
+    check('导航没被打断：页签停在刚点的 /slow（不是退回旧 URL）', slowUrl.includes('/slow'), slowUrl);
+    check('这次请求没有触发刷新', !reloaded);
+
+    /* ---- 场景 3b：导航结束后再请求刷新 ⇒ 这次必须刷 ---- */
+    await page.waitForTimeout(600);
+    const before2 = (await forensics()).length;
+    await injectNeedsReload(a.tabId);
+    await page.waitForTimeout(1200);
+    const fs2 = (await forensics()).slice(before2);
+    check('导航已结束 ⇒ 后台真的刷新（记 recover-reload）', !!fs2.find((f) => f.ev === 'recover-reload' && f.tabId === a.tabId));
+    check('刷新后仍在同一 URL（刷新没有改变地址）', (((await tabInfo(a.tabId))?.url ?? '').includes('/slow')));
   }
 } finally {
   await ctx.close().catch(() => {});

@@ -192,6 +192,16 @@ export type BridgeUpPayload =
     }
   | { op: 'authHeader'; value: string }
   | { op: 'journalRollbackDone' }
+  /** ★ v4.2.28：直通模式下收到**迟到 bind**，壳请求后台"刷新页面重来"。
+   *
+   *  为什么不自己 `location.reload()`：那次 reload 作用在**已提交的旧文档**上，
+   *  会把正在进行的导航打断（正在提交的新文档被丢掉，页签退回旧 URL —— 症状就是
+   *  "点按钮开的新页面又跳回登录页 / 旧页"）。后台知道"这个页签有没有导航在途"
+   *  （`chrome.tabs.get()` 的 `pendingUrl` 与 `url` 是否一致，同步状态、不依赖事件投递），
+   *  所以刷新必须由它决定；导航在途时直接跳过 —— 新文档会在 document_start 自己发
+   *  `hello`，种子照常到达。
+   *  ★ 命名不与下行的任何 op 重名（判别联合里同名会被合并，见 `nsWipeSharedDone`）。 */
+  | { op: 'needsReload'; reason: string }
   /** 页内 document.cookie 写入的 Cookie 袋全量视图（v3.10.6 袋→快照回流）：
    *  绑定页签的 Cookie 写入被 MAIN 壳虚拟化进袋子，永不落真实 jar——服务端登录后
    *  由页内 JS 写入的票据/凭据若不回流快照，网络平面回放永远缺失 */

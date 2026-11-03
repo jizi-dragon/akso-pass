@@ -2575,6 +2575,51 @@ background 只做"弹窗被拦"的新页签兜底。
 
 ---
 
+## #52 【已修】"迟到 bind"触发的刷新会吃掉在途导航
+
+**症状**：已登录页签里点功能键 / 链接要打开新页面时，新页面偶尔退回**旧地址**（最常见的
+就是退回 `/login`），用户刚点的那个 URL 根本不出现；同账号的其它页签一切正常，重试一次
+往往又好了（所以像"偶发抖动"）。
+
+**根因**（两层，第二层是修第一层时踩出来的）：
+
+1. 壳（`content/shield-main.ts`）在"直通模式下收到迟到 bind"时会自己
+   `window.location.reload()` 重来一次 —— 想法是新文档能在 document_start 拿到种子。
+   但 `location.reload()` 作用在**已提交的旧文档**上：如果此刻浏览器已经开始下一次导航
+   （用户刚点的那个）而新文档还没提交，reload 重新加载的是**旧文档**，在途导航被打断。
+   服务端日志能直接看到证据：`/app-a?who=a` 之后紧跟一次 `/login`（请求发出去了，
+   又被 reload 吃掉）。
+2. 想用 `chrome.tabs.onUpdated` 的 `status==='loading'` 记一张"导航在途"表来防这件事，
+   **不可靠**：实测（`tmp/dbg-nav.mjs`，从 A 页 `tabs.update` 到"响应头被拖住 600ms"的
+   B 页）根本没有 'loading' 事件送达，只在结束时来了一次 'complete' —— SW 睡眠期间同类
+   事件会被合并/丢弃。用这张表做判据 ⇒ 漏判 ⇒ 照样打断导航。
+
+**判据**（可执行）：
+
+- `node tools/verify/verify-duplicate.mjs` 的场景 3 / 3b：导航在途（`/slow`，响应头拖
+  600ms）时注入上行 `{op:'needsReload'}` ⇒ forensics 必须出现
+  `recover-skipped{why:'navigating'}`、页签停在 `/slow`、且这次注入**没有**
+  `recover-reload`；导航结束后再注入 ⇒ 必须出现 `recover-reload` 且 URL 不变。
+- 手工：`ql:forensics` 里 `recover-reload` 与"页签 URL 退回旧地址"同时出现 ⇒ 命中过。
+
+**处置**：刷新改由后台决定 —— 壳只发上行 `{op:'needsReload', reason}`
+（`shared/types.ts` 新增 payload），后台 `reloadForRecover(tabId, reason)` 统一执行，
+判据是**同步状态** `tab.pendingUrl !== tab.url`：为真 ⇒ 跳过并记
+`recover-skipped{why:'navigating', pending, current}`；否则 `tabs.reload` + `recover-reload`。
+删掉了 `navigatingTabs` 那套事件记账。在途导航提交的新文档会在 document_start 自己发
+`hello`，后台已有绑定 ⇒ 种子照常到，比"打断它再刷新"更快也更安全。
+
+**推广**：
+
+- ★★ **判断"这个页签在干什么"要用 `tabs.get()` 的当前状态，不要用事件攒出来的账。**
+  事件会丢、会合并（尤其 SW 睡眠期），状态不会。
+- ★★ **`location.reload()` 只能刷新"当前已提交的文档"，不能用它"重来一次导航"。**
+  想重来一次导航就是 `tabs.update(tabId, { url })`，而且目标 URL 得自己记住。
+- ★ **内容脚本只看得见自己那个文档，判断不了"整个页签正在做什么"。** 页面级动作
+  （刷新 / 导航 / 关闭）交给后台决定，内容脚本只负责"请求 + 说明理由"。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

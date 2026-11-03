@@ -88,6 +88,20 @@ const LOGIN_GRACE_LIMIT = 2;
 const adoptProbe = new Map<number, { openerId: number; at: number }>();
 /** 站点开窗的同步证据：新页签 tabId → 真实来源 tabId（`onCreatedNavigationTarget` 写入） */
 const pageOpenTargets = new Map<number, number>();
+/**
+ * ★★ v4.2.28：**正在导航**的判据 —— `tab.pendingUrl` 与 `tab.url` 不一致。
+ *
+ * 为什么不用 `tabs.onUpdated status='loading'` 记一张表：实测（`tmp/dbg-nav.mjs`）
+ * 从 A 页 `tabs.update` 到"响应头被拖住"的 B 页时，**根本没有 'loading' 事件**送来
+ * （只来了一次 'complete'）—— 大概率是 SW 睡眠期间的同类事件被合并/丢弃。
+ * 拿它当判据会让"导航在途"漏判，而漏判的后果正是这条守护要防的那件事。
+ * `tabs.get()` 里的 `pendingUrl` 是**当时的状态**、不依赖事件投递，所以以它为准。
+ */
+function isNavigating(tab: chrome.tabs.Tab): boolean {
+  const pending = (tab.pendingUrl || '').trim();
+  const current = (tab.url || '').trim();
+  return Boolean(pending) && pending !== current;
+}
 /** 待判窗口：够 `onCreatedNavigationTarget` 落地（实测 ~1ms），又不明显拖慢站点开窗 */
 const ADOPT_PROBE_DELAY = 40;
 /** 待判表兜底 TTL：页签被立刻关掉、或事件没来时靠它清 */
@@ -1293,6 +1307,14 @@ export const parallelSession = {
     if (tabId === undefined) {
       return undefined;
     }
+    // ★ v4.2.28：壳请求"刷新页面重来"（直通模式收到迟到 bind）。
+    //   刻意放在 `bindings.get(tabId)` **之前**：这一刻页签已经绑定（否则不会有 bind），
+    //   但刷新与否只取决于"有没有导航在途"，跟绑定表无关。不上行回包。
+    if (payload.op === 'needsReload') {
+      const reason = String((payload as unknown as { reason?: string }).reason ?? '');
+      await reloadForRecover(tabId, reason);
+      return undefined;
+    }
     const binding = bindings.get(tabId);
     if (!binding) {
       return undefined;
@@ -1777,6 +1799,32 @@ async function findDuplicateSource(
     return { tabId: cand.id, binding };
   }
   return undefined;
+}
+
+/**
+ * 壳请求"刷新页面重来"（直通模式下收到迟到 bind）时的**唯一执行点**。
+ *
+ * ★ v4.2.28：不能由壳自己 `location.reload()` —— 那次 reload 作用在**已提交的旧文档**上，
+ *   会把正在进行的导航打断（症状：用户刚点的地址被丢掉，页签退回 `/login`）。
+ *   `isNavigating(tab)` 为真时直接跳过：在途导航提交的新文档会在 document_start 自己发
+ *   `hello`，后台已有绑定 ⇒ 种子照常到达，比"打断它再刷新"更快也更安全。
+ */
+async function reloadForRecover(tabId: number, reason: string): Promise<void> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  if (tab && isNavigating(tab)) {
+    void forensics('recover-skipped', {
+      tabId,
+      reason,
+      why: 'navigating',
+      pending: tab.pendingUrl ?? '',
+      current: tab.url ?? '',
+    });
+    void diag(`recover tab=${tabId} 跳过刷新：页签正在导航（新文档会自己 hello）`);
+    return;
+  }
+  void forensics('recover-reload', { tabId, reason });
+  void diag(`recover tab=${tabId} 刷新重来（${reason || 'late-bind'}）`);
+  await chrome.tabs.reload(tabId).catch(() => undefined);
 }
 
 /**

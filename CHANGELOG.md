@@ -5,6 +5,29 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.28（2026-11-03）
+
+### "迟到 bind"的刷新改为后台决定：导航在途时不再打断用户的跳转
+
+- **症状**：已登录页签里点功能键 / 链接要开新页面时，新页面偶尔退回旧地址（最常见的是
+  退回登录页），用户刚点的 URL 被吞掉；重试一次往往又正常，所以一直像"偶发抖动"。
+- **根因**：① 壳在"直通模式收到迟到 bind"时自己 `location.reload()`，而这条 reload 打在
+  **已提交的旧文档**上 —— 它刷新的是旧文档、把正在提交的那次导航打断（服务端日志：
+  `/app-a?who=a` 之后紧跟一次 `/login`）。② 修它时发现 `tabs.onUpdated status='loading'`
+  也不可靠：实测 SW 睡眠期这条事件会丢（`tmp/dbg-nav.mjs` 跑出"只有 complete、没有
+  loading"），拿它记"导航在途"会漏判。
+- **修正**：
+  ① 壳不再自己 reload，改发上行消息 `{op:'needsReload', reason}`（`shared/types.ts`
+     新增 payload；下行监听语义不变）。
+  ② 后台新增 `reloadForRecover(tabId, reason)` 作为**唯一执行点**：判据是同步状态
+     `tab.pendingUrl !== tab.url` —— 导航在途 ⇒ 跳过并记
+     `recover-skipped{why:'navigating'}`；否则 `tabs.reload` + `recover-reload`。
+  ③ 删掉 `navigatingTabs` 那套事件记账（不可靠）与 `debugState().navigating`。
+- **验证**：`tools/verify/verify-duplicate.mjs` 扩到 12 项，新增场景 3 / 3b（导航在途注入
+  `needsReload` ⇒ 跳过且 URL 不退回；导航结束后注入 ⇒ 真刷新且 URL 不变），全绿。
+  `run-all --static` 26/26、`typecheck` / `build` / `check-deps` 通过。
+- **判据**：见 `docs/PITFALLS.md` #52。
+
 ## 4.2.27（2026-11-03）
 
 ### 复制页签丢账号 / 开新页偶发丢登录：`openerTabId` 的语义错 + 收编被云端请求卡住

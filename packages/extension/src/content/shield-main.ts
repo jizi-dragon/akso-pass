@@ -776,6 +776,30 @@
     }
   }
 
+  /** ★★ v4.2.28：**不再自己 `location.reload()`**。
+   *
+   *  那条 reload 作用在**已提交的旧文档**上：如果此刻新的一次导航已经在途（平台 SPA
+   *  刚 `location.replace` 到目标页、或用户刚点了按钮），reload 会把那次导航**打断**，
+   *  页签退回旧 URL —— 用户看到的就是"点按钮开的新页面又跳回登录页/旧页"。
+   *  实测（`tmp/probe-dup8.mjs` 早期版本）服务端日志里 `/app-a?who=a` 之后紧跟一次
+   *  `/login`，就是被这条 reload 吃掉的。
+   *
+   *  改为**请后台刷新**：后台用 `tabs.get()` 的同步状态（`pendingUrl !== url`）判断有没有
+   *  导航在途，在途时直接跳过 —— 那次导航提交的新文档会在 document_start 自己发 `hello`，
+   *  此时后台已有绑定，种子照常到达，根本不需要刷新。
+   */
+  function requestReload(reason: string): void {
+    try {
+      window.postMessage(
+        { src: SRC_PAGE_TO_BRIDGE, payload: { op: 'needsReload', reason } },
+        '*',
+      );
+    } catch {
+      // 桥都发不出去（极端情况）：退回自己刷新，总比一直停在直通态好
+      window.location.reload();
+    }
+  }
+
   /** 种子直灌：不经补丁层静默写入命名空间（并同步 token 进 Cookie 袋）。
    *  值为空字符串 = 显式清除该键（打开时清掉可能被叛逃会话污染的持久化身份键） */
   function applySeed(seed?: Record<string, string>): void {
@@ -845,7 +869,7 @@
         return;
       }
       window.sessionStorage.setItem(BOOT_GUARD_KEY, '1');
-      window.location.reload();
+      requestReload('late-bind-settled');
       return;
     }
     settled = true;
@@ -862,7 +886,7 @@
       return;
     }
     window.sessionStorage.setItem(BOOT_GUARD_KEY, '1');
-    window.location.reload();
+    requestReload('late-bind-unsettled');
   }
 
   /* ---- 下行监听 + 握手重试 ---- */
