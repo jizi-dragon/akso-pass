@@ -302,10 +302,11 @@ console.log('\n=== J. https 账号的 Bearer 不下明文 ===');
   const cookieBody = bodyOf(tr, 'function buildCookieRule(', '\n}');
   if (!cookieBody) {
     fail('找不到 buildCookieRule() —— 判据锚点失效');
-  } else if (/regexFilter/.test(cookieBody)) {
-    fail('Cookie 规则被加了 scheme 限定 ⇒ http 请求将保留真实 jar 的 Cookie（剥离语义被破坏）');
+  } else if (/kind !== 'strip' && scheme === 'https'/.test(cookieBody)
+    && /buildCookieRule\(ruleId, host, tabId, null, 'strip'\)/.test(tr)) {
+    ok('Cookie 的 strip 仍覆盖 http（正则只加在 nav/sub 回放上，剥离语义不变）');
   } else {
-    ok('Cookie 规则不按 scheme 限定（http 上也照旧剥离/回放）');
+    fail('Cookie 规则被一刀切地按 scheme 限定 ⇒ http 请求将保留真实 jar 的 Cookie（剥离语义被破坏）');
   }
   if (/scheme\?:\s*'http'\s*\|\s*'https'/.test(tr)
     && /buildAuthRule\(ruleId, host, tabId, token, scheme\)/.test(tr)) {
@@ -363,11 +364,21 @@ console.log('\n=== K. 跨域 iframe 借不到回放 Cookie ===');
   } else {
     fail('strip 规则不是恒装 ⇒ 回放模式下真实 jar 的 Cookie 会漏出去');
   }
-  if (/buildCookieRule\(navId, host, tabId, wanted, 'nav'\)/.test(tr)
-    && /buildCookieRule\(subId, host, tabId, wanted, 'sub'\)/.test(tr)) {
-    ok('回放同时安装 nav 与 sub 两条规则');
+  if (/buildCookieRule\(navId, host, tabId, wanted, 'nav', scheme\)/.test(tr)
+    && /buildCookieRule\(subId, host, tabId, wanted, 'sub', scheme\)/.test(tr)) {
+    ok('回放同时安装 nav 与 sub 两条规则，并带上账号 scheme');
   } else {
-    fail('回放只装了单条规则 ⇒ 要么跨域 iframe 能借 Cookie，要么导航/子资源缺回放');
+    fail('回放只装了单条规则、或没带 scheme ⇒ 要么跨域 iframe 能借 Cookie，要么降级到 http 时明文回放');
+  }
+  if (/kind !== 'strip' && scheme === 'https' \? \{ regexFilter: '\^https:\/\/' \} : \{\}/.test(cookieBody)) {
+    ok('https 账号的回放规则只匹配 https（降级到 http 时不把会话 Cookie 塞进明文）');
+  } else {
+    fail('回放规则没有 scheme 限定 ⇒ https 账号被导到 http 同 host 时 Cookie 明文出网');
+  }
+  if (/meta\.cookieScheme !== scheme/.test(tr)) {
+    ok('scheme 翻转时回放规则整组重建（否则旧的无正则规则会留到 Cookie 变化为止）');
+  } else {
+    fail('scheme 变化不触发回放重建 ⇒ 自学习翻转后仍可能明文回放');
   }
   if (/const cookieApplied = meta\.cookieId !== undefined[\s\S]{0,160}meta\.cookieNavId !== undefined && meta\.cookieSubId !== undefined/.test(tr)) {
     ok('回放就绪要求 strip+nav+sub 三条齐备（半回放会被判成未配置并重建）');

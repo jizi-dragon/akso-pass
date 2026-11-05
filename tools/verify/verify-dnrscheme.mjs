@@ -8,6 +8,8 @@
  *  B 同一页签导航到 http ——头消失（正则挡住）；
  *  C 去掉 regexFilter 后 http 请求**又**带上头——证明 B 的"消失"是正则造成的，
  *    不是 main_frame 不匹配或 tabId 不对。
+ *  D https 请求命中 Cookie 回放规则（`Cookie: SID=…` 被 set）——v4.2.38 的回落；
+ *  E 同一规则在 http 上不命中 ⇒ 会话 Cookie 不会落进明文请求。
  *
  *  服务端：http 与 https 都绑 127.0.0.2；`qllocal.test` 经 host-resolver-rules 解析到它，
  *  443 用自签证书（--ignore-certificate-errors）。 */
@@ -47,7 +49,7 @@ const CERT_PEM = certObj.toString('pem');
 const hits = [];
 const handler = (scheme) => (req, res) => {
   const u = new URL(req.url ?? '/', 'http://x');
-  hits.push({ scheme, path: u.pathname, token: req.headers['x-test-token'] ?? null });
+  hits.push({ scheme, path: u.pathname, token: req.headers['x-test-token'] ?? null, cookie: req.headers.cookie ?? null });
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   res.end(`<!doctype html><html><body>${scheme}${u.pathname}</body></html>`);
 };
@@ -192,6 +194,58 @@ const controlHit = await (async () => {
 })();
 check('C 去掉 regexFilter 后 http 又带上头（B 的缺席确实来自正则）', controlHit !== null,
   `token=${controlHit?.token ?? '无'}`);
+
+/* ---- D/E：同一机制用在 Cookie 上（v4.2.38 的回放限定）----
+ * 产品里 https 账号的 nav/sub 两条 set 规则带 `regexFilter: '^https://'`，
+ * 这里用同形的会话规则验证"正则确实只让 Cookie 落在 https 上"。 */
+await page.evaluate(async (id) => {
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [9002],
+    addRules: [{
+      id: 9003,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{ header: 'Cookie', operation: 'set', value: 'SID=HTTPS-ONLY' }],
+      },
+      condition: {
+        tabIds: [id],
+        requestDomains: ['qllocal.test'],
+        regexFilter: '^https://',
+        resourceTypes: ['main_frame', 'xmlhttprequest'],
+      },
+    }],
+  });
+}, tabId);
+
+const beforeCookieHttps = hits.length;
+await page.evaluate((id) => chrome.tabs.update(id, { url: 'https://qllocal.test/cookie' }), tabId);
+const cookieHttps = await (async () => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 8000) {
+    const h = hits.slice(beforeCookieHttps).find((x) => x.scheme === 'https' && x.path === '/cookie');
+    if (h) return h;
+    await sleep(120);
+  }
+  return null;
+})();
+check('D https 请求命中 Cookie 回放规则（会话 Cookie 被 set）',
+  (cookieHttps?.cookie ?? '').includes('SID=HTTPS-ONLY'), `cookie=${cookieHttps?.cookie ?? '无'}`);
+
+const beforeCookieHttp = hits.length;
+await page.evaluate((id) => chrome.tabs.update(id, { url: 'http://qllocal.test/cookie' }), tabId);
+const cookieHttp = await (async () => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 8000) {
+    const h = hits.slice(beforeCookieHttp).find((x) => x.scheme === 'http' && x.path === '/cookie');
+    if (h) return h;
+    await sleep(120);
+  }
+  return null;
+})();
+check('E http 请求不命中 `^https://`，回放 Cookie 不落明文',
+  cookieHttp !== null && !(cookieHttp.cookie ?? '').includes('SID=HTTPS-ONLY'),
+  `cookie=${cookieHttp?.cookie ?? '无'}`);
 
 await ctx.close();
 httpServer.close();

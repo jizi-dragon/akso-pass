@@ -37,7 +37,12 @@ interface RuleMeta {
   token: string | null;
   /** 当前 COOKIE 规则的回放值；null 表示 remove（剥离）模式 */
   cookieValue: string | null;
-  /** v4.2.35：这两条规则是按哪个 scheme 装的（自学习翻转时要整组重建） */
+  /**
+   * v4.2.38：回放（nav/sub）这两条 set 规则是按哪个 scheme 装的。
+   * ★ 只约束**回放**，不约束 strip —— strip 必须两种 scheme 都生效。
+   */
+  cookieScheme?: 'http' | 'https';
+  /** v4.2.35：AUTH 规则是按哪个 scheme 装的（自学习翻转时要整条重建） */
   scheme?: 'http' | 'https';
 }
 
@@ -289,6 +294,7 @@ function buildCookieRule(
   tabId: number,
   cookieHeader: string | null,
   kind: 'strip' | 'nav' | 'sub' = 'strip',
+  scheme?: 'http' | 'https',
 ): chrome.declarativeNetRequest.Rule {
   return asRule({
     id: ruleId,
@@ -311,6 +317,11 @@ function buildCookieRule(
       // ★ 只有子资源那条按发起方限定；strip 与 nav 必须保持"无 initiator"（否则
       //   地址栏/reload/SSO 跳转这类没有 initiator 的导航会掉登录）。
       ...(kind === 'sub' ? { initiatorDomains: [hostNoPortOf(host)] } : {}),
+      // ★ v4.2.38：https 账号的**回放**只发给 https 请求。否则账号被降级到同 host
+      //   的 http 时，nav/sub 两条 set 规则会把账号会话 Cookie 塞进明文请求，
+      //   同网段可直接读走 —— 与 v4.2.35 的 Bearer 是同一类降级。
+      //   ★ 只限定 nav/sub，**绝不限定 strip**：http 请求仍必须被剥掉真实 jar。
+      ...(kind !== 'strip' && scheme === 'https' ? { regexFilter: '^https://' } : {}),
       tabIds: [tabId],
     },
   });
@@ -392,8 +403,12 @@ export const tabRules = {
         meta.cookieSubId = undefined;
       }
       meta.cookieValue = null;
+      meta.cookieScheme = scheme;
     } else if (
       meta.cookieValue !== wanted
+      // ★ v4.2.38：scheme 变了也要重建 —— 否则 https 账号先按 http 装过回放，
+      //   翻转后两条 set 规则仍没有正则，明文 http 照样能拿到会话 Cookie。
+      || meta.cookieScheme !== scheme
       || meta.cookieNavId === undefined
       || meta.cookieSubId === undefined
     ) {
@@ -406,18 +421,19 @@ export const tabRules = {
         meta.cookieSubId = undefined;
       }
       const navId = nextCookieId++;
-      const navOk = await addOne(buildCookieRule(navId, host, tabId, wanted, 'nav'));
+      const navOk = await addOne(buildCookieRule(navId, host, tabId, wanted, 'nav', scheme));
       if (navOk) {
         meta.cookieNavId = navId;
       }
       const subId = nextCookieId++;
-      const subOk = await addOne(buildCookieRule(subId, host, tabId, wanted, 'sub'));
+      const subOk = await addOne(buildCookieRule(subId, host, tabId, wanted, 'sub', scheme));
       if (subOk) {
         meta.cookieSubId = subId;
       }
       // 两条都装上才算回放就绪；只装一条时把值置空，下一次 sync 会整体重建，
       // 避免「一条生效一条没装」被当成已配置（半回放比不回放更隐蔽）。
       meta.cookieValue = navOk && subOk ? wanted : null;
+      meta.cookieScheme = scheme;
     }
 
     // AUTH 规则

@@ -1,6 +1,6 @@
 # 安全模型与残余风险
 
-适用版本：**v4.2.33**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
+适用版本：**v4.2.38**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
 **防谁**、**哪些风险是有意接受而不是漏修**。改动涉及信任边界时，请同步更新本文与
 `tools/verify/verify-frameisolation.mjs` 的对应断言。
 
@@ -44,7 +44,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 - 能在同机器上读取扩展的 `chrome.storage.local`（本地磁盘读取，非管理员提权）。
 - **不在**范围内：Chrome 自身 0day、其他扩展越权、平台服务端鉴权缺陷、物理接触。
 
-## 四、控制矩阵（v4.2.36 起）
+## 四、控制矩阵（v4.2.38 起）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
@@ -54,6 +54,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 | 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains`，且只覆盖 `main_frame`/`sub_frame`/`xmlhttprequest`/`websocket`/`other`（v4.2.33 剔除静态资源） | E |
 | 同页签第三方 iframe 借回放 Cookie 发 CSRF | Cookie 规则拆三层：strip(1，全类型 remove) + nav(2，main_frame/other set) + sub(2，其余 set 且 `initiatorDomains`=账号站点) | K；`verify-cookiereplay`（浏览器） |
 | https 账号被导航到同 host 的 http，Bearer 明文出网 | 按绑定 scheme 给 Authorization 规则加 `regexFilter: '^https://'`（http 账号不加，内网明文照旧） | J；`verify-dnrscheme`（浏览器） |
+| https 账号被导航到同 host 的 http，回放 Cookie 明文出网 | 只给 nav/sub 两条 set 规则加 `regexFilter: '^https://'`；strip 仍覆盖 http（v4.2.38） | K；`verify-dnrscheme` D/E |
 | `foo.co.uk` 被当成 `co.uk` 的同站 | 公共后缀 / 托管域表 | E |
 | 页面伪造 `bagChanged` 注入 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数/长度上限 | G |
 | 页面反复 `needsReload` 制造刷新循环 | 绑定校验之后 + 60s/3 次令牌桶 | C |
@@ -77,10 +78,10 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
    一条无 initiator 的 nav 规则；跨域 iframe 的请求落到 priority 1 的 strip 规则上。
    Chrome 取"同一请求优先级最高的 modifyHeaders 规则"这一行为是本设计的前提，
    `verify-cookiereplay` 的 E 组反证在真浏览器里盯着它。
-   ★ 另外 Cookie 规则**刻意不按 scheme 限定**：Cookie 有「回放」和「剥离」两种语义，
-   若只对 https 生效，http 请求既不会回放也不会剥离，真实 jar 的 Cookie 会自己发出去，
-   反而破坏「真实 jar 对绑定标签隐身」这条核心性质。http 降级时的 Cookie 暴露是这条
-   设计取舍的已知代价。
+   ★ Cookie 的**剥离**规则刻意不按 scheme 限定：http 请求也必须被剥掉真实 jar。
+   但**回放**（nav/sub 两条 set）从 v4.2.38 起对 https 账号加 `regexFilter: '^https://'`
+   —— 否则账号被降级到同 host 的 http 时，会话 Cookie 会被塞进明文请求，与 v4.2.35
+   修掉的 Bearer 是同一类问题。取舍是：http 降级时回放不生效（宁可掉登录，不落明文）。
 5. **Authorization 规则仍含 `main_frame`**。平台导出接口靠顶层导航下载、缺头即 401，
    这是兼容性取舍；`initiatorDomains` 已把它限制在站点自己发起的导航。
 6. **同源 iframe 的迟到 bind**：壳若在绑定建立前已置 `unbound`，只投顶层的 bind 不会
@@ -98,9 +99,9 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 npm run typecheck
 npm run build
 node tools/verify/verify-frameisolation.mjs     # A–K 十一组，秒级
-node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（11 条必须变红）
+node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（13 条必须变红）
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
-node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（5 项）
+node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（7 项，含 Cookie 回放）
 node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（9 项，含 ping）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项

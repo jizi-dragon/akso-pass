@@ -5,6 +5,24 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.38（2026-11-05）
+
+### 回放 Cookie 不落明文 HTTP：与 v4.2.35 的 Bearer 同一类降级
+
+- **风险**：https 账号的 Cookie 回放规则（nav/sub 两条 set）此前与 scheme 无关。
+  账号一旦被书签/外链/302 降级到 `http://同 host`，会话 Cookie 就会被塞进**明文**
+  请求，同网段可直接读走 —— 与 v4.2.35 修掉的 Bearer 降级是同一类问题；当时只修了
+  Authorization，Cookie 留作已知取舍。
+- **修正**：`buildCookieRule` 增加 `scheme`，给 https 账号的 **nav/sub 两条 set 规则**
+  加 `regexFilter: '^https://'`；**strip 规则始终不加**（http 请求仍必须剥掉真实 jar）。
+  `RuleMeta.cookieScheme` 记录回放是按哪个 scheme 装的，scheme 翻转时整组重建。
+- **刻意不做**：http 账号不加正则（内网明文是正常形态）；http 降级时回放不生效，
+  宁可掉登录也不明文回放。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；
+  `verify-frameisolation` K 组新增「回放规则只匹配 https」「scheme 翻转重建」；
+  反证新增 M/N 两个案例（**13/13**）；`verify-dnrscheme` 增加 Cookie 对照组
+  （https 命中 `Cookie: SID=…`、http 不命中）**7/7**。
+
 ## 4.2.37（2026-11-05）
 
 ### Cookie 兜底补齐冷门资源类型：ping / object / csp_report 不再漏真实 jar

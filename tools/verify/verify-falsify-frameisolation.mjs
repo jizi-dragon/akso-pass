@@ -29,6 +29,8 @@
  * | 删掉 `regexFilter: '^https://'` | J |
  * | 删掉 Cookie 子资源规则的 `initiatorDomains` | K |
  * | 兜底资源类型漏掉 `ping` | K |
+ * | 去掉 Cookie 回放的 https 限定 | K |
+ * | scheme 翻转不再重建回放规则 | K |
  *
  * ★ 每个 `poke()` 的锚点**必须唯一**：`String.replace` 只改第一处，"第一处不是想的
  *   那处"不会报错，症状是"判据没变红"，很容易被误读成"判据恒真"。
@@ -220,6 +222,26 @@ const CASES = [
     apply: () => poke(
       'packages/extension/src/background/core/tab-rules.ts',
       "  'ping',\n",
+      '',
+    ),
+  },
+  {
+    name: 'M. 去掉 Cookie 回放的 https 限定',
+    section: '=== K.',
+    file: 'packages/extension/src/background/core/tab-rules.ts',
+    apply: () => poke(
+      'packages/extension/src/background/core/tab-rules.ts',
+      "      ...(kind !== 'strip' && scheme === 'https' ? { regexFilter: '^https://' } : {}),\n",
+      '',
+    ),
+  },
+  {
+    name: 'N. scheme 翻转不再重建回放规则',
+    section: '=== K.',
+    file: 'packages/extension/src/background/core/tab-rules.ts',
+    apply: () => poke(
+      'packages/extension/src/background/core/tab-rules.ts',
+      '      || meta.cookieScheme !== scheme\n',
       '',
     ),
   },
