@@ -35,9 +35,10 @@
   - 日志打码新增"裸 JWT"形状规则：没有 `token=` / `Bearer ` 前缀的令牌（cookie 值、
     裸数组、第三方面板字段）也能被打掉。
   - `xlsx` 0.18.5 → 0.20.3（CVE-2023-30533 原型污染、CVE-2024-22363 ReDoS）。
-- **验证**：`npm run typecheck` / `npm run build` 绿；静态门禁 **26/26**；`verify-load`
-  **20/20**；`verify-v310`、`verify-defect`、`verify-jarhygiene` 需要云端会话（本机未登录，
-  脚本 SKIP 或取不到账号），留待有会话时补跑。
+- **验证**：`npm run typecheck` / `npm run build` 绿；静态门禁 **27/27**（新增
+  `verify-frameisolation`：bind 定向、桥来源归属、导航归属、DNR 发起方、云端 fail-closed、
+  Cookie 袋校验的回归判据）；`verify-load` **20/20**；`verify-v310`、`verify-defect`、
+  `verify-jarhygiene` 需要云端会话（本机未登录，脚本 SKIP 或取不到账号），留待有会话时补跑。
 
 ## 4.2.31（2026-11-03）
 
