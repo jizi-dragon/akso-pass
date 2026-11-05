@@ -1,6 +1,6 @@
 # 安全模型与残余风险
 
-适用版本：**v4.2.39**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
+适用版本：**v4.2.40**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
 **防谁**、**哪些风险是有意接受而不是漏修**。改动涉及信任边界时，请同步更新本文与
 `tools/verify/verify-frameisolation.mjs` 的对应断言。
 
@@ -44,7 +44,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 - 能在同机器上读取扩展的 `chrome.storage.local`（本地磁盘读取，非管理员提权）。
 - **不在**范围内：Chrome 自身 0day、其他扩展越权、平台服务端鉴权缺陷、物理接触。
 
-## 四、控制矩阵（v4.2.39 起）
+## 四、控制矩阵（v4.2.40 起）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
@@ -122,3 +122,34 @@ node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 - 任何新的 DNR 规则，必须同时写 `tabIds` 与 `initiatorDomains`（或说明为什么不能）。
 - 任何新的日志/取证字段，先过 `redact` / `redactDetail`，并补一条 `verify-log-redaction`。
 - 不要用「MAIN world 里已经校验过了」当安全论证——见第二节。
+
+## 八、修复台账（审计发现 → 处置 → 判据）
+
+审计报告里的可疑项不是都"已经修了"，这张表逐条说明**处置方式**。判据列写的是
+"删掉修复就会红"的那一条，不是"跑过一遍"。
+
+| 发现 | 处置 | 版本 | 判据 |
+|---|---|---|---|
+| bind 广播到所有 frame，token/Cookie 袋灌进跨域 iframe | `pushDown` 只投 `{ frameId: 0 }`；`handleBind` 再按 `location.host` 与顶层校验 | 4.2.32 | `verify-bindframe` 8/8；frameisolation A/I |
+| 桥上行无来源认证，任意 frame 可伪造 `hello`/`storageWrite` | 所有桥 op 按 `sender.url` 的 host+port 校验，失败即丢弃 | 4.2.32 | frameisolation B |
+| 导航归属用"权限"判断，通配授权下任意站点都算同站 | `ownedBy`（精确 host/子域+端口），越界即解绑并取证 | 4.2.32 | frameisolation D |
+| 页面反复 `needsReload` 制造刷新循环 | 绑定校验之后 + 60s/3 次令牌桶 | 4.2.32 | frameisolation C |
+| `parentDomainOf` 取末两段，`foo.co.uk` 被当成 `co.uk` | 多级公共后缀表 + 托管域表 | 4.2.32 | frameisolation E |
+| DNR 按 tab 生效，跨域 iframe 可借 Bearer | `initiatorDomains`；Authorization 只给 5 类资源；Cookie 兜底覆盖全部 13 类 | 4.2.32–4.2.37 | frameisolation E/K；`verify-dnrscheme` |
+| 回放 Cookie 对跨域 iframe 也生效（CSRF） | strip(1) + nav(2) + sub(2, initiator) 三层 | 4.2.36 | `verify-cookiereplay` 9/9；K |
+| https 账号被降级到 http，Bearer / 回放 Cookie 明文出网 | 按绑定 scheme 加 `regexFilter: '^https://'` | 4.2.35 / 4.2.38 | `verify-dnrscheme` 8/8；J |
+| 云端权限 API 异常时放行；`normalizeBaseUrl` 允许任意 http | `hasHostAccess` fail-closed + https 闸门 | 4.2.32 | frameisolation F |
+| 页面伪造 `bagChanged` 注入任意 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数上限 | 4.2.32 | frameisolation G |
+| `xlsx@0.18.5` 原型污染 / ReDoS | 0.20.3（CDN tarball，npm 无修复版） | 4.2.32 | 依赖锁定；`check_deps` |
+| 打码规则漏裸 JWT（无键名的数组项/第三方字段） | 裸 JWT 形状规则 | 4.2.32 | `verify-log-redaction` 145/145 |
+| `targetUrl` 未限定协议 | 只接受 http/https，fail-closed | 4.2.34 | 代码闸门（`open()` 入口） |
+| 兄弟子域命中同一页面缓存 | 缓存分区按注册域（`app.` ↔ `api.`） | 4.2.32 | `verify-load`；`siteFamilyOf` |
+| SW 冷启后 DNR 规则叠加，解绑后旧 token 仍被改写 | `restore()` 先摘除重建 | 4.2.39 | `verify-ruleidem` 5/5 |
+
+**未处置（需要产品/云端输入，不是漏修）**：
+
+1. 显式 `apiHosts`（当前 Bearer 发给 host + 父域，父域是否必要由平台侧回答）；
+2. cloud token 存 `local` 还是 `session`（"记住登录"的产品取舍）；
+3. Web Worker 内 IndexedDB（主世界能力边界，已在残余风险 3 说明）；
+4. 第三方翻译端点（要"知情同意"式 UI，属产品范围）；
+5. `verify-defect` / `verify-jarhygiene` / `verify-v310`（账号只在云端，需登录后补跑）。
