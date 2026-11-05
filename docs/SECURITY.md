@@ -48,7 +48,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
-| 跨域 iframe 收到 bind 并读走 token | `bind` 只投 `{ frameId: 0 }`；下行载荷带 `host`，壳用 `location.host` 拒收 | `verify-frameisolation` A/I |
+| 跨域 iframe 收到 bind 并读走 token | `bind` 只投 `{ frameId: 0 }`；下行载荷带 `host`，壳用 `location.host` 拒收 | `verify-frameisolation` A/I；`verify-bindframe`（浏览器） |
 | 任意 frame 发 `hello` 换 token | 所有桥上行 op 按 `sender.url` 的 host+port 校验归属，fail-closed | B |
 | 页签漫游到外部站点仍保留凭据 | 导航归属用 `ownedBy`（精确 host/子域+端口），越界即解绑并取证 | D |
 | 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains`，且只覆盖 `main_frame`/`sub_frame`/`xmlhttprequest`/`websocket`/`other`（v4.2.33 剔除静态资源） | E |
@@ -91,6 +91,7 @@ npm run typecheck
 npm run build
 node tools/verify/verify-frameisolation.mjs     # A–I 九组，秒级
 node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（8 条必须变红）
+node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```

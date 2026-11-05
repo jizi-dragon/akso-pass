@@ -72,6 +72,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-adopt.mjs',
   'verify-autologin-gap.mjs',
   'verify-autologin.mjs',
+  'verify-bindframe.mjs',
   'verify-boxmgmt.mjs',
   'verify-defbox.mjs',
   'verify-defect.mjs',

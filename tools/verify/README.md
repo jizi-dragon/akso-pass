@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **45 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **46 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -57,6 +57,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-impgrant.mjs` | 导入时的授权失败路径（未授权·已暂停 / 明确告警 / 状态如实） | 3/3 | ✔ |
 | `verify-jarhygiene.mjs` | 会话卫生三层防线（preJar 基线 / 快照差集清扫 / onChanged 驱逐） | 5/5 | ✔ |
 | `verify-defect.mjs` | 身份叛逃处置（继承 / 重载 / 解绑 / 快照护栏 / 命名空间回滚 / 治愈） | 8/8 | ✔ |
+| `verify-bindframe.mjs` | ★ **bind 载荷不外溢到跨域 iframe**（v4.2.32 审计 V1 的浏览器级回归）：同一本地站点用 `localhost` / `127.0.0.1` 造两个 origin，把 bind **广播**给所有 frame，断言顶层正常灌种子、跨域 iframe 的 localStorage / `document.cookie` 一个账号键都没有且未被迟到 bind 触发刷新 —— 即 `handleBind` 的 `locationMatchesHost` 自校验真的拦住了 | 8/8 | ✔ |
 | `verify-autologin.mjs` | 自愈式提交（首击被吞后重试 ≤4 次 / 提交时值完整 / 用户键入即让位） | 5/5 | ✔ |
 | `verify-autologin-gap.mjs` | ★ **自动填表"值进了 DOM、平台状态没收到"**：密码框在同源 srcdoc iframe 里、平台的 input 监听器晚于我们首次填充才挂上 ⇒ 点登录后平台校验报「请输入密码」。断言**只看平台状态**，不看 DOM；PITFALLS #55 | 7/7 | ✔ |
 | `verify-dynsnap.mjs` | 快照动态化（登录后票据实时进回放 / 轮换 / 作废移除 / 袋回流） | 6/6 | ✔ |
@@ -120,9 +121,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 24 | ≈58 s | `run-all.mjs --static` |
-| 浏览器（真起 Chromium） | 13 | ≈62 s | `run-all.mjs --browser-only` |
-| 全部 | 37 | ≈110 s | `run-all.mjs --browser` |
+| 静态（不需要浏览器） | 28 | ≈60 s | `run-all.mjs --static` |
+| 浏览器（真起 Chromium） | 18 | ≈90 s | `run-all.mjs --browser-only` |
+| 全部 | 46 | ≈150 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -130,8 +131,8 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 跑法 | 耗时 | 有没有重复 |
 |---|---|---|
-| `acceptance.py` + `run-all.mjs --browser` | 45 + 110 = **155 s** | ★ **有**：14 个静态脚本跑了两遍 |
-| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 62 = **107 s** | ✅ **没有** |
+| `acceptance.py` + `run-all.mjs --browser` | 45 + 150 = **195 s** | ★ **有**：14 个静态脚本跑了两遍 |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 90 = **135 s** | ✅ **没有** |
 
 ★ 这个"不重叠"不是约定，是**判据**：`acceptance.py` 的 §10 会检查它跑的那 14 个脚本
 **都不需要浏览器**（谓词与本文件 `BROWSER_SCRIPTS` 的自证是同一个）。
@@ -140,7 +141,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"45 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"46 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -150,7 +151,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 45
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 46
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

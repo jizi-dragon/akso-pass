@@ -16,6 +16,11 @@
 - **修正**：`open()` 在解析账号后先解析 `targetUrl`；不可解析或协议不是 `http:` /
   `https:` 时抛中文错误（fail-closed，不创建页签）。
 - **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28** / `verify-load` **20/20**。
+- **回归补强**：新增浏览器级 `verify-bindframe`（8/8）——同一本地站点用
+  `localhost` 与 `127.0.0.1` 造两个 origin，把 bind **广播**给所有 frame：顶层正常
+  灌种子，跨域 iframe 的 `localStorage` / `document.cookie` 一个账号键都没有，且不会
+  被迟到 bind 触发刷新。它补的是静态判据证明不了的那一层：`handleBind` 的
+  `locationMatchesHost` 在真实浏览器里确实拦得住。
 
 ## 4.2.33（2026-11-05）
 
