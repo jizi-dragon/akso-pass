@@ -1043,6 +1043,21 @@ export const parallelSession = {
           + '请在账号中心重新确认它的所属站点，或到云端控制台检查该站点。',
       );
     }
+    // ★ v4.2.34：targetUrl 只接受 http/https。
+    //   目前唯一调用方是「常用页面跟随当前账号」，它已要求同 host；这里再收一道，
+    //   防止将来新增调用方把 `data:` / `javascript:` / `file:` 之类带进来 ——
+    //   那种地址一旦进 tabs.create，就不是"打开收藏页"而是执行一段脚本/读本地文件。
+    if (opts.targetUrl) {
+      let target: URL;
+      try {
+        target = new URL(opts.targetUrl);
+      } catch {
+        throw new Error('目标地址无法解析：不是合法的 URL');
+      }
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        throw new Error(`目标地址必须是 http 或 https（当前 ${target.protocol}）`);
+      }
+    }
     let tabId: number | null = null;
 
     if (!forceNewTab) {

@@ -5,6 +5,18 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.34（2026-11-05）
+
+### 收口：`targetUrl` 只接受 http/https
+
+- **风险（审计报告低危项）**：`parallelSession.open()` 的 `targetUrl` 直接交给
+  `tabs.create`/`tabs.update`。当前唯一调用方（常用页面跟随当前账号）已要求同 host，
+  但函数本身对协议没有下限 —— 将来新增调用方若传入 `data:` / `javascript:` /
+  `file:`，落点就不是"打开页面"而是执行脚本或读本地文件。
+- **修正**：`open()` 在解析账号后先解析 `targetUrl`；不可解析或协议不是 `http:` /
+  `https:` 时抛中文错误（fail-closed，不创建页签）。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28** / `verify-load` **20/20**。
+
 ## 4.2.33（2026-11-05）
 
 ### DNR 最小权限：Authorization 不再附加到静态资源
