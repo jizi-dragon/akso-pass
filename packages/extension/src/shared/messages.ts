@@ -223,6 +223,13 @@ export type RuntimeRequest =
   /** 取书签清单（空则回落内置默认；由 background 统一归一化，浮层不自己读 storage） */
   | { kind: 'favorites.list' }
   /**
+   * 保存书签清单（v4.2.44）：管理页把**结构化行**交回 background，
+   * 归一化（补前导 `/`、拒绝非 http(s) 协议）、去重、限长都只在这里做一次。
+   */
+  | { kind: 'favorites.save'; items: FavoriteItem[] }
+  /** 恢复内置默认书签（删除用户配置，而不是写入一份可能过期的默认副本） */
+  | { kind: 'favorites.reset' }
+  /**
    * 在**新页签**打开某个书签（2026-10-20 用户明确要求：不要覆盖原页面）。
    * `baseOrigin` 为空时按当前活动页签的 origin 兜底。
    *
@@ -343,6 +350,8 @@ export type RuntimeResponse =
   | { kind: 'status.change'; result: Result<{ name: string }> }
   /* ---- 常用页面书签轮盘（v3.16：Alt+1）---- */
   | { kind: 'favorites.list'; result: Result<FavoriteItem[]> }
+  | { kind: 'favorites.save'; result: Result<FavoritesSaveResult> }
+  | { kind: 'favorites.reset'; result: Result<FavoriteItem[]> }
   | { kind: 'favorites.open'; result: Result<{ url: string }> }
   | { kind: 'favorites.resolve'; result: Result<{ url: string }> };
 
@@ -436,6 +445,17 @@ export type CloudDevicePoll =
 export interface FavoriteItem {
   name: string;
   path: string;
+}
+
+/** 保存结果（v4.2.44）：把「为什么少了几条」如实带回界面，而不是静默丢弃 */
+export interface FavoritesSaveResult {
+  items: FavoriteItem[];
+  /** 名称/路径为空或路径不合法而被忽略的条数 */
+  skipped: number;
+  /** 路径重复而被合并的条数（保留第一次出现的） */
+  duplicates: number;
+  /** 超出上限而被截掉的条数 */
+  truncated: number;
 }
 
 export type { Result };

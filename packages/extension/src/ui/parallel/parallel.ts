@@ -6,7 +6,7 @@ import type {
   RuntimeResponse,
   UiStatePayload,
 } from '../../shared/messages';
-import { DEFAULT_FAVORITES, EXT_VERSION, LOCAL_KEYS } from '../../shared/constants';
+import { DEFAULT_FAVORITES, EXT_VERSION, FAVORITES_MAX, LOCAL_KEYS } from '../../shared/constants';
 import { getForwardingLogger, setForwarder } from '../../shared/log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
@@ -104,10 +104,14 @@ const dataImportBtn = document.getElementById('data-import') as HTMLButtonElemen
 const dataImportFile = document.getElementById('data-import-file') as HTMLInputElement;
 const dataImportExcelBtn = document.getElementById('data-import-excel') as HTMLButtonElement;
 const exportDiagBtn = document.getElementById('export-diag') as HTMLButtonElement;
-const favText = document.getElementById('fav-text') as HTMLTextAreaElement;
+const favRows = document.getElementById('fav-rows') as HTMLDivElement;
+const favEmpty = document.getElementById('fav-empty') as HTMLParagraphElement;
+const favAdd = document.getElementById('fav-add') as HTMLButtonElement;
 const favSave = document.getElementById('fav-save') as HTMLButtonElement;
 const favReset = document.getElementById('fav-reset') as HTMLButtonElement;
 const favTip = document.getElementById('fav-tip') as HTMLSpanElement;
+const favCount = document.getElementById('fav-count') as HTMLSpanElement;
+const favDirty = document.getElementById('fav-dirty') as HTMLSpanElement;
 
 const boxModal = document.getElementById('box-modal') as HTMLDivElement;
 const boxModalList = document.getElementById('box-modal-list') as HTMLDivElement;
@@ -4133,73 +4137,263 @@ exportDiagBtn.addEventListener('click', () => {
   })();
 });
 
-/* ==================== 常用页面书签（v3.16：Alt+1 轮盘的数据源） ====================
+/* ==================== 常用页面书签（v3.16；v4.2.44 改为可视化行编辑器） ====================
  * ★ 刻意**不进 3 秒轮询**：这是用户正在编辑的输入框，轮询回写会把正在敲的内容冲掉。
- *   只在启动时装载一次 + 保存后回填。
+ *   只在启动时装载一次 + 保存/恢复后回填。
+ * ★ 归一化只在后台做一次（`favorites.save`）：前端只提示「看起来明显打不开」的行，
+ *   最终以 `FavoritesSaveResult` 的计数为准 —— 两处各写一套规则迟早漂移。
  */
 
-function parseFavoriteLines(text: string): Array<{ name: string; path: string }> {
-  const out: Array<{ name: string; path: string }> = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) {
-      continue;
-    }
-    // 分隔符：英文逗号 / 中文逗号 / 制表符（与批量导入的口径一致）
-    const m = /^(.+?)\s*[,，\t]\s*(.+)$/.exec(line);
-    if (!m) {
-      continue; // 没有分隔符的行直接跳过（不猜「整行是名称还是路径」）
-    }
-    const name = m[1].trim();
-    const path = m[2].trim();
-    if (name && path) {
-      out.push({ name, path });
-    }
-  }
-  return out;
+interface FavDraft {
+  name: string;
+  path: string;
 }
 
-function renderFavoriteLines(items: Array<{ name: string; path: string }>): void {
-  favText.value = items.map((f) => `${f.name}, ${f.path}`).join('\n');
+let favDraft: FavDraft[] = [];
+/** 已保存内容的快照（JSON）：只用来判断「有未保存的修改」 */
+let favSnapshot = '[]';
+let favDragFrom = -1;
+
+const FAILED_FAV_LOAD = DEFAULT_FAVORITES.map((d) => ({ ...d }));
+
+function favDraftKey(items: FavDraft[]): string {
+  return JSON.stringify(items.map((x) => ({ name: x.name, path: x.path })));
+}
+
+function favIsDirty(): boolean {
+  return favDraftKey(favDraft) !== favSnapshot;
+}
+
+/** 行内校验：只挡「明显打不开」的路径；补前导 `/` 由后台统一做 */
+function favPathLooksValid(raw: string): boolean {
+  const p = raw.trim();
+  if (!p) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p)) {
+    try {
+      const u = new URL(p);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+  return !p.startsWith('//') && !p.includes('\\');
+}
+
+function favUpdateMeta(): void {
+  favDirty.hidden = !favIsDirty();
+  const over = favDraft.length > FAVORITES_MAX ? `（上限 ${FAVORITES_MAX}，多出的保存时会被截掉）` : '';
+  favCount.textContent = `共 ${favDraft.length} 条${over}`;
+}
+
+function favMakeIcon(label: string, cls: string, title: string): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `fav-icon ${cls}`;
+  b.textContent = label;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  return b;
+}
+
+function favRender(): void {
+  favRows.replaceChildren();
+  favDraft.forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'fav-row';
+
+    const grip = document.createElement('span');
+    grip.className = 'fav-grip';
+    grip.textContent = '⋮⋮';
+    grip.title = '拖动排序';
+    grip.draggable = true;
+    grip.addEventListener('dragstart', (e) => {
+      favDragFrom = index;
+      e.dataTransfer?.setData('text/plain', String(index));
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+      }
+      row.classList.add('dragging');
+    });
+    grip.addEventListener('dragend', () => {
+      favDragFrom = -1;
+      row.classList.remove('dragging');
+      favRows.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
+    });
+
+    const name = document.createElement('input');
+    name.className = 'fav-input fav-name';
+    name.type = 'text';
+    name.maxLength = 60;
+    name.placeholder = '例如：用户管理';
+    name.value = item.name;
+    name.setAttribute('aria-label', `第 ${index + 1} 条的页面名称`);
+    name.addEventListener('input', () => {
+      item.name = name.value;
+      favUpdateMeta();
+    });
+    name.addEventListener('blur', () => {
+      const bad = !name.value.trim();
+      row.classList.toggle('has-error', bad);
+      name.title = bad ? '页面名称不能为空' : '';
+    });
+
+    const path = document.createElement('input');
+    path.className = 'fav-input fav-path';
+    path.type = 'text';
+    path.maxLength = 2048;
+    path.placeholder = '/admin/user-mgmt/users/list';
+    path.spellcheck = false;
+    path.value = item.path;
+    path.setAttribute('aria-label', `第 ${index + 1} 条的页面路径`);
+    path.addEventListener('input', () => {
+      item.path = path.value;
+      favUpdateMeta();
+    });
+    path.addEventListener('blur', () => {
+      const bad = !favPathLooksValid(path.value);
+      row.classList.toggle('has-error', bad);
+      path.title = bad ? '路径需以 / 开头，或完整的 http(s) 网址' : '';
+    });
+
+    const btns = document.createElement('span');
+    btns.className = 'fav-row-btns';
+    const up = favMakeIcon('↑', 'fav-up', '上移');
+    up.disabled = index === 0;
+    up.addEventListener('click', () => favMove(index, index - 1));
+    const down = favMakeIcon('↓', 'fav-down', '下移');
+    down.disabled = index === favDraft.length - 1;
+    down.addEventListener('click', () => favMove(index, index + 1));
+    const del = favMakeIcon('✕', 'fav-del', '删除这一条');
+    del.addEventListener('click', () => favRemove(index));
+    btns.append(up, down, del);
+
+    row.addEventListener('dragover', (e) => {
+      if (favDragFrom < 0) {
+        return;
+      }
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'move';
+      }
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('drop-target');
+      if (favDragFrom >= 0) {
+        favMove(favDragFrom, index);
+      }
+    });
+
+    row.append(grip, name, path, btns);
+    favRows.append(row);
+  });
+
+  favEmpty.hidden = favDraft.length > 0;
+  favUpdateMeta();
+}
+
+function favMove(from: number, to: number): void {
+  if (from === to || from < 0 || to < 0 || from >= favDraft.length || to >= favDraft.length) {
+    return;
+  }
+  const [item] = favDraft.splice(from, 1);
+  favDraft.splice(to, 0, item);
+  favDragFrom = -1;
+  favRender();
+}
+
+function favRemove(index: number): void {
+  favDraft.splice(index, 1);
+  favRender();
 }
 
 async function loadFavoritesEditor(): Promise<void> {
-  const stored = await chrome.storage.local.get(LOCAL_KEYS.favorites).catch(() => ({}) as Record<string, unknown>);
-  const raw = stored[LOCAL_KEYS.favorites];
-  const items = Array.isArray(raw)
-    ? (raw as Array<{ name?: unknown; path?: unknown }>)
-        .map((x) => ({ name: String(x?.name ?? '').trim(), path: String(x?.path ?? '').trim() }))
-        .filter((x) => x.name && x.path)
-    : [];
-  renderFavoriteLines(items.length ? items : DEFAULT_FAVORITES.map((d) => ({ ...d })));
+  const res = await sendSafe({ kind: 'favorites.list' });
+  const items = res?.kind === 'favorites.list' && res.result.ok ? res.result.data : null;
+  favDraft = (items ?? FAILED_FAV_LOAD).map((f) => ({ name: f.name, path: f.path }));
+  favSnapshot = favDraftKey(favDraft);
+  favRender();
 }
 
-function flashFavTip(text: string): void {
+function flashFavTip(text: string, bad = false): void {
+  favTip.classList.toggle('fav-tip-err', bad);
   favTip.textContent = text;
   setTimeout(() => {
     favTip.textContent = '';
-  }, 1800);
+    favTip.classList.remove('fav-tip-err');
+  }, bad ? 4000 : 1800);
 }
+
+favAdd.addEventListener('click', () => {
+  favDraft.push({ name: '', path: '' });
+  favRender();
+  const last = favRows.lastElementChild?.querySelector<HTMLInputElement>('.fav-name');
+  last?.focus();
+});
 
 favSave.addEventListener('click', () => {
   void (async () => {
-    const items = parseFavoriteLines(favText.value);
-    if (!items.length) {
-      alert('没有解析出任何条目。每行格式：名称,路径');
+    const res = await sendSafe({
+      kind: 'favorites.save',
+      items: favDraft.map((x) => ({ name: x.name, path: x.path })),
+    });
+    if (!res || res.kind !== 'favorites.save') {
+      flashFavTip('保存失败：后台没有响应', true);
       return;
     }
-    await chrome.storage.local.set({ [LOCAL_KEYS.favorites]: items });
-    renderFavoriteLines(items);
-    flashFavTip(`已保存 ${items.length} 条 ✓`);
+    if (!res.result.ok) {
+      flashFavTip(`保存失败：${res.result.error}`, true);
+      return;
+    }
+    const r = res.result.data;
+    favDraft = r.items.map((x) => ({ name: x.name, path: x.path }));
+    favSnapshot = favDraftKey(favDraft);
+    favRender();
+    const parts = [`已保存 ${r.items.length} 条`];
+    if (r.skipped) {
+      parts.push(`忽略 ${r.skipped} 条（名称为空或路径不合法）`);
+    }
+    if (r.duplicates) {
+      parts.push(`合并重复 ${r.duplicates} 条`);
+    }
+    if (r.truncated) {
+      parts.push(`截断 ${r.truncated} 条`);
+    }
+    flashFavTip(`${parts.join('，')} ✓`);
   })();
 });
 
 favReset.addEventListener('click', () => {
   void (async () => {
-    await chrome.storage.local.remove(LOCAL_KEYS.favorites);
-    await loadFavoritesEditor();
+    if (favIsDirty() && !confirm('恢复内置默认会丢弃当前未保存的修改，继续？')) {
+      return;
+    }
+    const res = await sendSafe({ kind: 'favorites.reset' });
+    if (!res || res.kind !== 'favorites.reset') {
+      flashFavTip('恢复默认失败：后台没有响应', true);
+      return;
+    }
+    if (!res.result.ok) {
+      flashFavTip(`恢复默认失败：${res.result.error}`, true);
+      return;
+    }
+    favDraft = res.result.data.map((x) => ({ name: x.name, path: x.path }));
+    favSnapshot = favDraftKey(favDraft);
+    favRender();
     flashFavTip('已恢复默认 ✓');
   })();
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (!favIsDirty()) {
+    return;
+  }
+  e.preventDefault();
+  e.returnValue = '';
 });
 
 /* ==================== 启动装载 ==================== */

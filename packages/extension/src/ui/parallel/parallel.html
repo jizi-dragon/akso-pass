@@ -290,22 +290,41 @@
         <ul id="box-list" class="plain site-list"></ul>
       </section>
 
-      <!-- ============ 面板 5：常用页面（书签轮盘 Alt+1 的数据源） ============ -->
+      <!-- ============ 面板 5：常用页面（书签轮盘 Alt+1 的数据源） ============
+           ★ v4.2.44：从「一行一条 `名称,路径` 的 textarea」改成**可视化行编辑器**。
+           用 textarea 时用户看不到列对齐、拖不了顺序、粘错一个逗号整条失效，
+           而且保存前无从知道哪条会被丢（协议不对/路径重复都是静默的）。 -->
       <section class="card block pane" id="pane-favorites" role="tabpanel" aria-label="常用页面" hidden>
-        <div class="block-head">
+        <div class="block-head row">
           <h2>常用页面</h2>
+          <span class="fav-head-meta">
+            <span id="fav-dirty" class="fav-dirty" hidden>有未保存的修改</span>
+            <span id="fav-count" class="fav-count"></span>
+          </span>
         </div>
-        <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就在<b>新标签页</b>打开。每行一条：
-          <code>名称,路径</code>；路径可以是 <code>/admin/…</code>（相对当前站点）或完整网址。
+        <p class="desc">按 <kbd>Alt+1</kbd> 呼出书签轮盘，点一下就在<b>新标签页</b>打开。
+          路径可以写 <code>/admin/…</code>（相对当前站点）或完整网址；只接受 <code>http(s)</code>。
           如果目标页地址带 <code>?bid=…</code>，建议直接粘贴平台地址栏里的完整路径；
           扩展也会尝试从平台菜单自动解析出带 query 的完整地址。</p>
-        <textarea id="fav-text" rows="7" spellcheck="false"
-          placeholder="用户管理, /admin/user-mgmt/users/list&#10;工作流, /admin/config/workflow"></textarea>
-        <span class="btn-group">
+
+        <div class="fav-editor">
+          <div class="fav-head-row" aria-hidden="true">
+            <span class="fav-col-grip"></span>
+            <span>页面名称</span>
+            <span>页面路径</span>
+            <span class="fav-col-ops">操作</span>
+          </div>
+          <div id="fav-rows" class="fav-rows"></div>
+          <p id="fav-empty" class="fav-empty" hidden>还没有常用页面，点「＋ 添加一条」开始。</p>
+        </div>
+
+        <div class="fav-actions">
+          <button id="fav-add" class="btn-ghost" type="button">＋ 添加一条</button>
+          <span class="fav-spacer"></span>
           <button id="fav-save" class="btn-primary" type="button">保存</button>
           <button id="fav-reset" class="btn-ghost" type="button">恢复默认</button>
           <span id="fav-tip" class="save-tip"></span>
-        </span>
+        </div>
       </section>
 
       <!-- 未登录遮罩：二级导航及以下被 `.is-locked` 遮住时，这层负责显示提示与「登录」。

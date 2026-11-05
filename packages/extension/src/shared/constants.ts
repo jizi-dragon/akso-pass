@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.43';
+export const EXT_VERSION = '4.2.44';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -103,8 +103,12 @@ export const DEFAULT_FAVORITES: ReadonlyArray<{ name: string; path: string }> = 
   { name: 'TraceLog', path: '/admin/secret-page/trace-log' },
 ];
 
-/** 常用页面书签上限（轮盘一环的上限；超出提示去管理页精简） */
-export const FAVORITES_MAX = 10;
+/**
+ * 常用页面书签上限（v4.2.44：10 → 60）。
+ * 轮盘一页 20 格、超出可滚动；上限只防存储失控。旧值 10 与「一页 20 格」矛盾，
+ * 第 11 条起会在 listFavorites 被静默截掉（管理页也看不到提示）。
+ */
+export const FAVORITES_MAX = 60;
 
 /**
  * 翻译链路的消息协议（v4.2.0 合并 Akso Instant Translate）。

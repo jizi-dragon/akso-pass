@@ -80,6 +80,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-dnrscheme.mjs',
   'verify-duplicate.mjs',
   'verify-dynsnap.mjs',
+  'verify-favui.mjs',
   'verify-fillrhythm.mjs',
   'verify-httpscheme.mjs',
   'verify-impgrant.mjs',

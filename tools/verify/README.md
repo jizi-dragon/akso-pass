@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **50 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **52 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -61,6 +61,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-dnrscheme.mjs` | ★ **凭据不落明文 HTTP**（v4.2.35 Bearer，v4.2.38 Cookie）：本地 `http://qllocal.test` 与 `https://qllocal.test`（自签证书 + host-resolver-rules）各起一个记录请求头的服务；断言带 `regexFilter: '^https://'` 的会话规则只给 https 请求加头 / set Cookie，http 不加，且去掉正则后 http 又带上（证明缺席来自正则而非匹配失败）—— 即 https 账号被降级到 http 时 Authorization 与回放 Cookie 都不会进明文请求；★ F 组还验证了 `initiatorDomains` 写父域时**子域页面发起的请求仍命中**（账号被重定向到子域时 Bearer 不掉） | 8/8 | ✔ |
 | `verify-cookiereplay.mjs` | ★ **回放 Cookie 只给本账号站点自己发起的请求**（v4.2.36，v4.2.37 补 ping）：顶层 `localhost`（账号站点）+ iframe `127.0.0.1`（第三方 origin），按产品的三层优先级装规则 —— strip(1，全类型 remove) + nav(2，main_frame/other set) + sub(2，set + `initiatorDomains`）。断言基线真实 jar 的 `real=1` 会出站、装规则后顶层拿到 `SID=ACC` 且 `real=1` 被剥、跨域 iframe 的请求与 **ping** 都**零 Cookie**、`main_frame` 导航仍回放；★ 反证：去掉 sub 的 `initiatorDomains` 后同一个 iframe 立刻拿到 `SID=ACC`（证明"零 Cookie"不是没匹配上）。<br>★ ping 是独立 resourceType：显式列 `resourceTypes` 时漏掉它就完全不匹配（v4.2.37 修） | 9/9 | ✔ |
 | `verify-ruleidem.mjs` | ★★ **SW 冷启不叠 DNR 规则**（v4.2.39）：写 `ql:parTabBindings` / `ql:parTokens` 造一个绑定页签，用 CDP 杀掉 `background.js` 的 service worker 再拉起（模块重新求值 → `restore()`），断言冷启后会话规则总数不增长、AUTH 与回放 Cookie 仍是当前快照。★ 修复前实测第二轮 **8 条**（首轮 4 条 + 重建 4 条）；旧规则不在 `installed` 里，`clearTab` 永远摘不掉 ⇒ 解绑后旧 token 仍被改写，规则数还会撞 5000 上限 | 5/5 | ✔ |
+| `verify-favui.mjs` | ★★ **常用页面编辑器的浏览器级判据**（v4.2.44）：真装扩展打开 `parallel.html`，摘掉未登录遮罩后切到「常用页面」——① 是行编辑器（无 textarea）且默认 6 条名称对得上 ② 「＋ 添加一条」新增并聚焦名称框 ③ 编辑后出现「有未保存的修改」 ④ 保存后**真的**写进 `chrome.storage.local`、相对路径补成 `/admin/…`、提示「已保存 7 条」 ⑤ 重新打开页面第 7 条仍在（不是内存态） ⑥ 「恢复默认」删用户键并回 6 条 ⑦ 全程无未捕获页面错误。<br>★ 纯逻辑在 `verify-favorites.mjs`；这条只补它覆盖不到的「HTML id / 事件绑定 / 与后台消息往返」那一层 | 10/10 | ✔ |
 | `verify-autologin.mjs` | 自愈式提交（首击被吞后重试 ≤4 次 / 提交时值完整 / 用户键入即让位） | 5/5 | ✔ |
 | `verify-autologin-gap.mjs` | ★ **自动填表"值进了 DOM、平台状态没收到"**：密码框在同源 srcdoc iframe 里、平台的 input 监听器晚于我们首次填充才挂上 ⇒ 点登录后平台校验报「请输入密码」。断言**只看平台状态**，不看 DOM；PITFALLS #55 | 7/7 | ✔ |
 | `verify-dynsnap.mjs` | 快照动态化（登录后票据实时进回放 / 轮换 / 作废移除 / 袋回流） | 6/6 | ✔ |
@@ -83,6 +84,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-user-docs.mjs`** | **用户可见的功能描述必须与代码一致**：`USER-MANUAL.md` 里"数据在哪 / 备份含什么"不得与代码相反、**真相必须被明说**、`manifest.description` 不声称本地加密、翻译图标的"填充/复制"开关在 UI/内容脚本/手册三处一致、快捷键 `Ctrl+X` 与译文 50 字符限制（含词边界） | **14/14** | ✘ |
 | **`verify-status-cache.mjs`** | **状态轮盘缓存的纯逻辑**：TTL 命中/过期、按页签失效、容量淘汰、clear；防止"缓存跨账号/永不失效"回归 | **6/6** | ✘ |
 | **`verify-statusfilter.mjs`** | ★ **状态轮盘只呈现「启用」的生命周期状态**（v4.2.42）：用 `esbuild` 把 `instance-status.ts` 就地转成 CJS，喂假接口响应后**真的调** `pageLoadStatuses` —— ① `isEnabled=false` / `isDeleted=true` 被过滤 ② `0` / `"false"` / `enabled:false` 等形态也认 ③ **响应里没有启停字段时一个都不许少**（不能把"未知"当"停用"清空整表）④ 全停用时 `statuses` 为空但 `hiddenCount` 如实 ⑤ 当前状态落在停用项上时 `currentDisabled=true`。 | **8/8** | ✘ |
+| **`verify-favorites.mjs`** | ★ **常用页面保存链路的纯逻辑**（v4.2.44）：用 `esbuild` 打包 `favorites.ts` + `chrome.storage.local` 替身，断言 ① 相对路径补前导 `/`、完整 http(s) 原样、名称去空白 ② `javascript:` / `data:` / 协议相对 `//host` / 反斜杠 / 空名称全部忽略并计入 `skipped` ③ 归一化后同路径去重（`/a` 与 `a` 算一条，保留先出现的）④ **空数组不回落默认**（删光不复活）、只有键不存在才回落 ⑤ 超 60 条截断且 `truncated` 如实 ⑥ `resetFavorites` 删键回默认 ⑦ `resolveFavoriteUrl` 拒绝 `javascript:`、相对路径按 base 拼接 ⑧ 超长名称截到 60 字但条目保留。<br>★ 起因：旧版是 textarea +「每行 `名称,路径`」，保存是**静默**的 —— 协议不对/路径重复/超 10 条都被无声丢掉，用户只看到"我加过怎么没了" | **9/9** | ✘ |
 | **`verify-falsify-userdocs.mjs`** | **上一条的反证**：把修复前那**五处原文**逐条注回去 ⇒ 各自变红（缺陷版用真句，不是我编的近似句） | **5/5** | ✘ |
 | **`verify-load.mjs`** | ★ **装载冒烟**（本篇唯一**需要浏览器**的那条）：真起 Chromium + `--load-extension`，验 ① 扩展被装载 ② 产物齐全性（**能取的从页面内 `fetch`、不能取的查磁盘**）③ 三个自有页面能开且无未捕获错误 ④ ★ **SW 真的活着**（能应答 `ql.diag` 且回了 `logs` 数组）⑤ 无致命错误。<br>★ 它**不验**登录 / 列表 / 开页签 / 盒子 / 设备流 / 离线降级 —— 那些要真实云端账号 + 真实内网平台，**必须人工走**（B7 的剩余部分），本脚本**不冒充**那部分覆盖 | **17/17** | ✔ |
 | **`verify-css-vars.mjs`** | ★ **CSS 变量卫生**（静态、秒级，**两个方向都查**）：逐页面按**真实 CSS 依赖链**（`<link rel=stylesheet>` + 递归 `@import`）解析，断言 ① 无「`var()` 无 fallback 又解析不到」（那会让**整条声明被丢弃**）② ★ **反方向**：定义的变量都有人用 ③ 无**自引用** `--x: var(--x)`（等于未定义）④ ★ **样式链无环、无重复引用**（`@import` 成环时浏览器行为是实现相关的，而去重会把环**静默吞掉**）。<br>★★ 起因：`wheel.css` 里品牌蓝 `#1e6fff` 散在 **12 处**（8 处 fallback + 4 处裸硬编码），而 `theme.css` 定义了一次 ⇒ **同一个颜色 13 处，改一处必漂**；我整理时又用全局替换把 `:root` 里**那一行自己的值**也换掉，造出 `--acc: var(--acc)`。<br>★ 而"截图逐字节相同"**没能发现它**（轮盘需有账号才渲染）⇒ **这类缺陷只能静态查，不能靠截图**。<br>★★ **② 的"使用者"范围必须按全目录算**：我第一版探针**把 `theme.css` 排除在"使用者"之外** ⇒ 把 `--sb-brand-hover` / `--sb-bg`（**只在 theme.css 自己的第 36/48/56 行被用**）报成死变量 —— **两个假缺陷**。 | **22/22** | ✘ |
@@ -125,9 +127,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 29 | ≈62 s | `run-all.mjs --static` |
-| 浏览器（真起 Chromium） | 21 | ≈115 s | `run-all.mjs --browser-only` |
-| 全部 | 50 | ≈180 s | `run-all.mjs --browser` |
+| 静态（不需要浏览器） | 30 | ≈64 s | `run-all.mjs --static` |
+| 浏览器（真起 Chromium） | 22 | ≈130 s | `run-all.mjs --browser-only` |
+| 全部 | 52 | ≈197 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -135,8 +137,8 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 跑法 | 耗时 | 有没有重复 |
 |---|---|---|
-| `acceptance.py` + `run-all.mjs --browser` | 45 + 180 = **225 s** | ★ **有**：14 个静态脚本跑了两遍 |
-| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 115 = **160 s** | ✅ **没有** |
+| `acceptance.py` + `run-all.mjs --browser` | 45 + 197 = **242 s** | ★ **有**：14 个静态脚本跑了两遍 |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 130 = **175 s** | ✅ **没有** |
 
 ★ 这个"不重叠"不是约定，是**判据**：`acceptance.py` 的 §10 会检查它跑的那 14 个脚本
 **都不需要浏览器**（谓词与本文件 `BROWSER_SCRIPTS` 的自证是同一个）。
@@ -145,7 +147,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"50 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"52 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -155,7 +157,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 50
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 52
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 
@@ -176,4 +178,6 @@ node tools/verify/run-all.mjs --list              # 与上一条应当一致
    —— 本目录深度是两层，写一层会**静默**指向 `tools/` 并去找 `tools/dist/manifest.json`。
 4. **断言必须能红**：写完先问"拆掉什么它才会红"，答不上来说明它没在验任何东西
    （同 `akso-mogul` 的 PITFALLS #119）。
+
+
 

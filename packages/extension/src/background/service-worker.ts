@@ -145,7 +145,7 @@ import {
 // v4.2.1：登出要清"本机缓存的账号数据"（只读快照；里面从来没有口令）
 import { clearSnapshot } from './core/account-cache';
 import { cancelDeviceFlow, pollDeviceFlow, startDeviceFlow } from './core/cloud-device';
-import { listFavorites, resolveFavoriteUrl } from './core/favorites';
+import { listFavorites, resetFavorites, resolveFavoriteUrl, saveFavorites } from './core/favorites';
 import {
   changeInstanceStatus,
   isInstanceContext,
@@ -630,6 +630,14 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
     case 'favorites.list': {
       const r = await tryRun(() => listFavorites());
       return { kind: 'favorites.list', result: r };
+    }
+    case 'favorites.save': {
+      const r = await tryRun(() => saveFavorites(req.items));
+      return { kind: 'favorites.save', result: r };
+    }
+    case 'favorites.reset': {
+      const r = await tryRun(() => resetFavorites());
+      return { kind: 'favorites.reset', result: r };
     }
 
     /* ---------------- 数据源：本地 ↔ 云端（v3.14） ---------------- */

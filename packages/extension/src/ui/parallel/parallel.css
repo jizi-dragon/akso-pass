@@ -968,3 +968,171 @@
   background: var(--sb-brand-soft); color: var(--sb-brand); overflow: hidden;
 }
 .cloud-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---- 常用页面可视化编辑器（v4.2.44） ----
+ * 旧版是一个 textarea（一行一条 `名称,路径`）：列不对齐、顺序拖不动、
+ * 粘错一个分隔符整条失效，且保存前看不出哪条会被丢（协议/重复都是静默的）。
+ * 现在一行 = 一个条目，名称/路径各一个输入框，排序靠拖动或 ↑↓。 */
+.fav-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.fav-head-row,
+.fav-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1.6fr) auto;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.fav-head-row {
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--sb-text-secondary);
+}
+.fav-col-ops {
+  text-align: right;
+}
+.fav-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.fav-row {
+  padding: var(--sp-2);
+  border-radius: var(--sb-radius);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.fav-row:focus-within {
+  border-color: var(--sb-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sb-brand) 12%, transparent);
+}
+.fav-row.dragging {
+  opacity: 0.45;
+}
+.fav-row.drop-target {
+  border-color: var(--sb-brand);
+  background: var(--sb-brand-soft-2);
+}
+.fav-row.has-error .fav-input {
+  border-color: var(--sb-danger);
+}
+.fav-grip {
+  cursor: grab;
+  user-select: none;
+  text-align: center;
+  font-size: var(--fs-13);
+  line-height: 1;
+  color: var(--sb-text-secondary);
+}
+.fav-grip:active {
+  cursor: grabbing;
+}
+.fav-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--sb-radius);
+  border: 1px solid var(--sb-border);
+  background: var(--sb-surface);
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-13);
+}
+.fav-input::placeholder {
+  color: var(--sb-text-secondary);
+}
+.fav-input:focus {
+  outline: none;
+  border-color: var(--sb-brand);
+}
+.fav-row-btns {
+  display: flex;
+  gap: var(--sp-1);
+  justify-content: flex-end;
+}
+.fav-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--sb-radius);
+  background: transparent;
+  color: var(--sb-text-secondary);
+  font-size: var(--fs-13);
+  line-height: 1;
+  cursor: pointer;
+}
+.fav-icon:hover:not(:disabled) {
+  background: var(--sb-brand-soft-2);
+  color: var(--sb-brand);
+}
+.fav-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.fav-icon.fav-del:hover:not(:disabled) {
+  color: var(--sb-danger);
+  background: color-mix(in srgb, var(--sb-danger) 9%, transparent);
+}
+.fav-empty {
+  margin: 0;
+  padding: var(--sp-4);
+  text-align: center;
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+  border: 1px dashed var(--sb-border-strong);
+  border-radius: var(--sb-radius);
+}
+.fav-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+}
+.fav-spacer {
+  flex: 1 1 auto;
+}
+.fav-head-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fav-dirty {
+  padding: var(--sp-hair) var(--sp-2);
+  border-radius: var(--sb-radius-pill);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  color: var(--sb-warning);
+  background: color-mix(in srgb, var(--sb-warning) 14%, transparent);
+}
+.fav-count {
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.fav-tip-err {
+  color: var(--sb-danger);
+}
+@media (max-width: 700px) {
+  .fav-head-row {
+    display: none;
+  }
+  .fav-row {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+  }
+  .fav-row .fav-path {
+    grid-column: 2 / -1;
+  }
+  .fav-row .fav-grip {
+    grid-row: 1 / 3;
+  }
+}
