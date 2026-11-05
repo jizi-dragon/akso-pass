@@ -5,6 +5,22 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.42（2026-11-05）
+
+### 状态轮盘只呈现「启用」的生命周期状态
+
+- **需求**：`Alt+W` 的状态列表此前把生命周期里**停用**的状态也列出来，点下去必然失败（或
+  切到不允许流转的状态）。用户要求过滤掉停用项，只显示启用状态。
+- **修正**：`pageLoadStatuses` 在映射 `GetListByBasicId` 的返回后按平台字段过滤
+  （与 `Status/Create`、`Status/Update` 入参同名）：`isEnabled=false`、`isDeleted=true`
+  （并兼容 `enabled/enable/isDisabled/disabled` 与 `0/"false"` 形态）不再进入列表；
+  返回值新增 `hiddenCount` / `currentDisabled`，浮层显示「已隐藏 N 个停用」；当前状态
+  本身落在停用项上时提示「已停用」，而不是含糊的「当前状态未知」。
+- **刻意不做**：响应里若**没有**这些字段，一律按启用保留 —— 宁可多显示，也不能把
+  「未知」当「停用」把整张表清空（服务端形状不稳定，旧版本可能不带 `isEnabled`）。
+- **验证**：新增 `tools/verify/verify-statusfilter.mjs`（8/8，esbuild 就地转 CJS 后
+  真的调 `pageLoadStatuses`，喂假接口响应）；静态门禁 **29/29**。
+
 ## 4.2.41（2026-11-05）
 
 ### 安全决策落档：父域 Bearer 与 local token 均保持现状

@@ -1210,7 +1210,13 @@ async function statusLoadFor(tab: chrome.tabs.Tab | undefined): Promise<Result<S
   }
   try {
     const r = await loadInstanceStatuses(tab.id, ctx);
-    const data = { lifecycleName: r.lifecycleName, currentName: r.currentName, statuses: r.statuses };
+    const data = {
+      lifecycleName: r.lifecycleName,
+      currentName: r.currentName,
+      statuses: r.statuses,
+      hiddenCount: r.hiddenCount,
+      currentDisabled: r.currentDisabled,
+    };
     statusCache.set(key, data);
     log.debug('状态列表已加载并缓存 tab=%d elapsed=%dms statuses=%d',
       tab.id, Date.now() - started, data.statuses.length);

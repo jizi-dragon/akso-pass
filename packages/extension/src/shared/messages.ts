@@ -369,6 +369,10 @@ export interface StatusList {
   /** 当前状态名（接口字段优先，退回页面 DOM 文字；都读不到为空串） */
   currentName: string;
   statuses: Array<{ id: string; code: string; name: string }>;
+  /** 被过滤掉的停用/已删除状态数（只用于 UI 说明，不参与切换） */
+  hiddenCount?: number;
+  /** 当前状态本身已停用（不在 statuses 里，避免把"已停用"说成"未知"） */
+  currentDisabled?: boolean;
 }
 
 /** 数据源现状（管理页选择器据此渲染；不回传 token 本身） */

@@ -25,6 +25,10 @@ export interface StatusWheelOpts {
   lifecycleName: string;
   /** 实例 / 对象展示名（空态用） */
   instanceLabel: string;
+  /** 被过滤掉的停用/已删除状态数（只影响说明文案，不参与切换） */
+  hiddenCount?: number;
+  /** 当前状态本身已停用（已从列表里过滤掉） */
+  currentDisabled?: boolean;
   /** 有值 = 只展示原因，不响应点击（例如缺 instanceId） */
   disabledReason?: string;
   onPick: (item: StatusWheelItem) => void;
@@ -37,6 +41,7 @@ export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void
   const current = opts.statuses.find((s) => s.isCurrent);
   const currentName = current?.name ?? '';
   const n = opts.statuses.length;
+  const hidden = opts.hiddenCount ?? 0;
 
   const items: GridItem[] = opts.statuses.map((s) => ({
     key: s.code,
@@ -48,11 +53,14 @@ export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void
     current: s.isCurrent,
   }));
 
-  const meta = opts.disabledReason
-    ? '不可切换'
-    : n
-      ? `${n}/${n} 个${currentName ? ` · 当前 ${currentName}` : ' · 当前状态未知'}`
-      : '无状态';
+  const hiddenNote = hidden ? ` · 已隐藏 ${hidden} 个停用` : '';
+  const currentNote = currentName
+    ? ` · 当前 ${currentName}`
+    : opts.currentDisabled
+      ? ' · 当前状态已停用'
+      : '';
+  const meta = opts.disabledReason ? '不可切换' : n ? `${n} 个启用${hiddenNote}${currentNote}` : '无启用状态';
+  const emptyLine1 = opts.disabledReason || (hidden ? `没有启用的状态（已隐藏 ${hidden} 个停用）` : '没有读到可切换的状态');
 
   const wrap = buildItemGrid({
     items: opts.disabledReason ? [] : items,
@@ -72,10 +80,10 @@ export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void
       }
     },
     empty: {
-      line1: opts.disabledReason || '没有读到可切换的状态',
-      line2: opts.disabledReason ? '请切到对象实例页再试' : '可能是当前账号无权查看该生命周期',
+      line1: emptyLine1,
+      line2: opts.disabledReason ? '请切到对象实例页再试' : hidden ? '停用状态不参与切换' : '可能是当前账号无权查看该生命周期',
     },
-    tip: opts.disabledReason ? '当前不可切换' : `点击或按数字键切换 · 共 ${n} 个状态`,
+    tip: opts.disabledReason ? '当前不可切换' : `点击或按数字键切换 · 共 ${n} 个启用状态`,
   });
   root.append(wrap);
 }

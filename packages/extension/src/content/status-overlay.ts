@@ -153,6 +153,13 @@ async function mount(): Promise<void> {
   }
 
   function renderWheel(list: StatusList, label: string): void {
+    const hidden = list.hiddenCount ?? 0;
+    if (!list.statuses.length && hidden) {
+      // 只有停用状态：不是"读不到"，而是"都被过滤了"，说清楚原因
+      renderEmpty(label, `该生命周期下没有启用的状态（已隐藏 ${hidden} 个停用）`);
+      setHint(list.currentDisabled && list.currentName ? `${list.currentName}（已停用）` : '');
+      return;
+    }
     items = list.statuses.map((s) => ({
       id: s.id,
       code: s.code,
@@ -163,9 +170,11 @@ async function mount(): Promise<void> {
       statuses: items,
       instanceLabel: label,
       lifecycleName: list.lifecycleName,
+      hiddenCount: hidden,
+      currentDisabled: list.currentDisabled,
       onPick: (item) => void pick(item),
     });
-    setHint(list.currentName);
+    setHint(list.currentDisabled && list.currentName ? `${list.currentName}（已停用）` : list.currentName);
   }
 
   async function pick(item: StatusWheelItem): Promise<void> {

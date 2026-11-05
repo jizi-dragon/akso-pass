@@ -131,6 +131,10 @@ interface PageStatusResult {
   /** 服务端返回的非 JSON / 非 2xx 时的可读摘要 */
   lifecycleName: string;
   statuses: PageStatusItem[];
+  /** 被过滤掉的停用/已删除状态数（只用于 UI 说明，不参与切换） */
+  hiddenCount: number;
+  /** 实例当前状态正好落在被过滤掉的停用项上 */
+  currentDisabled: boolean;
   /** 从实例响应里读到的当前状态名（读不到为空串） */
   currentFromApi: string;
   /** 从页面 DOM 读到的当前状态文字（读不到为空串） */
@@ -139,8 +143,9 @@ interface PageStatusResult {
   resolvedObjectId: boolean;
 }
 
-/** 页面主世界：拉状态列表（GetFormInstance → GetListByBasicId，必要时先反查 objectId） */
-function pageLoadStatuses(arg: {
+/** 页面主世界：拉状态列表（GetFormInstance → GetListByBasicId，必要时先反查 objectId）
+ *  `export` 只为静态判据能在 Node 里直接调它；注入时 `executeScript` 仍按函数源序列化。 */
+export function pageLoadStatuses(arg: {
   objectId: string;
   instanceId: string;
   menuId: string;
@@ -150,6 +155,8 @@ function pageLoadStatuses(arg: {
     error,
     lifecycleName: '',
     statuses: [],
+    hiddenCount: 0,
+    currentDisabled: false,
     currentFromApi: '',
     currentFromDom: '',
     resolvedObjectId: false,
@@ -322,15 +329,30 @@ function pageLoadStatuses(arg: {
     if (!arr) {
       return fail('状态列表响应里没有找到状态数组');
     }
-    const statuses: PageStatusItem[] = arr.map((it) => {
+    // 启用/停用：状态对象的字段与 `Status/Create`、`Status/Update` 入参同名（isEnabled / isDeleted）。
+    // 服务端若不给这些字段（旧版本/精简响应），一律按「启用」保留 —— 宁可多显示，
+    // 也不能因为认不出字段就把整张列表过滤成空，更不能把"未知"当成"停用"。
+    const off = (v: unknown): boolean => v === false || v === 0 || v === 'false' || v === '0';
+    const on = (v: unknown): boolean => v === true || v === 1 || v === 'true' || v === '1';
+    const enabledOf = (o: Record<string, unknown>): boolean => {
+      if (off(o.isEnabled) || off(o.enabled) || off(o.enable)) {
+        return false;
+      }
+      if (on(o.isDeleted) || on(o.isDisabled) || on(o.disabled)) {
+        return false;
+      }
+      return true;
+    };
+    const all = arr.map((it) => {
       const o = it as Record<string, unknown>;
       const code = asStr(o.code);
       return {
-        id: asStr(o.id) || code,
-        code,
-        name: asStr(o.name) || code,
+        item: { id: asStr(o.id) || code, code, name: asStr(o.name) || code } as PageStatusItem,
+        enabled: enabledOf(o),
       };
     });
+    const statuses: PageStatusItem[] = all.filter((x) => x.enabled).map((x) => x.item);
+    const hiddenCount = all.length - statuses.length;
 
     // 当前状态兜底：读页面上的状态文字（同事实现用的两个选择器：精确类名 + 通用兜底）
     let currentFromDom = '';
@@ -351,7 +373,22 @@ function pageLoadStatuses(arg: {
       }
     }
 
-    return { ok: true, lifecycleName, statuses, currentFromApi, currentFromDom, resolvedObjectId };
+    // 当前状态若落在被隐藏的停用项上，显式告诉 UI「已停用」而不是「未知」
+    const currentName = currentFromApi || currentFromDom;
+    const currentDisabled = Boolean(
+      currentName && all.some((x) => !x.enabled && x.item.name === currentName),
+    );
+
+    return {
+      ok: true,
+      lifecycleName,
+      statuses,
+      hiddenCount,
+      currentDisabled,
+      currentFromApi,
+      currentFromDom,
+      resolvedObjectId,
+    };
   })();
 }
 
@@ -435,6 +472,10 @@ export interface LoadedStatuses {
   lifecycleName: string;
   statuses: { id: string; code: string; name: string }[];
   currentName: string;
+  /** 被过滤掉的停用/已删除状态数 */
+  hiddenCount: number;
+  /** 当前状态本身已被停用（被过滤掉） */
+  currentDisabled: boolean;
 }
 
 /** B3：读实例状态列表（含当前状态推断） */
@@ -449,6 +490,8 @@ export async function loadInstanceStatuses(tabId: number, ctx: InstanceContext):
     lifecycleName: r.lifecycleName,
     statuses: r.statuses,
     currentName: r.currentFromApi || r.currentFromDom,
+    hiddenCount: r.hiddenCount,
+    currentDisabled: r.currentDisabled,
   };
 }
 
