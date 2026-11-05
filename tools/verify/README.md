@@ -25,7 +25,7 @@ npm run verify    # 逐个跑本目录下所有脚本
 ★ **但有两个脚本不需要浏览器**，可以直接单独跑（**秒级**，适合放进日常动手前的自检）：
 
 ```powershell
-node tools/verify/verify-log-redaction.mjs          # 日志打码验收：144 条
+node tools/verify/verify-log-redaction.mjs          # 日志打码验收：145 条
 node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：28/28
 node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要重新构建）：6/6
 ```
@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **44 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **45 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -69,7 +69,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-boxmgmt.mjs` | 盒子管理（重命名 / 删除两步确认 / 冷启保持） | — | ✔ |
 | `verify-defbox.mjs` | 默认盒重命名 / 新账号归属 / 冷启 | — | ✔ |
 | ~~`verify-track.mjs`~~ | **已于 2026-10-16 下线**：它验的是 **v3.9 的环形扇区**（`120°` 固定弧 + 节点），而那个形态在 **v4.1 已被网格平铺取代** —— `ui/wheel/*.ts` 里 `arc` / `扇形` / `轨道` 的匹配数是 **0**，所以它**永远不可能通过**（第一条断言就 `TypeError`）。<br>★ 覆盖去哪了：渲染 → `verify-acct-grid.mjs`；盒子增删改 → `verify-boxmgmt.mjs`；默认盒 → `verify-defbox.mjs`。★ **诚实的缺口**：网格版的"切盒 / 页码点"目前**没有任何脚本覆盖**。 | — | ✘ |
-| **`verify-log-redaction.mjs`** | **日志打码通道（16 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **144/144** | ✘ |
+| **`verify-log-redaction.mjs`** | **日志打码通道（16 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **145/145** | ✘ |
 | **`verify-falsify-logredaction.mjs`** | **上一条的反证（28 条）**：拆 `drain` / 拆 `appLogs` / 热路径改回 `diag` / 重复 `OfflineError` / 拆 `dispatch` 的 `default` / 契约加 kind / `log.error` 降级为 `debug` / 裸传凭据 / `${deviceCode}` 插值 / 孤儿 HTML id / 注释掉 `installLogPersist()` / 拆回灌 / `restoreToRing` 喂回 sink / 拆 `setForwarder` / `ql.log` 不入环 / 转发前不打码 / `sendSafe` 又变静默 / **㉓–㉗ 第 13 节新补的 5 个站点** ⇒ 各自变红 | **28/28** | ✘ |
 | **`verify-falsify-loglevel.mjs`** | ★ **第 16 节（级别开关活在产物里）的反证**：级别退回**模块局部变量** / `log()` 不再经 `shouldLog()` 现读 / **删掉 `dist/`** ⇒ 各自变红。<br>★ 它是本仓**唯一"需要重新构建"**的反证（因为第 16 节读的是 `dist/`）⇒ 单独成篇，不拖慢日常那份。★ 它自己踩过一次坑：副本漏拷 `assets/` ⇒ build 失败 ⇒ `dist/` 没生成 ⇒ 所有注入**假通过**；现已**先断言"副本构建成功"**再注入 | **6/6** | ✘ |
 | **`verify-forensics-redaction.mjs`** | **取证 / 诊断通道的打码**（`forensics()` / `diag()` 写入 `chrome.storage.local`，而它们**会进诊断包被一键导出**）—— **真的把模块求值、真的调 `forensics()` 再读回落盘内容** | **25/25** | ✘ |
@@ -106,6 +106,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-defectfix.mjs`** | ★ **六个"修好后 `typecheck`/`build` 照样全绿"的缺陷的回归判据**（静态、秒级）：`reused` 单一来源 / 凭据只交给本账号站点的 frame / 叛逃清扫走**原生** IDB·CacheStorage / 界面文案不指向已废除的"数据源"控件 / 3 秒轮询不再无条件写盘 / UI 通信层不把 `undefined` 交给调用点。<br>★★ 之所以单独一个脚本：这六条**全都不是类型错误**（而是"两个事实不一致""走了补丁版 API""文案指向不存在的控件"）⇒ 没有能红的判据，下一次重构会把它们原样带回来。<br>★ 诚实边界：它只能验「**写法还在不在**」，**不能**证明"凭据真的只交给了本站点的 frame"——那要真机。 | **OK** | ✘ |
 | **`verify-frameisolation.mjs`** | ★ **凭据隔离的回归判据**（静态、秒级，v4.2.32 新增）：A bind 只投 `{ frameId: 0 }`（广播 = 跨域 iframe 也能拿到 token） / B 桥上行按 `sender.url` 判归属 / C `needsReload` 在绑定校验之后且过令牌桶 / D 导航归属用 `ownedBy` 而不是"权限" / E DNR 带 `initiatorDomains` + 公共后缀表 / F 云端授权 fail-closed + https 闸门 / G Cookie 袋在写入与回放两侧校验 / H 裸 JWT 打码 / I `BridgeSender` 与 bind `host` 的类型契约。<br>★★ 这批缺陷的共同点是**删掉任何一行都仍然 typecheck / build 全绿**（只在该被攻击时显形）⇒ 没有能红的判据，下一次重构就会原样带回来。 | **OK** | ✘ |
 | **`verify-falsify-defectfix.mjs`** | **上一条的反证（6 条）**：把仓库复制到 `tmp/`（只拷 `src` + `tools/verify`），逐个注入"修复前"的写法 —— `reused: false` / 拆掉来源域校验 / 改回 `indexedDB.databases()` / 注回"在数据源处" / 改回无条件写盘 / `send()` 改回裸 `resolve` ⇒ 每条都必须**变红且红在对的那一节**。<br>★ 它也**反过来验自己**：`poke()` 会**数锚点出现次数**，不是恰好 1 次就明确失败（否则 `String.replace` 会改到别处，而"没变红"会被误读成"判据恒真"）；且两侧行尾**先归一化**（本仓同目录下 CRLF 与 LF 混用）。<br>★ 真实工作区**从未被改动**（副本结束时删除）。 | **OK** | ✘ |
+| **`verify-falsify-frameisolation.mjs`** | **上一条的反证（8 条）**：同样复制到 `tmp/` 后逐条注入"修复前"的写法 —— 去掉 `{ frameId: 0 }` / hello 的来源校验改 `if (false)` / 导航护栏改 `if (false)` / 删 `initiatorDomains` / `hasHostAccess` 的 catch 改 `return true` / 回放侧删 `saneCookiePair` / 删裸 JWT 规则 / 删 `locationMatchesHost` 调用 ⇒ 每条都必须**变红且红在对的那一节**（A/B/D/E/F/G/H/I）。<br>★ 它自己踩过一次假绿：H 最初只改规则名"裸 JWT"，而该文件的注释里也有这四个字、且 `strip-comments.mjs` 会被正则字面量里的引号带偏 ⇒ 判据仍绿。改成**整行删掉规则**、判据改读**可执行形态 `re: /\\beyJ`** 后才真正变红。 | **OK** | ✘ |
 | **`verify-deadprotocol.mjs`** | ★ **死协议判据**（静态、秒级）：对**每个**消息 kind 与桥上行 op，要求它能报出**对端** —— ① 只出现在定义文件 ⇒ **类型孤儿**；② 只出现在定义 + 处理文件（`service-worker.ts` / `parallel-session.ts`）⇒ **零发送方**（handler 永不被走到）。<br>★★ 起因：清理时实测本仓曾有 **8 处**这类东西（`site.grants.list` / `site.grant.add` / `wheel.toggle` / `cloud.auth` / `CloudMergeReport` / `okOf()` / `registerAuthHandlers()` / `journalRollbackDone`），而 `typecheck` 与 `build` **全绿**、没有任何门禁会说话。<br>★ 白名单**只有一条**（`hold`：下行应答天然只有"定义 + 发送方"两个文件），每条都写明理由 —— 表每长一条，判据就弱一分（规则 26）。 | **OK** | ✘ |
 | **`verify-acct-grid.mjs`** | ★ **定尺网格（三个选择器共用）的回归判据**（真起 Chromium，约 15 秒）：① 源码不得再对列表做 `slice(0, N)`；`buildSectorWheel`/`buildRingWheel` 与径向原语（`polar`/`radialText`/`sectorPath`）**全部零命中** ② ★ **样式唯一源**：构建产物 `acct-grid.css` 与 `grid-style.ts` 的常量**逐字节一致**、`dist` 与源一致、三个浮层都引用**共用常量**且无第二份内联样式 ③ ★★ **`wheelIntent()` 纯函数 7 个边界用例**：空页 / 不足一屏 / 已滚到边界 ⇒ 都必须判 `'page'` ④ 运行期：18 项 → **18 格**、数字键角标恰好 10 个、文字**零旋转**；26 项 → **全部进 DOM 且可滚动**；行数恒 4、槽位恒 20、8 与 18 项**首格几何逐项相同**；★ **真机滚轮 `通桥 → 空盒子 → 内网`**。<br>★★ 起因有两条**真实事故**：v4.1 之前 `WHEEL_MAX = 10` 是硬上限、超出**直接丢弃**；以及 v4.1.1 用户实测**切到空盒子后滚轮失效、被困在空页里**（守卫误写成"这一页有没有内容"）。③ 就是后者的直接判据。 | **OK** | ✔ |
 | **`verify-falsify-permgates.mjs`** | **权限门控那一族改动的反证（11 条）**：把"每个新站点都弹一次 `permissions.request`" / "用 `confirm` 当门控" / "`permissions.contains` 的结果被当成永久事实"等**修复前的写法**逐条注回去，每条都必须变红。<br>★ 它验的是 v4.2.12 那条"**只对站点做增删改，不再把浏览器授权当成站点管理的一部分**"：判据不能只看"弹窗没了"，还要看"**该静默补齐的地方仍然会补**"（`ensureHostPermission` 在点击手势里跑）。<br>★ 与 `verify-falsify-defectfix.mjs` 同一套纪律：锚点必须唯一、行尾先归一化、真实工作区不动。 | **11/11** | ✘ |
@@ -129,8 +130,8 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 跑法 | 耗时 | 有没有重复 |
 |---|---|---|
-| `acceptance.py` + `run-all.mjs --browser` | 44 + 110 = **154 s** | ★ **有**：14 个静态脚本跑了两遍 |
-| ★ `acceptance.py` + `run-all.mjs --browser-only` | 44 + 62 = **106 s** | ✅ **没有** |
+| `acceptance.py` + `run-all.mjs --browser` | 45 + 110 = **155 s** | ★ **有**：14 个静态脚本跑了两遍 |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 62 = **107 s** | ✅ **没有** |
 
 ★ 这个"不重叠"不是约定，是**判据**：`acceptance.py` 的 §10 会检查它跑的那 14 个脚本
 **都不需要浏览器**（谓词与本文件 `BROWSER_SCRIPTS` 的自证是同一个）。
@@ -139,7 +140,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"44 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"45 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -149,7 +150,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 44
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 45
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

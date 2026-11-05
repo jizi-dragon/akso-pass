@@ -90,7 +90,8 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 npm run typecheck
 npm run build
 node tools/verify/verify-frameisolation.mjs     # A–I 九组，秒级
-node tools/verify/run-all.mjs --static          # 27 个静态用例
+node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（8 条必须变红）
+node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```
 

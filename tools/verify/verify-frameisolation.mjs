@@ -252,8 +252,13 @@ console.log('\n=== G. Cookie 袋在写入与回放两侧都校验 ===');
 // ---------------------------------------------------------------- H. 裸 JWT 打码
 console.log('\n=== H. 没有键名的令牌也会被打码 ===');
 {
-  if (/裸 JWT/.test(rd) && /eyJ/.test(rd)) {
-    ok('redact.ts 有"裸 JWT"形状规则');
+  // ★ 这里刻意用**原文**而不是剥注释后的文本：`redact.ts` 的规则表里含带引号的
+  //   正则字面量（如 `"[^"]*"`），而 `strip-comments.mjs` 不解析正则字面量，
+  //   会把后面的注释误当字符串内容留下 —— 用剥注释文本会匹配到注释里的说明文字，
+  //   判据就验不到"规则还在不在"。锚点取**可执行形态**：`re: /\beyJ…`。
+  const rdRaw = read('shared/redact.ts');
+  if (/re:\s*\/\\beyJ/.test(rdRaw)) {
+    ok('redact.ts 有"裸 JWT"形状规则（re: /\\beyJ…）');
   } else {
     fail('redact.ts 没有裸 JWT 规则 ⇒ cookie 值/裸数组里的令牌会原样落盘');
   }

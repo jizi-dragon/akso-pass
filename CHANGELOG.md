@@ -18,7 +18,11 @@
   `other`（`<a download>` 下载归型）；静态资源五类剔除。Cookie 规则保持全类型
   （受保护的图片/字体等子资源仍需要会话 Cookie）。
 - **验证**：`verify-frameisolation` E 组新增三条断言（收窄清单、`buildAuthRule` 使用
-  `AUTH_MATCH_TYPES`、Cookie 规则未被误收窄），全套静态 **27/27**。
+  `AUTH_MATCH_TYPES`、Cookie 规则未被误收窄），全套静态 **28/28**。
+- **反证**：新增 `tools/verify/verify-falsify-frameisolation.mjs`（8 条注入），
+  去掉 `{ frameId: 0 }` / hello 来源校验 / `ownedBy` 护栏 / `initiatorDomains` /
+  fail-closed catch / 回放侧 Cookie 校验 / 裸 JWT 规则 / `locationMatchesHost`
+  时，判据必须分别在 A/B/D/E/F/G/H/I 变红 —— 证明它们不是恒真。
 
 ## 4.2.32（2026-11-05）
 
