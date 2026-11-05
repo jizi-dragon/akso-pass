@@ -44,7 +44,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 - 能在同机器上读取扩展的 `chrome.storage.local`（本地磁盘读取，非管理员提权）。
 - **不在**范围内：Chrome 自身 0day、其他扩展越权、平台服务端鉴权缺陷、物理接触。
 
-## 四、控制矩阵（v4.2.32 起）
+## 四、控制矩阵（v4.2.35 起）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
@@ -52,6 +52,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 | 任意 frame 发 `hello` 换 token | 所有桥上行 op 按 `sender.url` 的 host+port 校验归属，fail-closed | B |
 | 页签漫游到外部站点仍保留凭据 | 导航归属用 `ownedBy`（精确 host/子域+端口），越界即解绑并取证 | D |
 | 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains`，且只覆盖 `main_frame`/`sub_frame`/`xmlhttprequest`/`websocket`/`other`（v4.2.33 剔除静态资源） | E |
+| https 账号被导航到同 host 的 http，Bearer 明文出网 | 按绑定 scheme 给 Authorization 规则加 `regexFilter: '^https://'`（http 账号不加，内网明文照旧） | J；`verify-dnrscheme`（浏览器） |
 | `foo.co.uk` 被当成 `co.uk` 的同站 | 公共后缀 / 托管域表 | E |
 | 页面伪造 `bagChanged` 注入 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数/长度上限 | G |
 | 页面反复 `needsReload` 制造刷新循环 | 绑定校验之后 + 60s/3 次令牌桶 | C |
@@ -73,6 +74,10 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 4. **Cookie 的 DNR 规则没有 `initiatorDomains`**。顶层导航（reload / 地址栏 / SSO 跳转）
    可能没有 initiator，加了会直接掉登录。Authorization 规则已加；Cookie 规则要拆成
    「子资源 + main_frame」两条并真机验证后才敢动。
+   ★ 另外 Cookie 规则**刻意不按 scheme 限定**：Cookie 有「回放」和「剥离」两种语义，
+   若只对 https 生效，http 请求既不会回放也不会剥离，真实 jar 的 Cookie 会自己发出去，
+   反而破坏「真实 jar 对绑定标签隐身」这条核心性质。http 降级时的 Cookie 暴露是这条
+   设计取舍的已知代价。
 5. **Authorization 规则仍含 `main_frame`**。平台导出接口靠顶层导航下载、缺头即 401，
    这是兼容性取舍；`initiatorDomains` 已把它限制在站点自己发起的导航。
 6. **同源 iframe 的迟到 bind**：壳若在绑定建立前已置 `unbound`，只投顶层的 bind 不会
@@ -89,9 +94,10 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 ```powershell
 npm run typecheck
 npm run build
-node tools/verify/verify-frameisolation.mjs     # A–I 九组，秒级
-node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（8 条必须变红）
+node tools/verify/verify-frameisolation.mjs     # A–J 十组，秒级
+node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（9 条必须变红）
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
+node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（5 项）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```

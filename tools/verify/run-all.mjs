@@ -76,6 +76,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-boxmgmt.mjs',
   'verify-defbox.mjs',
   'verify-defect.mjs',
+  'verify-dnrscheme.mjs',
   'verify-duplicate.mjs',
   'verify-dynsnap.mjs',
   'verify-fillrhythm.mjs',

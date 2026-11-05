@@ -32,6 +32,8 @@ interface RuleMeta {
   token: string | null;
   /** 当前 COOKIE 规则的回放值；null 表示 remove（剥离）模式 */
   cookieValue: string | null;
+  /** v4.2.35：这两条规则是按哪个 scheme 装的（自学习翻转时要整组重建） */
+  scheme?: 'http' | 'https';
 }
 
 const installed = new Map<number, RuleMeta>();
@@ -186,7 +188,13 @@ export function hostNoPortOf(host: string): string {
   return idx >= 0 ? host.slice(0, idx) : host;
 }
 
-function buildAuthRule(ruleId: number, host: string, tabId: number, token: string): chrome.declarativeNetRequest.Rule {
+function buildAuthRule(
+  ruleId: number,
+  host: string,
+  tabId: number,
+  token: string,
+  scheme?: 'http' | 'https',
+): chrome.declarativeNetRequest.Rule {
   return asRule({
     id: ruleId,
     priority: 1,
@@ -195,6 +203,15 @@ function buildAuthRule(ruleId: number, host: string, tabId: number, token: strin
       requestHeaders: [{ header: 'Authorization', operation: 'set', value: `Bearer ${token}` }],
     },
     condition: {
+      // ★★ v4.2.35：账号是 https 时，Bearer 只允许出现在 https 请求上。
+      //
+      //   这条规则此前只按 requestDomains + tabIds 匹配，**不看 scheme**：
+      //   账号站点一旦被导航到同 host 的 http（书签、外链、302 降级），DNR 照样
+      //   把 Bearer 塞进明文请求 —— 同网段/热点上的旁观者直接读到长期令牌。
+      //   而 http 账号本来就在明文上跑（内网），加这个反而不影响它。
+      //   regexFilter 与 requestDomains 是 AND 关系（域条件先筛，regex 只在候选上跑），
+      //   正则本身只锚 scheme，不重复写 host。
+      ...(scheme === 'https' ? { regexFilter: '^https://' } : {}),
       // 全资源类型（与 COOKIE 规则同宽，v3.13.2）：
       // - xmlhttprequest/websocket：API 与 WS 握手；
       // - sub_frame：iframe 内嵌文档（低代码平台「管理端」控制台常以 iframe 承载，
@@ -284,11 +301,26 @@ export const tabRules = {
    * - token 非 null 时装/换 AUTH 规则；null 时摘除。
    * 逐条安装：单条失败不连坐其余规则。
    */
-  async applyBinding(host: string, tabId: number, token: string | null, cookieHeader?: string | null): Promise<void> {
+  async applyBinding(
+    host: string,
+    tabId: number,
+    token: string | null,
+    cookieHeader?: string | null,
+    scheme?: 'http' | 'https',
+  ): Promise<void> {
     const wanted = cookieHeader ?? null;
     const meta: RuleMeta = installed.get(tabId) ?? { token: null, cookieValue: null };
 
     const removes: number[] = [];
+
+    // ★ v4.2.35：scheme 变了（账号自学习翻转）⇒ 旧 AUTH 规则整条作废重建。
+    //   正则只写在 AUTH 规则上；Cookie 规则不按 scheme 限定（剥离语义要覆盖 http），
+    //   所以这里只清 authId，不动 cookieId。
+    if (meta.scheme !== undefined && meta.scheme !== scheme && meta.authId !== undefined) {
+      removes.push(meta.authId);
+      meta.authId = undefined;
+      meta.token = null;
+    }
 
     // COOKIE 规则（首次安装，或回放值发生变化时重建）
     if (meta.cookieId === undefined || meta.cookieValue !== wanted) {
@@ -316,11 +348,12 @@ export const tabRules = {
         meta.authId = undefined;
       }
       const ruleId = nextAuthId++;
-      if (await addOne(buildAuthRule(ruleId, host, tabId, token))) {
+      if (await addOne(buildAuthRule(ruleId, host, tabId, token, scheme))) {
         meta.authId = ruleId;
         meta.token = token;
       }
     }
+    meta.scheme = scheme;
 
     if (removes.length) {
       try {
@@ -394,7 +427,12 @@ export const tabRules = {
    * SW 冷启动恢复：persisted 提供 tabId → { host, token|null }，
    * 与浏览器内现存 session 规则做差集同步（孤儿清理 + 缺失重建）。
    */
-  async restore(persisted: Map<number, { host: string; token: string | null; cookie?: string | null }>): Promise<void> {
+  async restore(persisted: Map<number, {
+    host: string;
+    token: string | null;
+    cookie?: string | null;
+    scheme?: 'http' | 'https';
+  }>): Promise<void> {
     let existing: chrome.declarativeNetRequest.Rule[] = [];
     try {
       existing = await chrome.declarativeNetRequest.getSessionRules();
@@ -448,7 +486,7 @@ export const tabRules = {
 
     installed.clear();
     for (const [tabId, info] of persisted) {
-      await this.applyBinding(info.host, tabId, info.token ?? null, info.cookie ?? null);
+      await this.applyBinding(info.host, tabId, info.token ?? null, info.cookie ?? null, info.scheme);
     }
     void diag(`tabRules.restore persisted=${persisted.size}`);
   },

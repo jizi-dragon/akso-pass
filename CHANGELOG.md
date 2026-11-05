@@ -5,6 +5,28 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.35（2026-11-05）
+
+### Authorization 按 scheme 限定：https 账号的 Bearer 不落明文
+
+- **风险（审计报告残留项）**：DNR 的 Authorization 规则只按 `requestDomains` + `tabIds`
+  匹配，**不看 scheme**。https 账号一旦被导航到同一 host 的 `http://`（书签、外链、
+  302 降级），扩展照样把长期 Bearer 塞进明文请求 —— 同网段/热点上的旁观者可以直接
+  读走令牌。v4.2.33 收窄资源类型只减少了暴露面，没有解决明文传输本身。
+- **修正**：`ParBinding` 记录账号 scheme（打开时取账号档案，收编页签取已落地的 URL），
+  `applyBinding` 把它传给 `buildAuthRule`；scheme 为 https 时给 Authorization 规则加
+  `regexFilter: '^https://'`（与 `requestDomains` 是 AND，域条件先筛、regex 只在候选
+  上跑）。账号 scheme 翻转（http ↔ https）时整条 Authorization 规则重建。
+  http 账号（内网平台）不追加正则，行为不变。
+- **刻意不做**：Cookie 规则不加 scheme 限定。Cookie 有「回放」和「剥离」两种语义，
+  若只对 https 生效，http 请求既不会回放也不会剥离，真实 jar 的 Cookie 会自己发出去，
+  反而破坏「真实 jar 对绑定标签隐身」。该降级风险记入 `docs/SECURITY.md` 残余风险。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；
+  `verify-frameisolation` 新增 J 组（25 条）；反证新增 J 案例（9/9 变红）；
+  新增浏览器级 `verify-dnrscheme` **5/5** —— 本地 `http://qllocal.test` 与
+  `https://qllocal.test` 各起记录请求头的服务，断言带 `regexFilter: '^https://'` 的
+  规则只给 https 加头、http 不加，且去掉正则后 http 又带上头（证明缺席来自正则）。
+
 ## 4.2.34（2026-11-05）
 
 ### 收口：`targetUrl` 只接受 http/https

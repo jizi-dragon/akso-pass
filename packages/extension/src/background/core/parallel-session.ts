@@ -34,6 +34,11 @@ const log = getLogger('parallel-session');
 interface ParBinding {
   accountId: string;
   host: string;
+  /**
+   * v4.2.35：账号站点最终使用的 scheme（打开时取账号档案；自学习翻转后会重开并更新）。
+   * 只用于给 AUTH DNR 规则加 https 限定 —— 缺省（旧快照）时规则保持 scheme 无关。
+   */
+  scheme?: 'http' | 'https';
   /** 亲子继承页签（v3.9.6 window.open/_blank）——进入登录页时自动转原始页签（v3.10.4） */
   adopted?: boolean;
 }
@@ -979,7 +984,11 @@ async function syncAccountRules(accountId: string, host: string): Promise<void> 
   const token = tokens.get(accountId)?.token ?? null;
   const cookieHeader = cookieHeaderOf(accountId);
   try {
-    await Promise.all(bound.map((tabId) => tabRules.applyBinding(host, tabId, token, cookieHeader)));
+    await Promise.all(
+      bound.map((tabId) =>
+        tabRules.applyBinding(host, tabId, token, cookieHeader, bindings.get(tabId)?.scheme),
+      ),
+    );
     void diag(
       `syncAccountRules(${accountId}) 完成：applyBinding ×${bound.length}（token=${token ? '有' : '无'} cookie=${cookieHeader ? `${cookieHeader.length}B` : '剥离'}）`,
     );
@@ -1102,7 +1111,11 @@ export const parallelSession = {
       withCredentials = true,
     ): Promise<'ready' | 'no-creds' | 'skipped'> => {
       void diag(`open(${accountId}) 预绑定 tab=${targetTabId} host=${account.siteHost}`);
-      bindings.set(targetTabId, { accountId: account.id, host: account.siteHost });
+      bindings.set(targetTabId, {
+        accountId: account.id,
+        host: account.siteHost,
+        scheme: account.scheme ?? 'https',
+      });
       await persistBindings();
       if (!withCredentials) {
         // ★ 打开收藏页/直达页：绑定与规则要装，待登录明文凭证**不下发**
@@ -1652,7 +1665,14 @@ export const parallelSession = {
       //   `parallelStore.get()` 在离线时是秒级网络超时，把它放在前面会让收编
       //   晚到几秒 —— 那时平台的 SPA 早就 401 跳登录页了（"偶尔丢登录"）。
       try {
-        bindings.set(tabId, { accountId: pending.accountId, host: pending.host, adopted: true });
+        // v4.2.35：收编页签没有账号档案在手，scheme 就从这个已落地的 URL 取
+        // （`ownedBy` 已确认 host 归属，scheme 决定 AUTH 规则要不要加 https 限定）。
+        bindings.set(tabId, {
+          accountId: pending.accountId,
+          host: pending.host,
+          scheme: url.startsWith('https:') ? 'https' : 'http',
+          adopted: true,
+        });
         await persistBindings();
         await syncAccountRules(pending.accountId, pending.host);
         await pushBind(tabId);
@@ -1765,13 +1785,19 @@ export const parallelSession = {
     void diag('parallelSession.restore 开始');
     await readState();
     enforcement.clear();
-    const persisted = new Map<number, { host: string; token: string | null; cookie: string | null }>();
+    const persisted = new Map<number, {
+      host: string;
+      token: string | null;
+      cookie: string | null;
+      scheme?: 'http' | 'https';
+    }>();
     for (const [tabId, b] of bindings) {
       if (await isEnforceable(b.host)) {
         persisted.set(tabId, {
           host: b.host,
           token: tokens.get(b.accountId)?.token ?? null,
           cookie: cookieHeaderOf(b.accountId),
+          scheme: b.scheme,
         });
       }
     }

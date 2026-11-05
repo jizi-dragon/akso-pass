@@ -26,6 +26,7 @@
  * | 回放侧删掉 `saneCookiePair` | G |
  * | 删掉"裸 JWT"打码规则 | H |
  * | 删掉 `locationMatchesHost` 调用 | I |
+ * | 删掉 `regexFilter: '^https://'` | J |
  *
  * ★ 每个 `poke()` 的锚点**必须唯一**：`String.replace` 只改第一处，"第一处不是想的
  *   那处"不会报错，症状是"判据没变红"，很容易被误读成"判据恒真"。
@@ -92,7 +93,7 @@ function runVerifier() {
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
-/* ── 八个反证 ── */
+/* ── 九个反证 ── */
 const CASES = [
   {
     name: 'A. 把 bind 改回"广播到所有 frame"',
@@ -188,6 +189,16 @@ const CASES = [
       'packages/extension/src/content/shield-main.ts',
       "    if (!locationMatchesHost(siteHost ?? '')) {",
       '    if (false) {',
+    ),
+  },
+  {
+    name: 'J. 去掉 AUTH 规则的 https 限定',
+    section: '=== J.',
+    file: 'packages/extension/src/background/core/tab-rules.ts',
+    apply: () => poke(
+      'packages/extension/src/background/core/tab-rules.ts',
+      "      ...(scheme === 'https' ? { regexFilter: '^https://' } : {}),\n",
+      '',
     ),
   },
 ];

@@ -286,5 +286,40 @@ console.log('\n=== I. 载荷/来源的类型契约 ===');
   }
 }
 
+// ---------------------------------------------------------------- J. 凭据只在本账号 scheme 上生效
+console.log('\n=== J. https 账号的 Bearer 不下明文 ===');
+{
+  const authBody = bodyOf(tr, 'function buildAuthRule(', '\n}');
+  if (!authBody) {
+    fail('找不到 buildAuthRule() —— 判据锚点失效');
+  } else if (/scheme\s*===\s*'https'/.test(authBody)
+    && /regexFilter:\s*'\^https:\/\//.test(authBody)) {
+    ok('https 账号的 Authorization 规则带 `regexFilter: "^https://"`（http 降级不带 Bearer）');
+  } else {
+    fail('Authorization 规则不区分 scheme ⇒ https 账号被导到 http://同 host 时 Bearer 明文出网');
+  }
+  const cookieBody = bodyOf(tr, 'function buildCookieRule(', '\n}');
+  if (!cookieBody) {
+    fail('找不到 buildCookieRule() —— 判据锚点失效');
+  } else if (/regexFilter/.test(cookieBody)) {
+    fail('Cookie 规则被加了 scheme 限定 ⇒ http 请求将保留真实 jar 的 Cookie（剥离语义被破坏）');
+  } else {
+    ok('Cookie 规则不按 scheme 限定（http 上也照旧剥离/回放）');
+  }
+  if (/scheme\?:\s*'http'\s*\|\s*'https'/.test(tr)
+    && /buildAuthRule\(ruleId, host, tabId, token, scheme\)/.test(tr)) {
+    ok('scheme 从绑定传到 buildAuthRule（不是死参数）');
+  } else {
+    fail('applyBinding/scheme 的传递链断了 —— scheme 规则装不上');
+  }
+  if (/interface ParBinding[\s\S]{0,400}scheme\?:\s*'http'\s*\|\s*'https'/.test(ps)
+    && /scheme:\s*account\.scheme\s*\?\?\s*'https'/.test(ps)
+    && /scheme:\s*b\.scheme/.test(ps)) {
+    ok('绑定表持久化 scheme，restore 时一并传给规则（SW 重启后仍生效）');
+  } else {
+    fail('绑定没有携带/恢复 scheme ⇒ SW 冷启动后 https 限定消失');
+  }
+}
+
 console.log(`\n${bad === 0 ? 'RESULT: OK' : `RESULT: ${bad} 处不符`}`);
 process.exit(bad === 0 ? 0 : 1);
