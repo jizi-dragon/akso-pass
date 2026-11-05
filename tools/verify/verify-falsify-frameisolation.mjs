@@ -28,6 +28,7 @@
  * | 删掉 `locationMatchesHost` 调用 | I |
  * | 删掉 `regexFilter: '^https://'` | J |
  * | 删掉 Cookie 子资源规则的 `initiatorDomains` | K |
+ * | 兜底资源类型漏掉 `ping` | K |
  *
  * ★ 每个 `poke()` 的锚点**必须唯一**：`String.replace` 只改第一处，"第一处不是想的
  *   那处"不会报错，症状是"判据没变红"，很容易被误读成"判据恒真"。
@@ -209,6 +210,16 @@ const CASES = [
     apply: () => poke(
       'packages/extension/src/background/core/tab-rules.ts',
       "      ...(kind === 'sub' ? { initiatorDomains: [hostNoPortOf(host)] } : {}),\n",
+      '',
+    ),
+  },
+  {
+    name: 'L. 兜底资源类型漏掉 ping',
+    section: '=== K.',
+    file: 'packages/extension/src/background/core/tab-rules.ts',
+    apply: () => poke(
+      'packages/extension/src/background/core/tab-rules.ts',
+      "  'ping',\n",
       '',
     ),
   },

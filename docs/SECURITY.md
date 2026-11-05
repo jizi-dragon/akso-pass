@@ -98,10 +98,10 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 npm run typecheck
 npm run build
 node tools/verify/verify-frameisolation.mjs     # A–K 十一组，秒级
-node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（10 条必须变红）
+node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（11 条必须变红）
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
 node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（5 项）
-node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（7 项）
+node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（9 项，含 ping）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```

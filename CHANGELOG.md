@@ -5,6 +5,22 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.37（2026-11-05）
+
+### Cookie 兜底补齐冷门资源类型：ping / object / csp_report 不再漏真实 jar
+
+- **风险**：DNR 规则一旦**显式**给出 `resourceTypes`，未列出的类型就**不在匹配范围**
+  （不是"兜底匹配"）。`ALL_MATCH_TYPES` 此前漏了 `object`/`ping`/`csp_report`，于是
+  remove 规则碰不到它们 —— 绑定页签里 `<a ping>` 发出的 ping、`<object>` 子资源、
+  CSP 报告仍会带上**真实 jar** 的 Cookie。「真实 jar 对绑定页签隐身」在冷门类型上是
+  破的，且这条路径可由第三方 iframe 触发（`<a ping>` 的目标可以是账号站点）。
+- **修正**：`ALL_MATCH_TYPES` 补上 `object`/`ping`/`csp_report`（AUTH 的显式收窄列表
+  不变，Bearer 仍不附到这些类型上）；strip 规则因此覆盖全部 13 个 resourceType。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；
+  `verify-frameisolation` K 组新增「兜底覆盖 object/ping/csp_report」；反证新增 L 案例
+  （删 `ping` ⇒ K 变红，11/11）；`verify-cookiereplay` 增加 `evilping` 探针 **9/9** ——
+  基线里跨域 iframe 的 ping 带 `real=1`，装规则后零 Cookie（说明 ping 真的被兜底覆盖）。
+
 ## 4.2.36（2026-11-05）
 
 ### Cookie 回放按发起方分层：跨域 iframe 借不到账号 Cookie

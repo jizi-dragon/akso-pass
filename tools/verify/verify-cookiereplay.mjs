@@ -69,7 +69,7 @@ const extId = extensionIdFromKey(mf.key);
 const SID = 'SID=ACC';
 const ALL_TYPES = [
   'main_frame', 'sub_frame', 'xmlhttprequest', 'websocket', 'script',
-  'stylesheet', 'image', 'font', 'media', 'other',
+  'stylesheet', 'image', 'font', 'media', 'object', 'ping', 'csp_report', 'other',
 ];
 const SUB_TYPES = ALL_TYPES.filter((t) => t !== 'main_frame' && t !== 'other');
 const hits = [];
@@ -95,7 +95,14 @@ const server = http.createServer((req, res) => {
 fetch('http://localhost:${server.address().port}/api?probe=frame&phase=${phase}', { credentials: 'include' })
   .catch(() => {});
 </script>
-<p>third-party frame</p>`);
+<p>third-party frame</p>
+<!-- v4.2.37：ping 是 DNR 里一个**独立**的 resourceType。显式列 resourceTypes 时
+     漏掉它就完全不匹配 ⇒ 这是检验"兜底是否真的覆盖冷门类型"的最便宜探针。 -->
+<a id="p" href="http://localhost:${server.address().port}/api?probe=framenav&phase=${phase}"
+   ping="http://localhost:${server.address().port}/api?probe=evilping&phase=${phase}">go</a>
+<script>
+setTimeout(() => { document.getElementById('p').click(); }, 800);
+</script>`);
     return;
   }
   // /top
@@ -177,7 +184,7 @@ try {
 
   const site = await ctx.newPage();
   await site.goto(TOP_URL + 'baseline', { waitUntil: 'load' });
-  await site.waitForTimeout(900);
+  await site.waitForTimeout(1600);
 
   const tabId = await ext.evaluate(async (url) => {
     const tabs = await chrome.tabs.query({});
@@ -193,10 +200,14 @@ try {
   check('A0 基线：顶层子资源带真实 jar 的 real=1', baseTop.some((c) => /(?:^|;\s*)real=1(?:;|$)/.test(c)), JSON.stringify(baseTop));
   check('A1 基线：跨域 iframe 的请求也带 real=1（这就是回放前的泄漏面）', baseFrame.some((c) => /(?:^|;\s*)real=1(?:;|$)/.test(c)), JSON.stringify(baseFrame));
 
+  const basePing = hits.filter((h) => h.probe === 'evilping' && h.phase === 'baseline').map((h) => h.cookie);
+  check('A2 基线：跨域 iframe 触发的 ping 也带 real=1（ping 是独立 resourceType）',
+    basePing.some((c) => /(?:^|;\s*)real=1(?:;|$)/.test(c)), JSON.stringify(basePing));
+
   // B/C/D. 装三层规则
   await setRules(ext, [ruleFor(9301, 'strip', tabId), ruleFor(9302, 'nav', tabId), ruleFor(9303, 'sub', tabId)]);
   await site.goto(TOP_URL + 'rules', { waitUntil: 'load' });
-  await site.waitForTimeout(900);
+  await site.waitForTimeout(1600);
 
   const rulesTop = cookiesOf('top', 'rules');
   const rulesFrame = cookiesOf('frame', 'rules');
@@ -205,6 +216,10 @@ try {
     JSON.stringify(rulesTop));
   check('C 跨域 iframe 向账号站点发的请求没有任何 Cookie',
     rulesFrame.length > 0 && rulesFrame.every((c) => c === ''), JSON.stringify(rulesFrame));
+
+  const rulesPing = hits.filter((h) => h.probe === 'evilping' && h.phase === 'rules').map((h) => h.cookie);
+  check('C2 跨域 iframe 的 ping 同样被剥离（v4.2.37：兜底覆盖 object/ping/csp_report）',
+    rulesPing.length > 0 && rulesPing.every((c) => c === ''), JSON.stringify(rulesPing));
 
   await site.goto(`http://localhost:${PORT}/nav?probe=nav&phase=rules`, { waitUntil: 'load' });
   await site.waitForTimeout(500);
@@ -215,7 +230,7 @@ try {
   // E. 反证：去掉子资源规则的 initiatorDomains，同一个 iframe 立刻能借到 Cookie
   await setRules(ext, [ruleFor(9301, 'strip', tabId), ruleFor(9302, 'nav', tabId), ruleFor(9304, 'sub-noreinit', tabId)]);
   await site.goto(TOP_URL + 'control', { waitUntil: 'load' });
-  await site.waitForTimeout(900);
+  await site.waitForTimeout(1600);
   const ctrlFrame = cookiesOf('frame', 'control');
   check('E 反证：子资源规则去掉 initiatorDomains 后，跨域 iframe 立刻拿到 SID=ACC（说明 C 不是没匹配上）',
     ctrlFrame.some((c) => /(?:^|;\s*)SID=ACC(?:;|$)/.test(c)), JSON.stringify(ctrlFrame));

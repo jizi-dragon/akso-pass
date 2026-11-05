@@ -79,6 +79,13 @@ const ALL_MATCH_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
   'image',
   'font',
   'media',
+  // ★ v4.2.37：这三个也必须列进来。DNR 一旦**显式**给出 resourceTypes，未列出的
+  //   类型就**不在匹配范围**（不是"兜底匹配"）。此前漏了 object/ping/csp_report，
+  //   remove 规则碰不到它们 ⇒ 绑定页签里 `<a ping>` 发出的 ping、`<object>` 子资源、
+  //   CSP 报告仍会带上**真实 jar** 的 Cookie —— 「真实 jar 隐身」在冷门类型上是破的。
+  'object',
+  'ping',
+  'csp_report',
   'other',
 ] as chrome.declarativeNetRequest.ResourceType[];
 

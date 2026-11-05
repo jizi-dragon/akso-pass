@@ -345,6 +345,13 @@ console.log('\n=== K. 跨域 iframe 借不到回放 Cookie ===');
   } else {
     fail('导航/子资源类型划分缺失或漏类型');
   }
+  const allTypes = bodyOf(tr, 'const ALL_MATCH_TYPES', 'as chrome.declarativeNetRequest.ResourceType[]');
+  const missing = ['object', 'ping', 'csp_report'].filter((t) => !allTypes.includes(`'${t}'`));
+  if (allTypes && missing.length === 0) {
+    ok('COOKIE 兜底覆盖 object/ping/csp_report（显式 resourceTypes 不列 = 不匹配）');
+  } else {
+    fail(`ALL_MATCH_TYPES 漏了 ${missing.join('/') || '（锚点失效）'} ⇒ 这些类型的请求不会被剥离，真实 jar 的 Cookie 会漏出去`);
+  }
   if (/kind === 'sub' \? \{ initiatorDomains: \[hostNoPortOf\(host\)\] \} : \{\}/.test(cookieBody)) {
     ok('只有子资源条带 initiatorDomains（strip/nav 不能带，否则无发起方的导航掉登录）');
   } else {
