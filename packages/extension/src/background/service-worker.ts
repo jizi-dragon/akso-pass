@@ -952,8 +952,17 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     (req as { type?: string }).type === CONTENT_MESSAGE.bridgeUp
   ) {
     const payload = (req as { payload?: BridgeUpPayload }).payload;
+    // ★★ v4.2.32：把 **sender 的 frame 元数据**一并传下去。
+    //   以前只传 `sender.tab?.id`，于是 `handleBridge` 无法区分"顶层页面"
+    //   与"页内任意跨域 iframe" —— 后者发 hello 即可换走 token/整袋 Cookie。
+    //   `sender.url` 由 Chrome 填写、内容脚本伪造不了，是这里唯一可信的来源证据。
     void parallelSession
-      .handleBridge(payload as BridgeUpPayload, sender.tab?.id)
+      .handleBridge(payload as BridgeUpPayload, {
+        tabId: sender.tab?.id,
+        frameId: sender.frameId,
+        url: sender.url,
+        origin: sender.origin,
+      })
       .then(sendResponse);
     return true;
   }

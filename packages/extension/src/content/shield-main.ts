@@ -316,19 +316,50 @@
   /* ---- fetch / XHR 出站 Authorization 头嗅探 + 页面层缓存分区 ---- */
 
   /**
-   * 缓存分区：同源 GET 请求查询串追加 `_qlck=t<tabId>`。
+   * 缓存分区：站内 GET 请求查询串追加 `_qlck=t<tabId>`。
    * 浏览器 HTTP 缓存按 URL 且全 profile 共享，第一个登录账号的权限/菜单响应会被
    * 后续账号直接命中（不出网，前三平面全部失明）。同标签键稳定、跨标签必然不同。
-   * 仅 GET（可缓存）、仅同源（站内接口）、已含 _qlck 则幂等跳过。
+   * 仅 GET（可缓存）、仅站内（同 host 或同一注册域下的兄弟子域）、已含 _qlck 则幂等跳过。
+   *
+   * ★ v4.2.32：判据从 `u.host === location.host` 放宽到**注册域族**。
+   *   旧判据漏掉了 `api.example.com` 这类网关子域（页面在 `app.example.com`）：
+   *   同一 URL 的响应会被不同账号的标签页共享，A 的权限/菜单出现在 B 里。
+   *   第三方/CDN（不同注册域）仍然不动。
    */
+  const PUBLIC_SUFFIX_2 = new Set([
+    'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn',
+    'com.au', 'net.au', 'org.au', 'com.br', 'com.kr', 'co.kr', 'com.tw', 'com.hk', 'com.sg',
+    'com.my', 'co.in', 'com.mx', 'com.tr', 'com.vn', 'co.id', 'com.ar', 'com.co', 'com.pe',
+    'com.sa', 'com.eg', 'co.il', 'com.ua', 'com.pl', 'com.ru', 'co.jp', 'ne.jp', 'or.jp',
+  ]);
+
+  /** 页面 host 的注册域（尽力而为：表内二级后缀取末三段，否则取末两段）。 */
+  function siteFamilyOf(hostname: string): string {
+    const parts = hostname.split('.');
+    if (parts.length < 3) {
+      return hostname;
+    }
+    const last2 = parts.slice(-2).join('.').toLowerCase();
+    if (PUBLIC_SUFFIX_2.has(last2)) {
+      return parts.slice(-3).join('.');
+    }
+    return last2;
+  }
+
+  function isSiteFamily(hostname: string): boolean {
+    const h = hostname.toLowerCase();
+    const family = siteFamilyOf(location.hostname.toLowerCase());
+    return h === family || h.endsWith(`.${family}`);
+  }
+
   function cachePartitionUrl(rawUrl: string): string {
     if (!CACHE_PARTITION_ENABLED || tabIdForCache === null) {
       return rawUrl;
     }
     try {
       const u = new URL(rawUrl, location.href);
-      if (u.host !== location.host) {
-        return rawUrl; // 仅站内接口；第三方/静态 CDN 不动
+      if (!isSiteFamily(u.hostname)) {
+        return rawUrl; // 第三方/静态 CDN 不动
       }
       if (u.searchParams.has('_qlck')) {
         return rawUrl;
@@ -833,12 +864,56 @@
     }
   }
 
+  /** 归属判定的裸主机名（去端口、去 IPv6 方括号、小写）。 */
+  function bareHostOf(host: string): string {
+    const h = host.trim().toLowerCase();
+    if (h.startsWith('[')) {
+      const end = h.indexOf(']');
+      return end >= 0 ? h.slice(1, end) : h;
+    }
+    const idx = h.indexOf(':');
+    return idx >= 0 ? h.slice(0, idx) : h;
+  }
+
+  /** host 的显式端口；无端口返回 null。 */
+  function portOfHost(host: string): string | null {
+    const idx = host.lastIndexOf(':');
+    if (idx < 0) {
+      return null;
+    }
+    const tail = host.slice(idx + 1);
+    return /^\d+$/.test(tail) ? tail : null;
+  }
+
+  /** 当前 frame 是否就是绑定站点（同 host、同端口）。跨域 iframe 必须为 false。 */
+  function locationMatchesHost(host: string): boolean {
+    if (!host || bareHostOf(location.hostname) !== bareHostOf(host)) {
+      return false;
+    }
+    const wantPort = portOfHost(host);
+    if (wantPort === null) {
+      return true;
+    }
+    const actual = location.port || (location.protocol === 'https:' ? '443' : '80');
+    return actual === wantPort;
+  }
+
   function handleBind(
     accountId: string,
     seed?: Record<string, string>,
     tabId?: number,
     bagView?: Record<string, string>,
+    siteHost?: string,
   ): void {
+    // ★★ v4.2.32：帧内再校验一次归属（纵深防御）。
+    //   后台侧已经只把 bind 投给顶层 frame（`frameId: 0`）并按 `sender.url`
+    //   校验过来源；但这里不能依赖"后台一定不会广播"——万一将来又有代码
+    //   把 bind 广播出去，跨域 iframe 的壳必须**拒收**，而不是把
+    //   `seed.__auth_token__` 与整袋 Cookie 写进第三方 origin 的 localStorage。
+    //   同源 iframe 的 host/port 与站点一致 ⇒ 正常通过（保留既有能力）。
+    if (!locationMatchesHost(siteHost ?? '')) {
+      return;
+    }
     if (typeof tabId === 'number') {
       tabIdForCache = tabId;
     }
@@ -896,7 +971,7 @@
     }
     const data = event.data as {
       src?: string;
-      payload?: { op?: string; accountId?: string; tabId?: number; seed?: Record<string, string>; bag?: Record<string, string> };
+      payload?: { op?: string; accountId?: string; tabId?: number; host?: string; seed?: Record<string, string>; bag?: Record<string, string> };
     } | null;
     if (!data || data.src !== SRC_BRIDGE_TO_PAGE) {
       return;
@@ -908,6 +983,7 @@
         payload.seed,
         typeof payload.tabId === 'number' ? payload.tabId : undefined,
         payload.bag,
+        payload.host,
       );
     } else if (payload && payload.op === 'unbound') {
       settled = true; // 显式未绑定：保持直通，不再等待

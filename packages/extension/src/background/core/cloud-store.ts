@@ -178,23 +178,50 @@ function errorDetail(data: unknown, raw: string): string {
 
 /* ==================== HTTP 底座 ==================== */
 
-function originPattern(baseUrl: string): string {
+function originPattern(baseUrl: string): string | null {
   try {
     return `${new URL(baseUrl).origin}/*`;
   } catch {
-    return '*://*/*';
+    return null;
   }
+}
+
+/**
+ * 云端地址的安全下限：**必须 https**（唯一例外是本机回环，供本地调试）。
+ *
+ * ★ 为什么在 fetch 前拦：云端请求带 `Authorization: Bearer <cloud token>`，
+ *   token 一旦走明文 HTTP，同网段任何人都能抓包复用（可读整个账号库）。
+ *   `normalizeBaseUrl` 只做归一化，不判断协议 —— 安全判断放这里，一处收口。
+ */
+function insecureBaseReason(base: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    return `云端地址不可解析：${base}（请检查设置里的服务地址）`;
+  }
+  if (u.protocol === 'https:') return null;
+  if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')) {
+    return null;
+  }
+  return `云端地址必须使用 https（当前 ${u.protocol}//${u.host}）：登录令牌不能经明文 HTTP 传输`;
 }
 
 /**
  * 跨域访问授权检查。服务端**没有任何 CORS 头**（实测 OPTIONS → 405），
  * 所以没有 host 授权时 fetch 必然失败 —— 与其报"网络请求失败"，不如报真正的原因。
+ *
+ * ★ v4.2.32：`permissions.contains` 抛错时改为 **fail-closed**（返回 false）。
+ *   旧实现返回 true 的假设是"让 fetch 自己给出结论"，但这一层是**授权门**：
+ *   权限 API 异常说明当前无法证明已授权，放行等于把门打开再让下一层兜底。
  */
 async function hasHostAccess(baseUrl: string): Promise<boolean> {
+  const pattern = originPattern(baseUrl);
+  if (!pattern) return false;
   try {
-    return await chrome.permissions.contains({ origins: [originPattern(baseUrl)] });
+    return await chrome.permissions.contains({ origins: [pattern] });
   } catch {
-    return true; // permissions API 不可用时不拦（让 fetch 自己给出结论）
+    return false;
   }
 }
 
@@ -204,11 +231,19 @@ async function requestJson<T>(
   path: string,
   init: { method?: string; token?: string; body?: unknown } = {},
 ): Promise<T> {
+  // ★ v4.2.32：所有云端请求（含匿名设备流）在出网前统一过 https 门。
+  //   这里是唯一出口，别把这项检查挪到某个调用方 —— 漏一处就等于漏全部。
+  const base = normalizeBaseUrl(baseUrl);
+  const insecure = insecureBaseReason(base);
+  if (insecure) {
+    log.error('拒绝非 https 云端请求 %s %s', init.method ?? 'GET', path);
+    throw new Error(insecure);
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${normalizeBaseUrl(baseUrl)}${path}`, {
+    res = await fetch(`${base}${path}`, {
       method: init.method ?? 'GET',
       headers: {
         ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),

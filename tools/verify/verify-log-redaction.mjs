@@ -73,6 +73,9 @@ const SECRETS = [
   ['裸长十六进制', 'hash 8f14e45fceea167a5a36dedd4bea2543 end',
     '8f14e45fceea167a5a36dedd4bea2543'],
   ['平台的 encKey', 'encKey: 3c9909afec25354d551dae21590bb26e', '3c9909afec25354d551dae21590bb26e'],
+  // ★ v4.2.32：令牌不一定带键名 —— 页面会把它塞进 cookie 值或裸数组里。
+  ['裸 JWT（无键名）', 'captured eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjEsInUiOiJhbGljZSJ9.sig_part-1 end',
+    'eyJhbGciOiJIUzI1NiJ9'],
 ];
 for (const [label, sample, secret] of SECRETS) {
   const out = redact(sample);

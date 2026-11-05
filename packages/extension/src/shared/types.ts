@@ -216,13 +216,44 @@ export type BridgeUpPayload =
    *  前缀已被剥掉 ⇒ `startsWith(ns)` 恒 false ⇒ 一个库都删不掉）。 */
   | { op: 'nsWipeSharedDone'; dbsDropped: number; cachesDropped: number; error?: string };
 
+/** ★ v4.2.32：桥上行消息的**来源 frame 元数据**，由 service worker 从
+ *  `chrome.runtime.onMessage` 的 `sender` 中注入；内容脚本无法伪造。
+ *
+ *  以前 `handleBridge(payload, tabId)` 只带 tabId ⇒ 同页签里任意 frame 都能
+ *  发 `hello` 换到该账号的 Bearer token 与 Cookie 袋，`bagChanged` 也能改写
+ *  快照里的任意 Cookie。现在后台用 `url` 判「这个 frame 是否属于绑定站点」，
+ *  不匹配一律忽略（fail-closed）。
+ */
+export interface BridgeSender {
+  tabId?: number;
+  frameId?: number;
+  url?: string;
+  origin?: string;
+}
+
 /** background → ISOLATED 桥的下行载荷 */
 export type BridgeDownPayload =
   /** 绑定账号并附带初始快照种子（token 等，用于壳激活瞬间同步灌入命名空间）；
    *  tabId 供壳做页面层缓存分区（_qlck=t<tabId>，DNR urlTransform Chrome 不支持）；
    *  bag = 账号 Cookie 快照的权威视图（非身份键）——绑定时袋整体同步到该视图
    *  （v3.12.1：修复登出/过期后重开时命名空间陈旧袋复活并毒化登录 POST） */
-  | { op: 'bind'; accountId: string; tabId?: number; seed?: Record<string, string>; bag?: Record<string, string> }
+  | {
+      op: 'bind';
+      accountId: string;
+      tabId?: number;
+      /**
+       * ★ v4.2.32 安全加固：绑定站点的 host（账号 `siteHost`，可带端口）。
+       *
+       * 为什么必须随载荷下发：`handleBind` 在**帧内**还要再校验一次
+       * `location.host` 是否等于它。后台侧已经只把 bind 发给顶层 frame
+       * （`frameId: 0`）并按 `sender.url` 校验来源，这一层是**纵深防御**：
+       * 万一将来又有人把 bind 改回广播，跨域 iframe 的壳会直接拒收，
+       * 而不是把 Bearer token 写进第三方 origin 的 localStorage。
+       */
+      host?: string;
+      seed?: Record<string, string>;
+      bag?: Record<string, string>;
+    }
   | { op: 'unbound' }
   /** v3.13 收编加固：亲子继承候选页签（URL 未确认授权前）收到 hello 的应答——
    *  壳保持等待（不置 settled/unbound），待 URL 确认授权后正式收编并灌种子 */

@@ -79,15 +79,82 @@ function asRule(raw: unknown): chrome.declarativeNetRequest.Rule {
   return raw as unknown as chrome.declarativeNetRequest.Rule;
 }
 
+/**
+ * 常见「二级后缀」（public suffix 的第二层）——只列高频项，不是完整 PSL。
+ *
+ * ★ v4.2.32 安全修复的背景：旧实现无条件 `parts.slice(-2)`，于是
+ *   `foo.co.uk → co.uk`、`x.github.io → github.io`，DNR 的 requestDomains
+ *   会把该账号的 Bearer 附加到**整个公共后缀/托管域**下的请求上 ——
+ *   绑定页里一个指向 `evil.co.uk` 的 `<img>` 就能把 token 送到攻击者服务器。
+ *   有了这张表，`foo.co.uk` 不再被"上提"到 `co.uk`；4 段以上才上提到
+ *   `example.co.uk`（注册域），仍是站点自己的域族。
+ *   ★ 残留：表外的多级后缀（如 `com.py`）仍会被当成父域；完整修复需引入 PSL
+ *   数据（体积/维护成本高），这里按"高频 + 托管域"覆盖，其余在威胁模型里注明。
+ */
+const MULTI_LABEL_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'ac.uk', 'gov.uk', 'nhs.uk', 'police.uk', 'sch.uk',
+  'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn',
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'id.au',
+  'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp', 'ed.jp',
+  'co.kr', 'or.kr', 'ne.kr', 'go.kr', 'ac.kr',
+  'com.br', 'net.br', 'org.br', 'gov.br', 'edu.br',
+  'com.mx', 'org.mx', 'gob.mx', 'edu.mx',
+  'co.in', 'net.in', 'org.in', 'gov.in', 'ac.in',
+  'co.nz', 'net.nz', 'org.nz', 'govt.nz', 'ac.nz',
+  'co.za', 'org.za', 'gov.za', 'ac.za',
+  'com.sg', 'net.sg', 'org.sg', 'gov.sg', 'edu.sg',
+  'com.hk', 'net.hk', 'org.hk', 'gov.hk', 'edu.hk',
+  'com.tw', 'net.tw', 'org.tw', 'gov.tw', 'edu.tw',
+  'com.tr', 'net.tr', 'org.tr', 'gov.tr', 'edu.tr',
+  'com.my', 'net.my', 'org.my', 'gov.my', 'edu.my',
+  'co.id', 'or.id', 'go.id', 'ac.id', 'web.id',
+  'com.vn', 'net.vn', 'org.vn', 'gov.vn', 'edu.vn',
+  'com.ar', 'net.ar', 'org.ar', 'gov.ar', 'edu.ar',
+  'com.co', 'net.co', 'org.co', 'gov.co', 'edu.co',
+  'com.pe', 'org.pe', 'gob.pe', 'edu.pe',
+  'com.sa', 'net.sa', 'org.sa', 'gov.sa', 'edu.sa',
+  'com.eg', 'net.eg', 'org.eg', 'gov.eg', 'edu.eg',
+  'co.il', 'org.il', 'gov.il', 'ac.il',
+  'com.ua', 'net.ua', 'org.ua', 'gov.ua', 'edu.ua',
+  'com.pl', 'net.pl', 'org.pl', 'gov.pl', 'edu.pl',
+  'com.ru', 'net.ru', 'org.ru', 'msk.ru', 'spb.ru',
+]);
+
+/**
+ * 托管/云平台后缀：整段是别人的"公共租户域"，绝不能作为父域扩展。
+ * `x.github.io` 的 `github.io` 属于 GitHub，不属于该租户。
+ */
+const HOSTING_SUFFIXES = [
+  'github.io', 'gitlab.io', 'gitee.io', 'herokuapp.com', 'appspot.com', 'cloudfront.net',
+  'azurewebsites.net', 'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app',
+  'firebaseapp.com', 's3.amazonaws.com', 'r2.dev', 'deno.dev', 'fly.dev', 'onrender.com',
+  'glitch.me', 'repl.co', 'surge.sh', 'now.sh',
+];
+
 /** 父域（aksoegmp.com）：DNR requestDomains 语义为「该域及其全部子域」，覆盖网关/接口子域。
  *  IP 字面量（全数字段，内网站点）没有父域概念，返回原 host（在 requestDomains 里重复无害），
- *  避免把 10.100.0.105 拼出 '0.105' 这类无意义域。 */
+ *  避免把 10.100.0.105 拼出 '0.105' 这类无意义域。
+ *
+ *  ★ v4.2.32：感知公共后缀。`foo.co.uk` 返回自身而不是 `co.uk`；
+ *    托管域（`x.github.io`）同样返回自身。见 `MULTI_LABEL_SUFFIXES` 的注释。 */
 export function parentDomainOf(host: string): string {
   const parts = host.split('.');
   if (parts.length > 2 && parts.every((p) => /^\d+$/.test(p))) {
     return host;
   }
-  return parts.length > 2 ? parts.slice(-2).join('.') : host;
+  const lower = host.toLowerCase();
+  if (HOSTING_SUFFIXES.some((s) => lower === s || lower.endsWith(`.${s}`))) {
+    return host;
+  }
+  if (parts.length <= 2) {
+    return host;
+  }
+  const last2 = parts.slice(-2).join('.').toLowerCase();
+  if (MULTI_LABEL_SUFFIXES.has(last2)) {
+    // `foo.co.uk`（3 段）本身就是注册域；`x.foo.co.uk`（4 段）的父域是 `foo.co.uk`
+    return parts.length > 3 ? parts.slice(-3).join('.') : host;
+  }
+  return parts.slice(-2).join('.');
 }
 
 /** DNR requestDomains 不含端口；siteHost 带 ":port" 时剥离（v3.10.6 加固） */
@@ -115,6 +182,19 @@ function buildAuthRule(ruleId: number, host: string, tabId: number, token: strin
       // 安全边界不变：tabIds + requestDomains 双重锁死，跨域 SSO 跳转不会被附加头。
       resourceTypes: ALL_MATCH_TYPES,
       requestDomains: [hostNoPortOf(host), parentDomainOf(hostNoPortOf(host))],
+      // ★★ v4.2.32：把 Bearer 限定为**本账号站点自己发起的请求**。
+      //
+      //   此前只有 tabIds + requestDomains：绑定页签里的**跨域第三方 iframe**
+      //   （广告/统计/嵌入页）只要 fetch 到站点域，DNR 就会替它加上该账号的
+      //   Bearer —— 等于把账号 API 权限借给第三方页面（它读不到响应，但能发
+      //   状态变更请求，且请求在服务端看是"账号本人"）。
+      //   `initiatorDomains` 比的是**发起请求的 frame 的 origin**：站点自己的
+      //   页面/同源 iframe = 站点 host ⇒ 放行；跨域 iframe = 第三方 host ⇒ 不匹配。
+      //   ★ 只写 host（不写父域）：父域未必在 host_permissions 里，写进去可能
+      //     让整条规则安装失败（PITFALLS #1：一条装不上会连坐整个网络平面）。
+      //   ★ main_frame/other 仍保留：顶层下载导航的 initiator 就是站点页面，
+      //     照样匹配；而用户手输 URL（无 initiator）本来也不需要 Bearer。
+      initiatorDomains: [hostNoPortOf(host)],
       tabIds: [tabId],
     },
   });

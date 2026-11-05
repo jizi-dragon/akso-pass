@@ -96,6 +96,11 @@ const RULES: Array<{ name: string; re: RegExp; to: string }> = [
   //      取舍理由 —— 打掉一个 id 只是"这条日志稍难读"，
   //      漏掉一个令牌是"真实口令泄露"。代价不对称，所以选宽的那边。
   { name: '长十六进制串', re: /\b[0-9a-fA-F]{32,}\b/g, to: REDACTED },
+  // ⑦ 裸 JWT（没有 `token=` / `Bearer ` 前缀）。v4.2.32 补：令牌除了走
+  //    Authorization 头，还会被页面塞进 cookie 值、`__auth_token__` 数组、
+  //    或第三方面板的 JSON 字段里 —— 那些位置没有键名可依，只能认形状。
+  //    头部固定以 `eyJ` 开头（`{"alg":...}` 的 base64url），三段用点分隔。
+  { name: '裸 JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, to: REDACTED },
 ];
 
 /**

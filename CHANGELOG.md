@@ -5,6 +5,40 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.32（2026-11-05）
+
+### 安全加固：信任边界从「页签」收到「frame」，凭据不再外溢
+
+- **风险（审计发现）**：`bind` 下行用 `chrome.tabs.sendMessage(tabId, …)` 未指定 frameId ⇒
+  广播到页签内**所有 frame**（含跨域第三方 iframe）。`handleBridge` 只认 tabId，任意 frame
+  发一句 `hello` 就能换到该账号的 Bearer token 与整袋 Cookie，而 MAIN 壳会把种子写进
+  **该 frame 自己 origin 的 localStorage**。同一缺口还让 `bagChanged` 可注入任意 Cookie、
+  `needsReload` 可制造刷新循环。
+- **根因**：来源证据（`sender.url` / `sender.frameId`）在 service worker 里被丢弃；导航护栏用
+  `isEnforceable(host)`（只回答"浏览器给没给权限"）判断归属，而 `ensureHostPermission()` 的
+  正常路径是申请全通配授权 ⇒ 护栏对任意域恒真，页签漫游到外部站点仍会 `pushBind`。
+- **修正**：
+  - bind 只投顶层 frame（`{ frameId: 0 }`）；`hello` 与所有桥上行 op 都按 `sender.url` 的
+    host/port 校验归属，不匹配 fail-closed；`bridgeDown` 载荷带上 `host`，MAIN 壳用
+    `location.host` 再校验一次（纵深防御）；`needsReload` 加 60s / 3 次令牌桶。
+  - 导航归属改为 `ownedBy(url, binding.host)`（精确 host 或子域 + 端口一致），收编候选用
+    同一判据；越界立即解绑并记 `bind-escape` 取证。
+  - DNR Authorization 规则加 `initiatorDomains`（只给站点自己发起的请求附加 Bearer）；
+    `parentDomainOf` 感知公共后缀与托管域，`foo.co.uk` / `x.github.io` 不再被上提到
+    `co.uk` / `github.io`。
+  - 云端：`hasHostAccess` 在权限 API 异常时改 fail-closed；所有云端请求在唯一出口拒绝
+    非 https（仅放行本机回环），避免 Bearer 走明文。
+  - Cookie 袋在写入与回放两侧校验名/值形状（token 字符集、禁 CR/LF/`;`、值 ≤ 4096、
+    最多 200 条）。
+  - 页面层缓存分区从"同 host"放宽到"同注册域"（`app.example.com` 调 `api.example.com`
+    也分区），堵住兄弟子域跨账号命中。
+  - 日志打码新增"裸 JWT"形状规则：没有 `token=` / `Bearer ` 前缀的令牌（cookie 值、
+    裸数组、第三方面板字段）也能被打掉。
+  - `xlsx` 0.18.5 → 0.20.3（CVE-2023-30533 原型污染、CVE-2024-22363 ReDoS）。
+- **验证**：`npm run typecheck` / `npm run build` 绿；静态门禁 **26/26**；`verify-load`
+  **20/20**；`verify-v310`、`verify-defect`、`verify-jarhygiene` 需要云端会话（本机未登录，
+  脚本 SKIP 或取不到账号），留待有会话时补跑。
+
 ## 4.2.31（2026-11-03）
 
 ### 自动填表：值填进了 DOM、平台的表单状态却没收到 ⇒ 偶发「请输入密码」

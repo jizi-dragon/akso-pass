@@ -1,6 +1,6 @@
 import { CONTENT_MESSAGE, LOCAL_KEYS, SESSION_KEYS } from '../../shared/constants';
 import type { Scheme } from './site-auth';
-import type { BridgeDownPayload, BridgeUpPayload, ParallelAccount } from '../../shared/types';
+import type { BridgeDownPayload, BridgeSender, BridgeUpPayload, ParallelAccount } from '../../shared/types';
 import { setTabTitle } from '../tabs/tab-title';
 import { parallelStore, resolveAccountPlaintext } from './parallel-store';
 import { tabRules, parentDomainOf, hostNoPortOf } from './tab-rules';
@@ -903,14 +903,47 @@ async function reportFailureStatus(details: {
   }
 }
 
+/**
+ * Cookie **名/值** 的形状校验（v4.2.32）。
+ *
+ * ★ 为什么必须有：`bagChanged` 来自页面（MAIN 壳），而壳只能证明"这条消息来自
+ *   本页签"，证明不了"这个 cookie 是浏览器真的收到的"。旧实现把袋里的任意
+ *   name/value 直接并入快照，随后 `cookieHeaderOf()` 用 `'; '` 拼接注入
+ *   `Cookie:` 头 —— 页内脚本（或 XSS）可以塞 `a=b; HttpOnlySession=...`
+ *   这类值，污染下一个请求的 Cookie 结构。
+ *   `chrome.cookies.getAll` 得到的快照本身可信，但**回流路径**不可信，
+ *   所以校验放在两者汇合后的写入侧 + 回放侧各做一次（纵深）。
+ */
+// ★ 字符类里**不要写字面量的单引号/反引号**：`tools/verify/_lib/strip-comments.mjs`
+//   不解析正则字面量，遇到它们会误判成"进入字符串"并吞掉后续代码（本仓已知取舍）。
+//   用 `\x27` / `\x60` 表达，语义相同而源码里不出现这两个字符。
+const COOKIE_NAME_RE = /^[!#$%&\x27*+\-.^_\x60|~0-9A-Za-z]+$/;
+const MAX_COOKIE_VALUE = 4096;
+const MAX_COOKIE_PAIRS = 200;
+
+function saneCookiePair(name: string, value: string): boolean {
+  if (!name || name.length > 128 || !COOKIE_NAME_RE.test(name)) return false;
+  if (value.length > MAX_COOKIE_VALUE) return false;
+  // 控制字符（含 CR/LF）与 `;` 都会破坏 Cookie 头结构 ⇒ 一律拒绝
+  return !/[\x00-\x1f\x7f;]/.test(value);
+}
+
 /** 处理 MAIN 壳上报的 Cookie 袋全量（页内 document.cookie 写入的虚拟视图） */
 async function mergeBagIntoSnapshot(accountId: string, host: string, bag: Record<string, string>): Promise<void> {
   const updates: { name: string; value: string }[] = [];
+  let rejected = 0;
   for (const [name, value] of Object.entries(bag)) {
     if (name === COOKIE_BAG_KEY || IDENTITY_COOKIE_BLACKLIST.has(name) || !value) {
       continue;
     }
+    if (!saneCookiePair(name, value) || updates.length >= MAX_COOKIE_PAIRS) {
+      rejected++;
+      continue;
+    }
     updates.push({ name, value });
+  }
+  if (rejected) {
+    void diag(`bagChanged 丢弃 ${rejected} 个非法/超限 cookie 项（tab host=${host}）`);
   }
   if (!updates.length) {
     return;
@@ -926,7 +959,9 @@ function cookieHeaderOf(accountId: string): string | null {
   }
   // 回放侧再过滤一次：3.7.2 之前保存的存量快照可能已含身份类 Cookie（jar 残留），
   // 无需用户重新登录即生效
-  const filtered = cs.filter((c) => !IDENTITY_COOKIE_BLACKLIST.has(c.name));
+  const filtered = cs
+    .filter((c) => !IDENTITY_COOKIE_BLACKLIST.has(c.name) && saneCookiePair(c.name, c.value))
+    .slice(0, MAX_COOKIE_PAIRS);
   if (!filtered.length) {
     return null;
   }
@@ -1278,13 +1313,30 @@ export const parallelSession = {
     await persistTokens();
   },
 
-  /** ISOLATED 桥上行消息入口 */
-  async handleBridge(payload: BridgeUpPayload, tabId: number | undefined): Promise<BridgeDownPayload | undefined> {
+  /** 桥上行消息入口。`sender` 由 service worker 从 `chrome.runtime.onMessage` 注入，
+ *  内容脚本无法伪造 —— 用来判「这个 frame 是否属于绑定站点」（v4.2.32 安全加固）。 */
+  async handleBridge(payload: BridgeUpPayload, sender: BridgeSender): Promise<BridgeDownPayload | undefined> {
+    const tabId = sender.tabId;
     if (payload.op === 'hello') {
       if (tabId !== undefined) {
         const binding = bindings.get(tabId);
         if (binding) {
-          return buildBindPayload(binding.accountId, tabId);
+          // ★★ v4.2.32：此前这里只认 tabId —— 同页签里的**跨域 iframe**
+          //   （广告/统计/嵌入页）发一句 hello 就能换到该账号的 Bearer token
+          //   与 Cookie 袋；bridge 还会把载荷 postMessage 给该 frame 的页面 JS。
+          //   ⇒ 现在按 sender.url 的 host/port 判归属，不匹配**一律不答 bind**
+          //   （fail-closed；答 unbound 让那层壳保持直通，不再反复重试）。
+          if (!senderMatchesBinding(sender, binding)) {
+            log.debug(
+              'handleBridge(hello) 拒绝：tab=%d frame=%d url=%s 不属于绑定站点 %s',
+              tabId,
+              sender.frameId ?? -1,
+              sender.url ?? '(none)',
+              binding.host,
+            );
+            return { op: 'unbound' };
+          }
+          return buildBindPayload(binding.accountId, tabId, binding.host);
         }
         // ★★ 2026-10-28：**迟到竞争的兜底**。候选登记靠 `tabs.onCreated`，
         //   而壳的 hello 在 document_start 就发 —— 两者谁先到 SW 是掷骰子。
@@ -1307,16 +1359,39 @@ export const parallelSession = {
     if (tabId === undefined) {
       return undefined;
     }
-    // ★ v4.2.28：壳请求"刷新页面重来"（直通模式收到迟到 bind）。
-    //   刻意放在 `bindings.get(tabId)` **之前**：这一刻页签已经绑定（否则不会有 bind），
-    //   但刷新与否只取决于"有没有导航在途"，跟绑定表无关。不上行回包。
-    if (payload.op === 'needsReload') {
-      const reason = String((payload as unknown as { reason?: string }).reason ?? '');
-      await reloadForRecover(tabId, reason);
-      return undefined;
-    }
     const binding = bindings.get(tabId);
     if (!binding) {
+      return undefined;
+    }
+    // ★★ v4.2.32：**所有**后续 op（storageWrite / authHeader / bagChanged /
+    //   patchReport / 回执……）都必须来自绑定站点自己的 frame。
+    //   以前这里只认 tabId：绑定页签里的第三方 iframe 能发 `bagChanged`
+    //   把任意 Cookie（含 HttpOnly 名）写进账号快照，或发 `authHeader`
+    //   把 token 换成攻击者的值（绕过 `__auth_user__` 的身份护栏）。
+    //   ⇒ 与 hello 同一条判据，不匹配静默忽略（fail-closed）。
+    if (!senderMatchesBinding(sender, binding)) {
+      log.debug(
+        'handleBridge(%s) 拒绝：tab=%d frame=%d url=%s 不属于绑定站点 %s',
+        payload.op,
+        tabId,
+        sender.frameId ?? -1,
+        sender.url ?? '(none)',
+        binding.host,
+      );
+      return undefined;
+    }
+    // ★ v4.2.28：壳请求"刷新页面重来"（直通模式收到迟到 bind）。
+    //   v4.2.32 起放到 binding + 来源校验之后：刷新是**绑定站点自己的页面**
+    //   才能请求的动作，否则任意第三方 iframe 都能让页签反复 reload（刷新循环 DoS）。
+    //   再加令牌桶限流：正常迟到 bind 一辈子只刷一次，连刷三次以上必然异常。
+    //   不上行回包。
+    if (payload.op === 'needsReload') {
+      const reason = String((payload as unknown as { reason?: string }).reason ?? '');
+      if (!allowReloadForRecover(tabId)) {
+        void diag(`needsReload 被限流(tab=${tabId})：60s 内已有多次刷新请求`);
+        return undefined;
+      }
+      await reloadForRecover(tabId, reason);
       return undefined;
     }
     // ★ 平面补丁的安装结果（2026-10-12 加）：`patch()` 跳过时原本**完全静默**，
@@ -1530,9 +1605,10 @@ export const parallelSession = {
         void pushDown(tabId, { op: 'unbound' });
         return;
       }
-      const pendingHost = hostNoPortOf(pending.host);
-      const parent = parentDomainOf(pendingHost);
-      const sameSite = urlHost === pendingHost || urlHost.endsWith(`.${parent}`);
+      // ★★ v4.2.32：与绑定页签同一套归属判据（精确 host 或子域 + 端口）。
+      //   旧实现用 parentDomainOf 取末两段 ⇒ `evil.co.uk` 会被当成
+      //   `foo.co.uk` 的同站而收编，随后 pushBind 把 token 灌进外部域。
+      const sameSite = ownedBy(url, pending.host);
       if (!sameSite) {
         void diag(`adopt-candidate tab=${tabId} 目标 ${urlHost} 非授权域：丢弃候选（根本原则）`);
         void forensics('adopt-dropped', { tabId, accountId: pending.accountId, host: urlHost, reason: 'external-domain' });
@@ -1600,9 +1676,26 @@ export const parallelSession = {
       return;
     }
     if (/^https?:\/\//i.test(url)) {
-      const host = new URL(url).hostname;
-      if (host !== binding.host && !(await isEnforceable(host))) {
-        void diag(`onNavigation 非授权域 ${host}：解除 tab=${tabId} 绑定`);
+      if (!ownedBy(url, binding.host)) {
+        // ★★ v4.2.32：归属判定与**权限**解耦。
+        //   旧判据 `host !== binding.host && !isEnforceable(host)` 里，
+        //   `isEnforceable` 只回答"浏览器给没给权限"；通配授权（协议与主机
+        //   都是星号，`ensureHostPermission` 的正常路径）下它对任意域都是 true ⇒
+        //   页签漫游到 evil.com 也不解绑，随后 pushBind 把 token 灌过去。
+        //   新判据只看归属：精确 host / 子域 / 端口一致，否则一律解绑。
+        let host = url;
+        try {
+          host = new URL(url).hostname;
+        } catch {
+          // 保留原 URL 供取证
+        }
+        void diag(`onNavigation 越界 ${host}（绑定 ${binding.host}）：解除 tab=${tabId} 绑定`);
+        void forensics('bind-escape', {
+          tabId,
+          accountId: binding.accountId,
+          host,
+          bound: binding.host,
+        });
         await this.unbindTab(tabId);
         return;
       }
@@ -1676,6 +1769,7 @@ export const parallelSession = {
     adoptProbe.delete(tabId); // v4.2.27：待判页签关闭，别让 150ms 后的定时器白跑
     pageOpenTargets.delete(tabId);
     loginGrace.delete(tabId);
+    reloadRequests.delete(tabId); // v4.2.32：needsReload 令牌桶随页签销毁
     if (bindings.has(tabId)) {
       await this.unbindTab(tabId);
     }
@@ -1693,7 +1787,7 @@ async function tabStillAlive(tabId: number): Promise<boolean> {
 
 /** 构造带种子快照的绑定载荷（hello 应答与主动推送共用）。
  *  authUser 恒输出：有值写值、无值输出 ''（种子空值 = 壳显式清除命名空间残留键） */
-function buildBindPayload(accountId: string, tabId?: number): BridgeDownPayload {
+function buildBindPayload(accountId: string, tabId: number | undefined, host: string): BridgeDownPayload {
   const snap = tokens.get(accountId);
   const seed: Record<string, string> = {};
   if (snap?.token) {
@@ -1718,7 +1812,116 @@ function buildBindPayload(accountId: string, tabId?: number): BridgeDownPayload 
       bag[c.name] = c.value;
     }
   }
-  return { op: 'bind', accountId, tabId, seed, bag };
+  return { op: 'bind', accountId, tabId, host, seed, bag };
+}
+
+/**
+ * `url` 是否仍属于**该账号站点自己的域**（v4.2.32）。
+ *
+ * 旧护栏比较的是 `hostname !== binding.host` 再问 `isEnforceable(host)` ——
+ * 后者只回答"浏览器给没给权限"，**不是归属**。一旦用户被引导授予
+ * 通配式的全域授权（协议与主机都是星号，`ensureHostPermission` 的正常路径），
+ * `isEnforceable` 对任意域都为 true ⇒ 页签漫游到 `evil.com` 也不解绑，随后 `pushBind`
+ * 把 Bearer token 灌进外部站点。
+ * 新判据与权限解耦：精确 host 或它的子域才算自己的域；端口也必须一致
+ * （`foo:8080` 与 `foo:443` 是不同 origin）。
+ */
+function ownedBy(url: string, siteHost: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return false;
+  }
+  const bare = bareHostOf(siteHost);
+  const host = bareHostOf(u.hostname);
+  if (host !== bare && !host.endsWith(`.${bare}`)) {
+    return false;
+  }
+  const wantPort = portOfHost(siteHost);
+  if (wantPort === null) {
+    return true;
+  }
+  const actual = u.port || (u.protocol === 'https:' ? '443' : '80');
+  return actual === wantPort;
+}
+
+/** host 的裸主机名（去端口、去 IPv6 方括号、小写），只用于**归属判定**。 */
+function bareHostOf(host: string): string {
+  const h = host.trim().toLowerCase();
+  if (h.startsWith('[')) {
+    const end = h.indexOf(']');
+    return end >= 0 ? h.slice(1, end) : h;
+  }
+  const idx = h.indexOf(':');
+  return idx >= 0 ? h.slice(0, idx) : h;
+}
+
+/** host 的显式端口（`foo:8080` / `[::1]:8080`）；无端口返回 null。 */
+function portOfHost(host: string): string | null {
+  const idx = host.lastIndexOf(':');
+  if (idx < 0) {
+    return null;
+  }
+  const tail = host.slice(idx + 1);
+  return /^\d+$/.test(tail) ? tail : null;
+}
+
+/**
+ * 桥消息是否来自**绑定站点自己的 frame**（v4.2.32）。
+ *
+ * `sender.url` 由 Chrome 在 `chrome.runtime.onMessage` 里填写，内容脚本伪造不了 ——
+ * 这是「bind/hello 广播到所有 frame」修复的服务端判据：顶层 frame 与同源 iframe
+ * 通过，跨域 iframe 拒绝。取不到 URL 时**拒绝**（fail-closed）。
+ */
+function senderMatchesBinding(sender: BridgeSender, binding: ParBinding): boolean {
+  const raw = sender.url ?? '';
+  if (!raw) {
+    return false;
+  }
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return false;
+  }
+  if (bareHostOf(u.hostname) !== bareHostOf(binding.host)) {
+    return false;
+  }
+  const wantPort = portOfHost(binding.host);
+  if (wantPort === null) {
+    return true;
+  }
+  const actual = u.port || (u.protocol === 'https:' ? '443' : '80');
+  return actual === wantPort;
+}
+
+/* ---------------- needsReload 限流（v4.2.32） ----------------
+ * 直通壳收到迟到 bind 时会请求刷新；正常链路一次就够。没有上限时，
+ * 任意能发上行消息的页面都能把页签刷成循环（DoS / 拖垮登录流程）。
+ * 60s 窗口最多 3 次，且两次间隔 ≥4s。 */
+const RELOAD_WINDOW_MS = 60_000;
+const RELOAD_MAX_PER_WINDOW = 3;
+const RELOAD_MIN_GAP_MS = 4_000;
+const reloadRequests = new Map<number, number[]>();
+
+function allowReloadForRecover(tabId: number): boolean {
+  const now = Date.now();
+  const hits = (reloadRequests.get(tabId) ?? []).filter((t) => now - t < RELOAD_WINDOW_MS);
+  const last = hits.length ? hits[hits.length - 1]! : 0;
+  if (hits.length >= RELOAD_MAX_PER_WINDOW || (last !== 0 && now - last < RELOAD_MIN_GAP_MS)) {
+    reloadRequests.set(tabId, hits);
+    return false;
+  }
+  hits.push(now);
+  reloadRequests.set(tabId, hits);
+  return true;
 }
 
 /* ---------------- 新页签亲缘判定（v4.2.27） ----------------
@@ -2003,12 +2206,26 @@ async function pushBind(tabId: number): Promise<void> {
     return;
   }
   // 携带账号快照作种子：壳激活瞬间即有正确 token/身份，杜绝跨账号读取窗口
-  await pushDown(tabId, buildBindPayload(binding.accountId, tabId));
+  await pushDown(tabId, buildBindPayload(binding.accountId, tabId, binding.host));
 }
 
 async function pushDown(tabId: number, payload: BridgeDownPayload): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: CONTENT_MESSAGE.bridgeDown, payload });
+    // ★★ v4.2.32：**只投给顶层 frame**（`frameId: 0`）。
+    //
+    //   此前不传 options ⇒ Chrome 把消息广播给该页签的**所有 frame**；而
+    //   `manifest` 是 `all_frames: true`，于是每个跨域 iframe 的 ISOLATED 桥
+    //   都会收到 bind，桥又把它 `postMessage` 给该 frame 的 MAIN/页面 JS ——
+    //   `seed.__auth_token__` 与整袋 Cookie 等于直接交给第三方页面。
+    //   （即使 MAIN 壳自己校验 host 也来不及：页面 JS 能直接监听 postMessage。）
+    //
+    //   同源 iframe 的激活改由各 frame 自己的 `hello` 完成：后台用
+    //   `sender.url` 校验归属后才回 bind（见 `senderMatchesBinding`）。
+    await chrome.tabs.sendMessage(
+      tabId,
+      { type: CONTENT_MESSAGE.bridgeDown, payload },
+      { frameId: 0 },
+    );
   } catch {
     // 内容脚本未就绪或页面已关闭：onNavigation/loading 事件会再次推送
   }
