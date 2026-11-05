@@ -426,7 +426,8 @@ console.log('\n=== 9. SW 入口：消息分流不许静默落空 ===');
 
   // dispatch 的函数体：结构（有 default / 有 log.error）用剥过的版本，
   // 但 `@ts-expect-error` 要从**原始**里取对应区间。
-  const dispatchBody = /async function dispatch\(req: RuntimeRequest\)[\s\S]*?\n\}/.exec(swCode);
+  // ★ v4.2.45：签名多了 `sender` 参数，锚点不能再写死 `)`；用 `[^)]*` 容错。
+  const dispatchBody = /async function dispatch\(req: RuntimeRequest[^)]*\)[\s\S]*?\n\}/.exec(swCode);
   check('判据前提：取到了 `dispatch` 的函数体', dispatchBody !== null);
   const d = dispatchBody ? dispatchBody[0] : '';
 

@@ -5,6 +5,35 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.45（2026-11-05）
+
+### 新增「调试跳转」：从业务菜单页直达对象 / 生命周期 / 工作流
+
+- **需求**：调菜单时经常要跳到对应对象的配置页、生命周期页或工作流页，
+  此前只能手动拼管理端地址。要求「结合 API 文档」实现，入口定为 `Alt+2`。
+- **实现**：
+  - 新增 `background/core/debug-links.ts`：在业务页 **MAIN world** 注入解析函数，
+    从 `bid`（或 `mid` → `GetUserMenuPermission` 反查）拿 objectId，
+    用 `GetFormInstance` 取对象与 `lifeCycleId`，返回对象名/code 与生命周期名；
+    带 4 s 超时与明确的「未登录 / 无上下文 / 登录失效」错误。
+  - 新增 `shared/deeplinks.ts`：对象配置 `/admin/config/basic-objects/edit/base`、
+    生命周期 `/admin/config/lifecycle/<id>`、工作流列表 `/admin/config/workflow`；
+    路径来自平台 SPA bundle 的链接构造器，id 一律 `encodeURIComponent`。
+  - 新增页内浮层 `content/debug-overlay.ts`（Shadow DOM，`Esc` 关闭、可复制
+    objectId/lifecycleId）；三个按钮由 background 打开，origin 取**页签自己的地址**，
+    内网纯 http 站点同样可用。
+  - **Alt+2 不走 `chrome.commands`**：Chrome 只允许 4 个命令带默认键，第 5 个会让
+    整个扩展静默装载失败（实测 `ERR_BLOCKED_BY_CLIENT`）。改为
+    `content/debug-hotkey.ts` 页面侧监听后转发；`quick-debug` 命令仍保留，
+    可在 `chrome://extensions/shortcuts` 手绑。
+  - `debug.resolve` 只解析**内容脚本**所在页签（`sender.url` 为 http/https），
+    扩展页才允许显式指定 `tabId`；`debug.open` 只允许同 origin + http(s)。
+- **验证**：新增 `verify-deeplinks.mjs`（9/9，三路径形状、端口与内网 origin、
+  id 编码）；新增 `verify-debugjump.mjs`（14/14，只有 mid 时反查、带 bid 不重复请求、
+  三地址精确、Alt+2 开浮层与 Esc 关闭、无上下文/未登录各自报错）。
+  静态门禁 **31/31**；全部 **54** 个脚本（静态 31 + 浏览器 23）。
+- **文档**：`docs/USER-MANUAL.md` 新增 §8.5 与快捷键表两处 `Alt+2`。
+
 ## 4.2.44（2026-11-05）
 
 ### 常用页面改为可视化行编辑；保存不再静默丢条目

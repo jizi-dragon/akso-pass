@@ -1,6 +1,6 @@
 import type { RuntimeRequest, RuntimeResponse, Result, StatusContext, StatusList } from '../shared/messages';
 import type { BridgeUpPayload } from '../shared/types';
-import { CONTENT_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../shared/constants';
+import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../shared/constants';
 // ★ 日志的**唯一公开面**（AGENTS.md 规则 3）：取 logger 与读缓冲都从这里。
 //   直接 `console.*` 会绕过强制打码；直接读 ring 会绕过 `drain()` 的游标还原。
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
@@ -146,6 +146,7 @@ import {
 import { clearSnapshot } from './core/account-cache';
 import { cancelDeviceFlow, pollDeviceFlow, startDeviceFlow } from './core/cloud-device';
 import { listFavorites, resetFavorites, resolveFavoriteUrl, saveFavorites } from './core/favorites';
+import { resolveDebugLinks } from './core/debug-links';
 import {
   changeInstanceStatus,
   isInstanceContext,
@@ -184,7 +185,7 @@ async function tryRun<T>(fn: () => Promise<T>): Promise<Result<T>> {
   }
 }
 
-async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
+async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSender): Promise<RuntimeResponse> {
   // ★ 入口 trace。**`debug` 级**（默认 `info` ⇒ 生产静默、零存储开销），
   //   因为它是**每条消息都走**的热路径 —— 照 AGENTS.md 规则 22：
   //   "判断这条日志会不会挤掉别的：看它所在的控制流多久走一次"。
@@ -640,6 +641,46 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       return { kind: 'favorites.reset', result: r };
     }
 
+    /* ---------------- 调试跳转（v4.2.45：Alt+2） ---------------- */
+    case 'debug.resolve': {
+      const r = await tryRun(async () => {
+        // ★ 普通页面只能解析**自己所在的页签**；扩展页才允许显式指定 tabId。
+        //   注意：扩展页开在标签里时 Chrome 也会填 sender.tab —— 不能只看它，
+        //   必须用 sender.url 区分「内容脚本（http/https）」与「扩展页」。
+        const explicit = typeof req.tabId === 'number' ? req.tabId : undefined;
+        const fromContent = /^https?:/i.test(sender.url ?? '') ? sender.tab?.id : undefined;
+        const tabId = fromContent
+          ?? (sender.url?.startsWith('chrome-extension://') ? explicit : undefined);
+        if (!tabId) {
+          throw new Error('无法确定目标页签');
+        }
+        const parsed = await resolveDebugLinks(tabId);
+        if (!parsed.ok) {
+          throw new Error(parsed.error);
+        }
+        return parsed.data;
+      });
+      return { kind: 'debug.resolve', result: r };
+    }
+    case 'debug.open': {
+      const r = await tryRun(async () => {
+        const base = sender.tab?.url;
+        if (!base) {
+          throw new Error('只能从平台页面打开');
+        }
+        const target = new URL(req.url);
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+          throw new Error('只允许 http(s) 地址');
+        }
+        if (target.origin !== new URL(base).origin) {
+          throw new Error('只允许打开同源地址');
+        }
+        await chrome.tabs.create({ url: target.href, active: true });
+        return null;
+      });
+      return { kind: 'debug.open', result: r };
+    }
+
     /* ---------------- 数据源：本地 ↔ 云端（v3.14） ---------------- */
     case 'cloud.state': {
       const r = await tryRun(async () => {
@@ -975,6 +1016,20 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     return true;
   }
 
+  // 0.5 调试跳转热键（v4.2.45）：Alt+2 由 `content/debug-hotkey.js` 在页面侧监听。
+  //     Chrome 只允许 4 个命令带默认键，第 5 个会让整个扩展装不上，所以走这一手；
+  //     只接收**内容脚本**发来的消息（sender.tab 存在），扩展页无法借此开浮层。
+  if (
+    req &&
+    typeof req === 'object' &&
+    (req as { type?: string }).type === DEBUG_HOTKEY_MESSAGE
+  ) {
+    if (sender.tab?.id) {
+      void toggleDebugOverlay();
+    }
+    return false;
+  }
+
   // 1. auto-login 内容脚本就绪后主动索取自动登录凭证
   if (
     req &&
@@ -1096,7 +1151,7 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
 
   // 2. （已移除）旧版本地引擎 NM 桥 —— v2.4 起纯浏览器模式，不再转发引擎指令
   // 3. 普通扩展内部请求
-  void dispatch(req as RuntimeRequest).then(sendResponse);
+  void dispatch(req as RuntimeRequest, sender).then(sendResponse);
   return true;
 });
 
@@ -1516,6 +1571,11 @@ chrome.commands.onCommand.addListener((command) => {
     void flashBadge('★');
     void toggleFavoritesOverlay();
   }
+  if (command === 'quick-debug') {
+    // v4.2.45：Alt+2 调试跳转（对象配置 / 对象生命周期 / 工作流）
+    void flashBadge('⇲');
+    void toggleDebugOverlay();
+  }
   if (command === TRANSLATE_COMMAND) {
     // v4.2.0：Ctrl+X —— 翻译当前输入框内容并只写剪贴板（不回填）
     void runTranslateHotkey();
@@ -1581,6 +1641,34 @@ async function toggleFavoritesOverlay(): Promise<void> {
     });
   } catch {
     // 注入失败：角标给信号，不静默（同状态轮盘）
+    void flashBadge('⊘');
+  }
+}
+
+/**
+ * 调试跳转（v4.2.45，Alt+2）——按需注入浮层，不常驻任何页面。
+ *
+ * 与状态/书签浮层同一套「注入 = 开关」语义：已在打开时再注入即关闭。
+ */
+let lastDebugToggleAt = 0;
+async function toggleDebugOverlay(): Promise<void> {
+  const now = Date.now();
+  if (now - lastDebugToggleAt < 300) {
+    return;
+  }
+  lastDebugToggleAt = now;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+      void flashBadge('—');
+      return;
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content/debug-overlay.js'],
+      world: 'ISOLATED',
+    });
+  } catch {
     void flashBadge('⊘');
   }
 }

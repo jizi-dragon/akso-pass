@@ -247,7 +247,18 @@ export type RuntimeRequest =
    *
    * 返回 `url: ''` = 没解析到（调用方用书签原地址兜底）。
    */
-  | { kind: 'favorites.resolve'; path: string };
+  | { kind: 'favorites.resolve'; path: string }
+  /* ---- 调试跳转（v4.2.45：Alt+2）---- */
+  /**
+   * 解析当前业务页 → 对象 / 生命周期 / 工作流三个管理端地址。
+   *
+   * ★ 浮层调用时**不传 tabId**：background 只认 sender.tab.id。
+   *   `tabId` 只允许扩展页（没有 sender.tab）在验证脚本里指定目标页签；
+   *   普通网页发来的 tabId 一律忽略，避免把「解析哪个页签」交给页面决定。
+   */
+  | { kind: 'debug.resolve'; tabId?: number }
+  /** 在**新页签**打开调试目标；只接受与来源页同源的 http(s) 地址 */
+  | { kind: 'debug.open'; url: string };
 
 /**
  * 备份文件结构（v1）。
@@ -353,7 +364,9 @@ export type RuntimeResponse =
   | { kind: 'favorites.save'; result: Result<FavoritesSaveResult> }
   | { kind: 'favorites.reset'; result: Result<FavoriteItem[]> }
   | { kind: 'favorites.open'; result: Result<{ url: string }> }
-  | { kind: 'favorites.resolve'; result: Result<{ url: string }> };
+  | { kind: 'favorites.resolve'; result: Result<{ url: string }> }
+  | { kind: 'debug.resolve'; result: Result<DebugLinks> }
+  | { kind: 'debug.open'; result: Result<null> };
 
 /**
  * 实例状态上下文（v3.15）：从**当前活动页签的 URL** 解析出来的可操作对象。
@@ -445,6 +458,37 @@ export type CloudDevicePoll =
 export interface FavoriteItem {
   name: string;
   path: string;
+}
+
+/* ---- 调试跳转（v4.2.45：Alt+2）---- */
+
+/** 当前业务页对应的对象（`bid` / 菜单的 objectId 反查而来） */
+export interface DebugObjectRef {
+  id: string;
+  code?: string;
+  name?: string;
+}
+
+/** 对象绑定的生命周期；对象没启用生命周期时为 null */
+export interface DebugLifecycleRef {
+  id: string;
+  name?: string;
+}
+
+/**
+ * 三个管理端深链。
+ *
+ * ★ `urls` 由 background 用**目标页签的 origin** 拼，不接受页面自报地址；
+ *   生命周期为空时 `lifecycle` 与 `urls.lifecycle` 同时为 null（按钮置灰）。
+ */
+export interface DebugLinks {
+  object: DebugObjectRef;
+  lifecycle: DebugLifecycleRef | null;
+  urls: {
+    object: string;
+    lifecycle: string | null;
+    workflow: string;
+  };
 }
 
 /** 保存结果（v4.2.44）：把「为什么少了几条」如实带回界面，而不是静默丢弃 */

@@ -75,6 +75,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-bindframe.mjs',
   'verify-boxmgmt.mjs',
   'verify-cookiereplay.mjs',
+  'verify-debugjump.mjs',
   'verify-defbox.mjs',
   'verify-defect.mjs',
   'verify-dnrscheme.mjs',

@@ -138,6 +138,10 @@ const extensionOptions = {
     'content/wheel-overlay': path.join(extDir, 'src', 'content', 'wheel-overlay.ts'),
     'content/status-overlay': path.join(extDir, 'src', 'content', 'status-overlay.ts'),
     'content/favorites-overlay': path.join(extDir, 'src', 'content', 'favorites-overlay.ts'),
+    // v4.2.45：调试跳转（Alt+2）
+    'content/debug-overlay': path.join(extDir, 'src', 'content', 'debug-overlay.ts'),
+    // v4.2.45：Alt+2 热键（页面侧监听，见 DEBUG_HOTKEY_MESSAGE 的注释）
+    'content/debug-hotkey': path.join(extDir, 'src', 'content', 'debug-hotkey.ts'),
     // v4.2.0：翻译（合并 Akso Instant Translate）—— 浮动图标 + Alt+T
     'content/translate': path.join(extDir, 'src', 'content', 'translate.ts'),
     'ui/popup/popup': path.join(extDir, 'src', 'ui', 'popup', 'popup.ts'),

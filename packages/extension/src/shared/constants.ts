@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.44';
+export const EXT_VERSION = '4.2.45';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -158,6 +158,16 @@ export const CONTENT_MESSAGE = {
   /** background → ISOLATED 桥（下行） */
   bridgeDown: 'ql:bridgeDown',
 } as const;
+
+/**
+ * v4.2.45 调试跳转热键（Alt+2）：内容脚本 → background。
+ *
+ * 为什么不直接写成 `chrome.commands` 的第二个默认键：Chrome 只允许 **4 个**
+ * 命令带 `suggested_key`，本扩展已有 4 个（Alt+Q/Alt+W/Alt+1/Ctrl+X）；加第 5 个
+ * 会让**整个扩展装载失败**（实测 `ERR_BLOCKED_BY_CLIENT`）。所以 Alt+2 由
+ * `content/debug-hotkey.js` 在页面侧监听后转一手，命令本身保留给手动绑定。
+ */
+export const DEBUG_HOTKEY_MESSAGE = 'ql:debugHotkey';
 
 /** window.postMessage 的 source 标识（桥 ↔ MAIN 壳内部通路） */
 export const WINDOW_CHANNEL = {
