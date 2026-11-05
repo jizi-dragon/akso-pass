@@ -181,6 +181,35 @@ console.log('\n=== E. DNR 只给"站点自己发起的请求"加 Bearer ===');
   } else {
     fail('parentDomainOf 又退回朴素取末两段');
   }
+  // v4.2.33：Bearer 不再附到静态资源（script/image/font/media…）上。
+  const authTypes = tr.match(/const AUTH_MATCH_TYPES[^=]*=\s*\[([\s\S]*?)\]/);
+  if (!authTypes) {
+    fail('找不到 AUTH_MATCH_TYPES —— Authorization 规则可能又回到全资源类型');
+  } else {
+    const list = authTypes[1];
+    const missing = ['main_frame', 'sub_frame', 'xmlhttprequest', 'other']
+      .filter((t) => !new RegExp(`'${t}'`).test(list));
+    const leaked = ['script', 'stylesheet', 'image', 'font', 'media']
+      .filter((t) => new RegExp(`'${t}'`).test(list));
+    if (missing.length) {
+      fail(`AUTH_MATCH_TYPES 缺 ${missing.join('/')} —— 下载、iframe 文档或 API 会掉鉴权`);
+    } else if (leaked.length) {
+      fail(`AUTH_MATCH_TYPES 仍含静态资源 ${leaked.join('/')} —— `
+        + 'Bearer 会被附到图片/字体请求上，扩大泄露面');
+    } else {
+      ok('Authorization 只覆盖 main_frame/sub_frame/xmlhttprequest/websocket/other');
+    }
+    if (/function buildAuthRule[\s\S]*?resourceTypes:\s*AUTH_MATCH_TYPES/.test(tr)) {
+      ok('buildAuthRule 使用收窄后的 AUTH_MATCH_TYPES');
+    } else {
+      fail('buildAuthRule 没有使用 AUTH_MATCH_TYPES');
+    }
+    if (/function buildCookieRule[\s\S]*?resourceTypes:\s*ALL_MATCH_TYPES/.test(tr)) {
+      ok('Cookie 规则仍覆盖全部资源类型（静态资源也要带会话 Cookie）');
+    } else {
+      fail('Cookie 规则被误收窄 ⇒ 受保护图片/字体等子资源会掉会话');
+    }
+  }
 }
 
 // ---------------------------------------------------------------- F. 云端 fail-closed + https

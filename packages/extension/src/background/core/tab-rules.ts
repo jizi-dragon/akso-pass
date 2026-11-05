@@ -75,6 +75,29 @@ const ALL_MATCH_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
   'other',
 ] as chrome.declarativeNetRequest.ResourceType[];
 
+/**
+ * Authorization 规则的资源类型（v4.2.33 收窄）。
+ *
+ * ★ 与 `ALL_MATCH_TYPES` 的差别：**不再**给 script / stylesheet / image / font /
+ *   media 附加 Bearer。理由是最小权限：
+ *   - 这些子资源本来就由浏览器按正常语义加载，平台不会拿 Authorization 头去
+ *     鉴权静态资源；把 token 附在图片/字体请求上只会把它送进 CDN、代理和
+ *     访问日志，扩大泄露面；
+ *   - `initiatorDomains` 已经挡住跨域 iframe 冒用，但"同站页面里的一张第三方
+ *     图片指向本站"仍会命中 requestDomains —— 资源类型再收一刀，双保险。
+ * ★ 保留的四类各有明确用途：main_frame（顶层下载/导航）、sub_frame（管理端
+ *   iframe 文档）、xmlhttprequest（API）、other（`<a download>` 的下载归型）。
+ *   websocket 握手也保留：DNR 对 modifyHeaders + websocket 的支持依赖 Chrome
+ *   版本，装不上时 `addOne` 会记诊断并继续安装其余规则。
+ */
+const AUTH_MATCH_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
+  'main_frame',
+  'sub_frame',
+  'xmlhttprequest',
+  'websocket',
+  'other',
+] as chrome.declarativeNetRequest.ResourceType[];
+
 function asRule(raw: unknown): chrome.declarativeNetRequest.Rule {
   return raw as unknown as chrome.declarativeNetRequest.Rule;
 }
@@ -179,8 +202,10 @@ function buildAuthRule(ruleId: number, host: string, tabId: number, token: strin
       // - main_frame：顶层下载导航（纯 Bearer 鉴权平台的导出接口，缺头即 401）；
       // - other：`<a download>` 属性发起的下载请求在 DNR 里常归为此型（3.13.1 只补
       //   main_frame 仍 401 的教训——下载归型因发起方式而异，与 COOKIE 规则同宽才算到位）。
-      // 安全边界不变：tabIds + requestDomains 双重锁死，跨域 SSO 跳转不会被附加头。
-      resourceTypes: ALL_MATCH_TYPES,
+      // ★ v4.2.33：静态资源（script/stylesheet/image/font/media）已从本规则剔除，
+      //   见 `AUTH_MATCH_TYPES` 的注释——那几类不需要 Authorization，附上只是把
+      //   token 多送进几个日志。
+      resourceTypes: AUTH_MATCH_TYPES,
       requestDomains: [hostNoPortOf(host), parentDomainOf(hostNoPortOf(host))],
       // ★★ v4.2.32：把 Bearer 限定为**本账号站点自己发起的请求**。
       //

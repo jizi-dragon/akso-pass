@@ -1,6 +1,6 @@
 # 安全模型与残余风险
 
-适用版本：**v4.2.32**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
+适用版本：**v4.2.33**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
 **防谁**、**哪些风险是有意接受而不是漏修**。改动涉及信任边界时，请同步更新本文与
 `tools/verify/verify-frameisolation.mjs` 的对应断言。
 
@@ -51,7 +51,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 | 跨域 iframe 收到 bind 并读走 token | `bind` 只投 `{ frameId: 0 }`；下行载荷带 `host`，壳用 `location.host` 拒收 | `verify-frameisolation` A/I |
 | 任意 frame 发 `hello` 换 token | 所有桥上行 op 按 `sender.url` 的 host+port 校验归属，fail-closed | B |
 | 页签漫游到外部站点仍保留凭据 | 导航归属用 `ownedBy`（精确 host/子域+端口），越界即解绑并取证 | D |
-| 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains` | E |
+| 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains`，且只覆盖 `main_frame`/`sub_frame`/`xmlhttprequest`/`websocket`/`other`（v4.2.33 剔除静态资源） | E |
 | `foo.co.uk` 被当成 `co.uk` 的同站 | 公共后缀 / 托管域表 | E |
 | 页面伪造 `bagChanged` 注入 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数/长度上限 | G |
 | 页面反复 `needsReload` 制造刷新循环 | 绑定校验之后 + 60s/3 次令牌桶 | C |

@@ -5,6 +5,21 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.33（2026-11-05）
+
+### DNR 最小权限：Authorization 不再附加到静态资源
+
+- **风险（审计发现）**：Authorization 规则用全资源类型集合，`script` / `stylesheet` /
+  `image` / `font` / `media` 请求只要命中 `requestDomains` 也会被写入该账号的 Bearer。
+  `initiatorDomains` 已挡住跨域 iframe 冒用，但"同站页面里一张指向本站的图片/字体"
+  仍会带 token，把它送进 CDN、代理与访问日志，属于不必要的暴露面。
+- **修正**：新增 `AUTH_MATCH_TYPES`，只保留 `main_frame`（顶层下载/导航）、
+  `sub_frame`（管理端 iframe 文档）、`xmlhttprequest`（API）、`websocket`（WS 握手）、
+  `other`（`<a download>` 下载归型）；静态资源五类剔除。Cookie 规则保持全类型
+  （受保护的图片/字体等子资源仍需要会话 Cookie）。
+- **验证**：`verify-frameisolation` E 组新增三条断言（收窄清单、`buildAuthRule` 使用
+  `AUTH_MATCH_TYPES`、Cookie 规则未被误收窄），全套静态 **27/27**。
+
 ## 4.2.32（2026-11-05）
 
 ### 安全加固：信任边界从「页签」收到「frame」，凭据不再外溢
