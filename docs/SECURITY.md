@@ -1,6 +1,6 @@
 # 安全模型与残余风险
 
-适用版本：**v4.2.38**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
+适用版本：**v4.2.39**（2026-11-05 安全加固后）。本文回答三个问题：**保护什么**、
 **防谁**、**哪些风险是有意接受而不是漏修**。改动涉及信任边界时，请同步更新本文与
 `tools/verify/verify-frameisolation.mjs` 的对应断言。
 
@@ -44,7 +44,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 - 能在同机器上读取扩展的 `chrome.storage.local`（本地磁盘读取，非管理员提权）。
 - **不在**范围内：Chrome 自身 0day、其他扩展越权、平台服务端鉴权缺陷、物理接触。
 
-## 四、控制矩阵（v4.2.38 起）
+## 四、控制矩阵（v4.2.39 起）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
@@ -58,6 +58,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 | `foo.co.uk` 被当成 `co.uk` 的同站 | 公共后缀 / 托管域表 | E |
 | 页面伪造 `bagChanged` 注入 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数/长度上限 | G |
 | 页面反复 `needsReload` 制造刷新循环 | 绑定校验之后 + 60s/3 次令牌桶 | C |
+| SW 冷启后旧规则叠加，解绑后旧 token 仍被改写 | `restore()` 先整体摘除本扩展会话规则再按持久化重建（v4.2.39） | `verify-ruleidem`（浏览器） |
 | 云端请求走明文 / 权限 API 异常时放行 | https 闸门 + `hasHostAccess` fail-closed | F |
 | 兄弟子域跨账号命中页面缓存 | 缓存分区按注册域（`app.example.com` ↔ `api.example.com`） | 人工/load |
 | 日志/取证里的令牌 | 通道级 `redact` + 裸 JWT 形状规则 | `verify-log-redaction` 145/145 |
@@ -106,6 +107,7 @@ node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（13 �
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
 node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效；父域 initiator 覆盖子域（8 项，含 Cookie 回放）
 node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（9 项，含 ping）
+node tools/verify/verify-ruleidem.mjs           # 真装 Chromium：杀 SW 再拉起，DNR 规则不叠加（5 项）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```

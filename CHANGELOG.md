@@ -5,6 +5,26 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.39（2026-11-05）
+
+### SW 冷启不再叠加 DNR 规则：旧 token 不会在解绑后复活
+
+- **风险**：`restore()` 此前只清理「孤儿规则」（`tabIds` 已不在持久化绑定里的），
+  然后 `installed.clear()`。但 `installed` 是**模块级** Map，MV3 的 service worker
+  被回收后就是空的 —— 下一次冷启 `applyBinding` 以为什么都没装，对持久化里的每个
+  页签**再装一套**。会话规则活到浏览器关闭，于是每次冷启 +4 条/页签；更糟的是旧规则
+  不在 `installed` 里，`clearTab()` 永远摘不掉它们：**解绑之后，旧 token 与旧 Cookie
+  仍会被 DNR 改写**。规则数还会一路撞向 5000 上限，一旦 `updateSessionRules` 整批
+  被拒，网络平面全灭。
+- **修正**：`restore()` 先把本扩展的会话规则（`id >= AUTH_BASE`）**整体摘除**再重建；
+  摘除成功才以「剩下的规则」计算孤儿与下一个 ruleId，失败则退回旧行为并 `log.error`
+  明示「本轮只能叠加重建」。摘除与重建之间有毫秒级无规则窗口 —— AUTH 缺失是
+  fail-closed（401），Cookie strip 缺失可能短暂露出真实 jar；比「永久残留旧凭据」可接受。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；新增浏览器回归
+  `verify-ruleidem` **5/5** —— 用 CDP 杀掉 `background.js` 的 service worker 再拉起，
+  断言冷启后规则总数不增长、AUTH 与回放 Cookie 仍是当前快照。修复前该脚本实测
+  首轮 4 条、第二轮 **8 条**，缺陷稳定复现。
+
 ## 4.2.38（2026-11-05）
 
 ### 回放 Cookie 不落明文 HTTP：与 v4.2.35 的 Bearer 同一类降级

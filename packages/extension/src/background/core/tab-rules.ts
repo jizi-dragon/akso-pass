@@ -569,10 +569,36 @@ export const tabRules = {
       existing = [];
     }
 
-    // 孤儿清理：本扩展区间内、不属于当前意图集的规则
+    // ★★ v4.2.39：先摘掉本区间内的**全部**旧规则，再按 persisted 重建。
+    //
+    //   旧实现只清「孤儿」（`tabIds` 全不在期望集），对本轮要用的 tab 一条都不动；
+    //   而 `installed` 是模块级 Map —— SW 被回收后它是空的 ⇒ `applyBinding` 认为
+    //   "这个页签什么都没装"，于是**再叠一套**。session 规则活到浏览器关闭，后果：
+    //   ① 每个绑定页签每次 SW 冷启 +4 条（strip/nav/sub/auth），规则数会撞 5000 上限，
+    //      之后 `updateSessionRules` 整批被拒，网络平面全灭；
+    //   ② 旧规则不在 `installed` 里 ⇒ `clearTab` 永远摘不掉 —— **解绑后旧 token /
+    //      旧 Cookie 仍会被改写进该页签的请求**，直到浏览器关闭。
+    //   摘除与重建之间有几毫秒无规则窗口：AUTH 缺失是 fail-closed（401）；Cookie 的
+    //   strip 缺失才可能短暂露出真实 jar —— 与"永久残留旧凭据"相比这是可接受的一侧。
+    const ours = existing.filter((r) => r.id >= AUTH_BASE);
+    let swept = false;
+    if (ours.length) {
+      try {
+        await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ours.map((r) => r.id) });
+        swept = true;
+        void diag(`tabRules.restore 摘除旧规则 ${ours.length} 条（重建，避免叠加）`);
+      } catch (e) {
+        log.error('restore 摘除旧规则**失败**（%d 条）⇒ 本轮只能叠加重建：%s',
+          ours.length, e instanceof Error ? e.message : String(e));
+        void diag(`tabRules.restore 摘除旧规则失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const kept = swept ? existing.filter((r) => r.id < AUTH_BASE) : existing;
+
+    // 孤儿清理（摘除失败时的兜底；成功路径上 kept 里已没有本区间规则）
     const desiredTabs = new Set(persisted.keys());
     const removals: number[] = [];
-    for (const rule of existing) {
+    for (const rule of kept) {
       const inOurs = rule.id >= AUTH_BASE;
       const orphans = (rule.condition.tabIds ?? []).every((t) => !desiredTabs.has(t));
       if (inOurs && orphans) {
@@ -589,12 +615,12 @@ export const tabRules = {
 
     nextAuthId = Math.max(
       AUTH_BASE,
-      ...existing.filter((r) => r.id >= AUTH_BASE && r.id < COOKIE_BASE).map((r) => r.id + 1),
+      ...kept.filter((r) => r.id >= AUTH_BASE && r.id < COOKIE_BASE).map((r) => r.id + 1),
       AUTH_BASE,
     );
     nextCookieId = Math.max(
       COOKIE_BASE,
-      ...existing.filter((r) => r.id >= COOKIE_BASE).map((r) => r.id + 1),
+      ...kept.filter((r) => r.id >= COOKIE_BASE).map((r) => r.id + 1),
       COOKIE_BASE,
     );
 

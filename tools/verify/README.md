@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **48 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **49 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -60,6 +60,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-bindframe.mjs` | ★ **bind 载荷不外溢到跨域 iframe**（v4.2.32 审计 V1 的浏览器级回归）：同一本地站点用 `localhost` / `127.0.0.1` 造两个 origin，把 bind **广播**给所有 frame，断言顶层正常灌种子、跨域 iframe 的 localStorage / `document.cookie` 一个账号键都没有且未被迟到 bind 触发刷新 —— 即 `handleBind` 的 `locationMatchesHost` 自校验真的拦住了 | 8/8 | ✔ |
 | `verify-dnrscheme.mjs` | ★ **凭据不落明文 HTTP**（v4.2.35 Bearer，v4.2.38 Cookie）：本地 `http://qllocal.test` 与 `https://qllocal.test`（自签证书 + host-resolver-rules）各起一个记录请求头的服务；断言带 `regexFilter: '^https://'` 的会话规则只给 https 请求加头 / set Cookie，http 不加，且去掉正则后 http 又带上（证明缺席来自正则而非匹配失败）—— 即 https 账号被降级到 http 时 Authorization 与回放 Cookie 都不会进明文请求；★ F 组还验证了 `initiatorDomains` 写父域时**子域页面发起的请求仍命中**（账号被重定向到子域时 Bearer 不掉） | 8/8 | ✔ |
 | `verify-cookiereplay.mjs` | ★ **回放 Cookie 只给本账号站点自己发起的请求**（v4.2.36，v4.2.37 补 ping）：顶层 `localhost`（账号站点）+ iframe `127.0.0.1`（第三方 origin），按产品的三层优先级装规则 —— strip(1，全类型 remove) + nav(2，main_frame/other set) + sub(2，set + `initiatorDomains`）。断言基线真实 jar 的 `real=1` 会出站、装规则后顶层拿到 `SID=ACC` 且 `real=1` 被剥、跨域 iframe 的请求与 **ping** 都**零 Cookie**、`main_frame` 导航仍回放；★ 反证：去掉 sub 的 `initiatorDomains` 后同一个 iframe 立刻拿到 `SID=ACC`（证明"零 Cookie"不是没匹配上）。<br>★ ping 是独立 resourceType：显式列 `resourceTypes` 时漏掉它就完全不匹配（v4.2.37 修） | 9/9 | ✔ |
+| `verify-ruleidem.mjs` | ★★ **SW 冷启不叠 DNR 规则**（v4.2.39）：写 `ql:parTabBindings` / `ql:parTokens` 造一个绑定页签，用 CDP 杀掉 `background.js` 的 service worker 再拉起（模块重新求值 → `restore()`），断言冷启后会话规则总数不增长、AUTH 与回放 Cookie 仍是当前快照。★ 修复前实测第二轮 **8 条**（首轮 4 条 + 重建 4 条）；旧规则不在 `installed` 里，`clearTab` 永远摘不掉 ⇒ 解绑后旧 token 仍被改写，规则数还会撞 5000 上限 | 5/5 | ✔ |
 | `verify-autologin.mjs` | 自愈式提交（首击被吞后重试 ≤4 次 / 提交时值完整 / 用户键入即让位） | 5/5 | ✔ |
 | `verify-autologin-gap.mjs` | ★ **自动填表"值进了 DOM、平台状态没收到"**：密码框在同源 srcdoc iframe 里、平台的 input 监听器晚于我们首次填充才挂上 ⇒ 点登录后平台校验报「请输入密码」。断言**只看平台状态**，不看 DOM；PITFALLS #55 | 7/7 | ✔ |
 | `verify-dynsnap.mjs` | 快照动态化（登录后票据实时进回放 / 轮换 / 作废移除 / 袋回流） | 6/6 | ✔ |
@@ -124,8 +125,8 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
 | 静态（不需要浏览器） | 28 | ≈60 s | `run-all.mjs --static` |
-| 浏览器（真起 Chromium） | 20 | ≈110 s | `run-all.mjs --browser-only` |
-| 全部 | 48 | ≈170 s | `run-all.mjs --browser` |
+| 浏览器（真起 Chromium） | 21 | ≈115 s | `run-all.mjs --browser-only` |
+| 全部 | 49 | ≈175 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -133,8 +134,8 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 跑法 | 耗时 | 有没有重复 |
 |---|---|---|
-| `acceptance.py` + `run-all.mjs --browser` | 45 + 170 = **215 s** | ★ **有**：14 个静态脚本跑了两遍 |
-| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 105 = **150 s** | ✅ **没有** |
+| `acceptance.py` + `run-all.mjs --browser` | 45 + 175 = **220 s** | ★ **有**：14 个静态脚本跑了两遍 |
+| ★ `acceptance.py` + `run-all.mjs --browser-only` | 45 + 110 = **155 s** | ✅ **没有** |
 
 ★ 这个"不重叠"不是约定，是**判据**：`acceptance.py` 的 §10 会检查它跑的那 14 个脚本
 **都不需要浏览器**（谓词与本文件 `BROWSER_SCRIPTS` 的自证是同一个）。
@@ -143,7 +144,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"48 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"49 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -153,7 +154,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 48
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 49
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 
