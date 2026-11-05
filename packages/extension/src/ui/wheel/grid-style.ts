@@ -103,16 +103,6 @@ export const ACCT_GRID_CSS = `/* ⚠️ 本文件由 scripts/build.mjs 从 ui/wh
 .ag-status.idle { color: #94a3b8; }
 .ag-status.off { color: #dc2626; }
 
-.ag-key {
-  position: absolute; right: 7px; bottom: 7px; min-width: 15px; padding: 0 var(--sp-1, 4px);
-  border-radius: var(--sb-radius-sm, 8px); border: 1px solid #e4eaf6; background: #fafcff; color: #8494b4;
-  font-size: var(--fs-11, 11px); font-weight: 700; line-height: 15px; text-align: center;
-  font-variant-numeric: tabular-nums; pointer-events: none;
-}
-.ag-cell:hover .ag-key { border-color: var(--acct, #1e6fff); color: var(--acct, #1e6fff); }
-/* 当前项右上角已有圆点 ⇒ 角标让位，避免两个标记打架 */
-.ag-cell-current .ag-key { right: 8px; bottom: 8px; }
-
 /* ---- 空态 ---- */
 .ag-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2, 8px); padding: var(--sp-9, 48px) var(--sp-4, 16px) var(--sp-8, 40px); }
 .ag-empty-t { font-size: var(--fs-13, 13px); font-weight: 600; color: #4a5a7d; }

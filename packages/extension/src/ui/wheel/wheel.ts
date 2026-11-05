@@ -2,7 +2,7 @@
  * 账号选择器（扩展弹窗页版本，v4.1 **网格平铺**；此前是 v3.9 的环形扇区）。
  * 由 background 在收到 quick-wheel 命令时以独立 popup 窗口打开——
  * 在浏览器任何位置（含 chrome:// 页、新标签页）都能唤起。
- * 页面内无窗口控制元素；Esc 关闭；数字键 1-9/0 快选；失焦自动关闭（带启动宽限）。
+ * 页面内无窗口控制元素；Esc 关闭（数字键快选已于 v4.2.43 移除）；失焦自动关闭（带启动宽限）。
  * 切盒：滚轮 / 左右箭头 / 点击页码点；**一盒一页，账号不再被截断**（超出滚动）。
  */
 import { LOCAL_KEYS } from '../../shared/constants';
@@ -151,19 +151,12 @@ function render(): void {
 }
 
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    window.close();
+  // 弹窗里只有 Esc 一个快捷键；数字键快选已移除，避免误触
+  if (e.key !== 'Escape') {
     return;
   }
-  const page = pages[pageIndex];
-  if (!page) {
-    return;
-  }
-  const idx = Number(e.key) === 0 ? 9 : Number(e.key) - 1;
-  if (!Number.isNaN(idx) && idx >= 0 && idx < 10 && idx < page.accounts.length) {
-    void pick(page.accounts[idx].id);
-  }
+  e.preventDefault();
+  window.close();
 }
 
 /* 盒子/账号/禁用名单变化联动：3s 轮询，指纹未变不重绘（避免打断节点滑移动画） */

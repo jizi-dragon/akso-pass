@@ -6,7 +6,7 @@
  *
  * 交互：悬停预演「将打开「名称」」→ 点击后**在新标签页打开**（2026-10-20 用户明确要求，
  *       不再覆盖当前页）。`window.open` 带上 opener，新页签由后台收编成同一账号。
- *       数字键 1-9/0 快选；Esc / 点遮罩关闭。
+ *       数字键已移除（v4.2.43）：只能点击，Esc / 点遮罩关闭。
  *
  * 数据：书签清单由 background 统一归一化（`favorites.list`），浮层不自己读 storage；
  *       只有"弹窗被拦"时才把打开动作交给 background 兜底。
@@ -97,7 +97,6 @@ async function mount(): Promise<void> {
       span.innerHTML = html;
       hint.append(span);
     };
-    seg('<kbd>1-9</kbd> 快速打开');
     if (baseOrigin) {
       hint.append(document.createElement('i'));
       const span = document.createElement('span');
@@ -339,29 +338,13 @@ async function mount(): Promise<void> {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+    // Esc 优先于输入框守卫：浮层是模态的，任何时候都要能一键退出
+    if (e.key !== 'Escape') {
       return;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-      return;
-    }
-    if (e.ctrlKey || e.altKey || e.metaKey) {
-      return;
-    }
-    if (!/^[0-9]$/.test(e.key)) {
-      return;
-    }
-    const idx = e.key === '0' ? 9 : Number(e.key) - 1;
-    const item = items[idx];
-    if (item) {
-      e.preventDefault();
-      e.stopPropagation();
-      void open(item);
-    }
+    e.preventDefault();
+    e.stopPropagation();
+    close();
   }
 
   document.addEventListener('keydown', onKeyDown, true);

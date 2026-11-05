@@ -28,9 +28,6 @@ export const GRID_COLS = 5;
 /** 一页的**固定容量** = 5 × 4 */
 export const GRID_SLOTS = 20;
 
-/** 数字键可用数：`1-9` + `0` */
-export const KEY_MAX = 10;
-
 /** 一个格子的数据（三个轮盘共用；各自的语义差异用 `sub`/`current`/`disabled` 表达） */
 export interface GridItem {
   /** 稳定标识（回传给 onPick） */
@@ -67,7 +64,7 @@ export interface ItemGridOpts {
   onPick: (key: string) => void;
   /** 空态 */
   empty: { line1: string; line2?: string; action?: { label: string; run: () => void } };
-  /** 页脚提示（缺省按"要不要提示数字键边界"自动生成） */
+  /** 页脚提示（缺省为「点击选择」） */
   tip?: string;
   /** 是否显示左右箭头（单页时隐藏） */
   showNav?: boolean;
@@ -189,7 +186,7 @@ export function buildItemGrid(opts: ItemGridOpts): HTMLElement {
   const grid = h('div', 'ag-grid');
   grid.style.setProperty('--ag-cols', String(GRID_COLS));
 
-  opts.items.forEach((it, i) => {
+  opts.items.forEach((it) => {
     const cell = h('button', `ag-cell${it.current ? ' ag-cell-current' : ''}`, { type: 'button' });
     cell.dataset.itemKey = it.key;
     cell.style.setProperty('--acct', it.accent || 'var(--acc, #1e6fff)');
@@ -209,12 +206,7 @@ export function buildItemGrid(opts: ItemGridOpts): HTMLElement {
       cell.append(sub);
     }
 
-    // 数字键角标：**只有前 10 个**（键位就这么多）
-    if (i < KEY_MAX) {
-      const k = h('span', 'ag-key');
-      k.textContent = String((i + 1) % 10);
-      cell.append(k);
-    }
+    // 数字键快选已移除（v4.2.43）：格子里不再渲染角标
 
     if (!it.disabled) {
       cell.addEventListener('click', () => opts.onPick(it.key));
@@ -223,7 +215,7 @@ export function buildItemGrid(opts: ItemGridOpts): HTMLElement {
   });
 
   /* 补足到 20 个占位格：让"少项的页"与"满页"**几何完全一致**。
-     占位格不可点、无角标、不进 tab 序（用 div 而不是 button）。 */
+     占位格不可点、无内容、不进 tab 序（用 div 而不是 button）。 */
   for (let i = opts.items.length; i < GRID_SLOTS; i++) {
     grid.append(h('div', 'ag-slot'));
   }
@@ -247,10 +239,7 @@ export function buildItemGrid(opts: ItemGridOpts): HTMLElement {
     foot.append(dots);
   }
   const tip = h('div', 'ag-tip');
-  tip.textContent = opts.tip
-    ?? (opts.items.length > KEY_MAX
-      ? `前 ${KEY_MAX} 个可用数字键 · 其余点击选择`
-      : '点击或按数字键' + (opts.pageCount > 1 ? ' · 滚轮换页' : ''));
+  tip.textContent = opts.tip ?? ('点击选择' + (opts.pageCount > 1 ? ' · 滚轮换页' : ''));
   foot.append(tip);
   wrap.append(foot);
 

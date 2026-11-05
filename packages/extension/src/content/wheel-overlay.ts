@@ -1,7 +1,7 @@
 /**
  * Wheel Overlay —— 快捷键选择器的「页面内浮层」主机制（v4.1：**网格平铺**，此前是环形扇区）。
  * background 对当前 https 标签页 executeScript 注入本脚本；再次注入 = 关闭（幂等开关）。
- * Shadow DOM 完全隔离宿主页样式；打开期间锁滚动、聚焦遮罩，数字键不干扰页面输入。
+ * Shadow DOM 完全隔离宿主页样式；打开期间锁滚动、聚焦遮罩，Esc 在任意焦点下都关闭。
  * 视觉：盒子一页的**网格**（无边框卡片，账号色竖条 + 运行态文字），
  * 标题栏显示盒子名与计数，左右箭头 / 页码点 / 滚轮切盒；**账号不再被截断**（超出滚动）。
  * 交互：悬停高亮 → 点击切换；Esc / 再次快捷键 / 点击遮罩关闭。无任何窗口控制元素。
@@ -105,8 +105,7 @@ async function mount(): Promise<void> {
 
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.innerHTML =
-    '<span><kbd>1-9</kbd> 快速选择</span><i></i><span>滚轮 / ← → / 点页码切盒</span><i></i><span><kbd>Esc</kbd> 关闭</span>';
+  hint.innerHTML = '<span>滚轮 / ← → / 点页码切盒</span><i></i><span><kbd>Esc</kbd> 关闭</span>';
 
   shadow.append(wheelRoot, hint);
 
@@ -126,28 +125,13 @@ async function mount(): Promise<void> {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    // 遮罩期间输入框仍可能持有焦点：不劫持编辑键
-    const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+    // Esc 优先于输入框守卫：浮层是模态的，任何时候都要能一键退出
+    if (e.key !== 'Escape') {
       return;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-      return;
-    }
-    if (e.ctrlKey || e.altKey || e.metaKey) {
-      return;
-    }
-    const page = pages[pageIndex];
-    if (!page) {
-      return;
-    }
-    const idx = Number(e.key) === 0 ? 9 : Number(e.key) - 1;
-    if (!Number.isNaN(idx) && idx >= 0 && idx < 10 && idx < page.accounts.length) {
-      void pick(page.accounts[idx].id);
-    }
+    e.preventDefault();
+    e.stopPropagation();
+    close();
   }
 
   async function pick(accountId: string): Promise<void> {

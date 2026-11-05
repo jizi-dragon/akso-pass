@@ -2,7 +2,7 @@
  * Status Overlay —— 实例状态轮盘的「页面内浮层」主机制（v3.15，快捷键 Alt+W）。
  *
  * background 对当前活动标签页 `executeScript` 注入本脚本；再次注入 = 关闭（幂等开关）。
- * Shadow DOM 完全隔离宿主页样式；打开期间锁滚动；数字键在输入框聚焦时不劫持。
+ * Shadow DOM 完全隔离宿主页样式；打开期间锁滚动；Esc 在任意焦点下都关闭。
  * 外壳样式与书签轮盘共用（`ring-wheel-style.ts`），不再各写一份。
  *
  * ## 交互约定（v3.15 定稿）
@@ -113,7 +113,6 @@ async function mount(): Promise<void> {
       hint.append(span);
     };
     const dot = (): void => hint.append(document.createElement('i'));
-    seg('<kbd>1-9</kbd> 快速切换');
     if (currentName) {
       dot();
       seg('当前：<b></b>');
@@ -198,31 +197,13 @@ async function mount(): Promise<void> {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    // 遮罩期间输入框仍可能持有焦点：不劫持编辑键
-    const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+    // Esc 优先于输入框守卫：浮层是模态的，任何时候都要能一键退出
+    if (e.key !== 'Escape') {
       return;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-      return;
-    }
-    if (e.ctrlKey || e.altKey || e.metaKey) {
-      return;
-    }
-    // ★ 只认数字键（账号轮盘用 Number(e.key) 判等，空格也会被当成 0 —— 这里不重蹈）
-    if (!/^[0-9]$/.test(e.key)) {
-      return;
-    }
-    const idx = e.key === '0' ? 9 : Number(e.key) - 1;
-    const item = items[idx];
-    if (item) {
-      e.preventDefault();
-      e.stopPropagation();
-      void pick(item);
-    }
+    e.preventDefault();
+    e.stopPropagation();
+    close();
   }
 
   document.addEventListener('keydown', onKeyDown, true);

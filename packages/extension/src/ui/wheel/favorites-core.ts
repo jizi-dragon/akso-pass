@@ -70,7 +70,7 @@ export function buildFavoritesWheel(root: HTMLElement, opts: FavoritesWheelOpts)
       line1: opts.disabledReason || '还没有任何书签',
       line2: opts.disabledReason ? undefined : '到并行管理页的「常用页面」里添加',
     },
-    tip: opts.disabledReason ? '当前不可用' : `点击或按数字键打开 · 共 ${n} 个`,
+    tip: opts.disabledReason ? '当前不可用' : `点击打开 · 共 ${n} 个`,
   });
   root.append(wrap);
 }

@@ -307,6 +307,7 @@ node tools/e2e/probe-page.mjs   # 页面结构探针（见下方「工具链缺�
     `dataset.forceClose` 并派发 `ql-wheel-close` 事件，但**全仓库没有任何监听者**
     （`wheel-core.ts:293` 只守卫 `qlWheelNav`）→ 旧实例的 `document` capture `keydown`（`:276`）与
     3s 轮询（`:182`）永久驻留：「关闭后」按数字键仍会切换账号，第三次按 `Alt+Q` 会叠出第二个浮层。
+    （数字键已于 v4.2.43 移除，本条只剩监听器泄漏这一历史结论。）
     （UI 侧同源问题：`wheel-overlay` 的第二个 interval 在 close 时也未清理。）
 17. **半激活状态不可恢复**【验】。`activate()` 中 `installStoragePatch()`（`:744`）**没有** try/catch，
     而同函数内的 SW/BC/IDB 三个平面各自都有（`:632`、`:666`、`:720`）→ 一旦原型被冻结等场景抛错，
@@ -340,9 +341,8 @@ node tools/e2e/probe-page.mjs   # 页面结构探针（见下方「工具链缺�
 27. **账号轮盘的空格键误选与浮层监听器泄漏**【验】。`wheel.ts:113` `Number(e.key) === 0 ? 9 : …`
     对空格成立（`Number(' ') === 0`）→ 轮盘窗口里按空格会直接选中第 10 个账号并关窗。
     `wheel-overlay.ts` 关闭时派发 `ql-wheel-close` 但全仓库无监听者 → 旧实例的 keydown 与轮询驻留。
-    （**v3.15/v3.16 新增的两块浮层已规避这两点**：数字键用 `/^[0-9]$/` 严格判定，
-    旧实例清理改成把 `close` 挂在 `window.__QL_*_CLEANUP__` 上由新实例调用。
-    账号轮盘本身**尚未修**——两处属既有代码，未在本次改动范围内。）
+    （**数字键已随 v4.2.43 整体移除**（空格误选随之消失）；旧实例清理仍按 `window.__QL_*_CLEANUP__` 由新实例调用。
+    账号轮盘本身的监听器泄漏**尚未修**——属既有代码，未在本次改动范围内。）
 28. **UI 无障碍缺口**【验】。盒子 chips 的 ✎/⏸/✕ 为 `<span>` + click，不可聚焦；
     盒子弹窗无 `aria-modal`/焦点管理；`wheel-core.ts:216` 的 `hub-go` 有 `role="button"`+`tabindex` 却只绑 click，
     键盘按 Enter/Space 无效；全页 29 处阻塞式 `prompt/confirm/alert`。

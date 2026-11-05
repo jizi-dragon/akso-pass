@@ -44,7 +44,7 @@ const gridSrc = code('ui/wheel/grid-core.ts');
 const itemSrc = code('ui/wheel/item-grid.ts');
 const coreSrc = code('ui/wheel/wheel-core.ts');
 
-if (/\.slice\(0,\s*(?:GRID_SLOTS|KEY_MAX|WHEEL_MAX|10)\s*\)/.test(gridSrc + itemSrc)) {
+if (/\.slice\(0,\s*(?:GRID_SLOTS|WHEEL_MAX|10)\s*\)/.test(gridSrc + itemSrc)) {
   fail('网格里仍在对项目列表做 slice(0, N) —— 那就是"静默丢项"');
 } else {
   ok('网格不对项目列表做 slice（不截断）');
@@ -68,6 +68,33 @@ for (const [name, re] of [
   } else {
     ok(`径向原语 ${name} 已清除`);
   }
+}
+
+/* ══════════════ ①-b 数字键快选已移除，Esc 优先于输入框守卫 ══════════════ */
+console.log('\n=== ①-b 数字键已移除；Esc 在任意焦点下关闭 ===');
+const keyOverlays = [
+  ['content/wheel-overlay.ts', '账号浮层'],
+  ['content/status-overlay.ts', '状态浮层'],
+  ['content/favorites-overlay.ts', '常用页浮层'],
+  ['ui/wheel/wheel.ts', '独立小窗'],
+];
+for (const [rel, label] of keyOverlays) {
+  const src = code(rel);
+  if (/Number\(e\.key\)|e\.key === '0'/.test(src)) {
+    fail(`${label}（${rel}）仍有数字键分支`);
+  } else {
+    ok(`${label}：无数字键分支`);
+  }
+  if (!/e\.key !== 'Escape'/.test(src)) {
+    fail(`${label}（${rel}）没有「Esc 先于输入框守卫」的写法`);
+  } else {
+    ok(`${label}：Esc 优先，输入框聚焦也能关`);
+  }
+}
+if (/ag-key|数字键/.test(itemSrc + readFileSync(path.join(SRC, 'ui/wheel/grid-style.ts'), 'utf8'))) {
+  fail('item-grid / grid-style 里仍有数字键角标或文案残留');
+} else {
+  ok('角标与「按数字键」文案已清除');
 }
 
 /* ══════════════ ② 样式：唯一源 + 构建产物一致 ══════════════ */
@@ -237,8 +264,8 @@ if (!exe) {
 
   if (result.cells === 18 && result.names[17] === '账号18') ok('18 项全部渲染（第 18 个在 DOM 里）');
   else fail(`18 项只渲染了 ${result.cells} 个`);
-  if (result.keys === 10) ok('数字键角标恰好 10 个');
-  else fail(`数字键角标 ${result.keys} 个，应为 10`);
+  if (result.keys === 0) ok('数字键角标已移除（0 个）');
+  else fail(`仍有 ${result.keys} 个数字键角标，应为 0`);
   if (result.rotated === 0) ok('文字零旋转（径向倾斜已消失）');
   else fail(`仍有 ${result.rotated} 个带旋转`);
   if (result.manyCells === 26 && result.manyLastName === '账号26' && result.canScroll) {

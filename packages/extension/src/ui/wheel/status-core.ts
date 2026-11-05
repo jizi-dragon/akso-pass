@@ -83,7 +83,7 @@ export function buildStatusWheel(root: HTMLElement, opts: StatusWheelOpts): void
       line1: emptyLine1,
       line2: opts.disabledReason ? '请切到对象实例页再试' : hidden ? '停用状态不参与切换' : '可能是当前账号无权查看该生命周期',
     },
-    tip: opts.disabledReason ? '当前不可切换' : `点击或按数字键切换 · 共 ${n} 个启用状态`,
+    tip: opts.disabledReason ? '当前不可切换' : `点击切换 · 共 ${n} 个启用状态`,
   });
   root.append(wrap);
 }
