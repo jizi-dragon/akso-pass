@@ -9,7 +9,9 @@
  *  C 去掉 regexFilter 后 http 请求**又**带上头——证明 B 的"消失"是正则造成的，
  *    不是 main_frame 不匹配或 tabId 不对。
  *  D https 请求命中 Cookie 回放规则（`Cookie: SID=…` 被 set）——v4.2.38 的回落；
- *  E 同一规则在 http 上不命中 ⇒ 会话 Cookie 不会落进明文请求。
+ *  E 同一规则在 http 上不命中 ⇒ 会话 Cookie 不会落进明文请求；
+ *  F 规则把父域写进 `initiatorDomains` 时，子域页面发起的请求**仍命中** ——
+ *    证明「只写账号 host」不会在账号页面被重定向到子域时把 Bearer 关掉。
  *
  *  服务端：http 与 https 都绑 127.0.0.2；`qllocal.test` 经 host-resolver-rules 解析到它，
  *  443 用自签证书（--ignore-certificate-errors）。 */
@@ -28,7 +30,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const DIST = path.join(ROOT, 'dist');
 const mfPath = path.join(DIST, 'manifest.json');
 const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
-mf.host_permissions = ['*://qllocal.test/*', '*://127.0.0.1/*'];
+mf.host_permissions = ['*://qllocal.test/*', '*://sub.qllocal.test/*', '*://127.0.0.1/*'];
 fs.writeFileSync(mfPath, JSON.stringify(mf, null, 2));
 
 /* ---- 自签证书（CN=qllocal.test，与 verify-httpscheme 同方案） ---- */
@@ -51,6 +53,12 @@ const handler = (scheme) => (req, res) => {
   const u = new URL(req.url ?? '/', 'http://x');
   hits.push({ scheme, path: u.pathname, token: req.headers['x-test-token'] ?? null, cookie: req.headers.cookie ?? null });
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  if (u.pathname === '/subpage') {
+    res.end(`<!doctype html><script>
+      fetch('http://qllocal.test/api').catch(() => {});
+    </script>sub</html>`);
+    return;
+  }
   res.end(`<!doctype html><html><body>${scheme}${u.pathname}</body></html>`);
 };
 const httpServer = http.createServer(handler('http'));
@@ -106,7 +114,7 @@ const ctx = await chromium.launchPersistentContext(profile, {
     `--load-extension=${DIST}`,
     '--no-first-run',
     '--ignore-certificate-errors',
-    '--host-resolver-rules=MAP qllocal.test 127.0.0.2',
+    '--host-resolver-rules=MAP qllocal.test 127.0.0.2, MAP sub.qllocal.test 127.0.0.2',
     // 本机若配了系统代理，请求会绕开 host-resolver-rules 指向的本地服务
     '--no-proxy-server',
   ],
@@ -246,6 +254,46 @@ const cookieHttp = await (async () => {
 check('E http 请求不命中 `^https://`，回放 Cookie 不落明文',
   cookieHttp !== null && !(cookieHttp.cookie ?? '').includes('SID=HTTPS-ONLY'),
   `cookie=${cookieHttp?.cookie ?? '无'}`);
+
+/* ---- F：父域条目对子域 initiator 仍然生效（产品里 initiatorDomains 只写账号 host）----
+ * 账号站点常被重定向到 www/sub 子域；若 Chrome 不把父域条目匹配到子域 initiator，
+ * v4.2.32 的收窄就会在子域页面上把 Bearer 关掉。 */
+const subTabId = await page.evaluate(async () => {
+  const t = await chrome.tabs.create({ url: 'http://sub.qllocal.test/subpage', active: true });
+  return t.id;
+});
+await page.evaluate(async (id) => {
+  await chrome.declarativeNetRequest.updateSessionRules({
+    addRules: [{
+      id: 9004,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{ header: 'X-Test-Token', operation: 'set', value: 'SUB-INIT' }],
+      },
+      condition: {
+        tabIds: [id],
+        requestDomains: ['qllocal.test'],
+        initiatorDomains: ['qllocal.test'],
+        resourceTypes: ['xmlhttprequest'],
+      },
+    }],
+  });
+}, subTabId);
+
+const beforeSub = hits.length;
+await page.evaluate((id) => chrome.tabs.reload(id), subTabId);
+const subHit = await (async () => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 8000) {
+    const h = hits.slice(beforeSub).find((x) => x.path === '/api' && x.token === 'SUB-INIT');
+    if (h) return h;
+    await sleep(120);
+  }
+  return null;
+})();
+check('F initiatorDomains 写父域时，子域页面发起的请求仍命中（子域重定向不掉 Bearer）',
+  subHit !== null, `token=${subHit?.token ?? '无'}`);
 
 await ctx.close();
 httpServer.close();

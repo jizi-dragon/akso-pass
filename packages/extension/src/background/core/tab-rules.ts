@@ -260,6 +260,9 @@ function buildAuthRule(
       //   页面/同源 iframe = 站点 host ⇒ 放行；跨域 iframe = 第三方 host ⇒ 不匹配。
       //   ★ 只写 host（不写父域）：父域未必在 host_permissions 里，写进去可能
       //     让整条规则安装失败（PITFALLS #1：一条装不上会连坐整个网络平面）。
+      //   ★ 该条目**含子域**（2026-11-05 实测：initiatorDomains=['qllocal.test'] 命中
+      //     由 `sub.qllocal.test` 页面发起的请求）—— 账号页面被重定向到子域时
+      //     Bearer 仍在，不会因这条收窄而掉登录。
       //   ★ main_frame/other 仍保留：顶层下载导航的 initiator 就是站点页面，
       //     照样匹配；而用户手输 URL（无 initiator）本来也不需要 Bearer。
       initiatorDomains: [hostNoPortOf(host)],

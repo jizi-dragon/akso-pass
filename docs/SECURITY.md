@@ -84,6 +84,9 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
    修掉的 Bearer 是同一类问题。取舍是：http 降级时回放不生效（宁可掉登录，不落明文）。
 5. **Authorization 规则仍含 `main_frame`**。平台导出接口靠顶层导航下载、缺头即 401，
    这是兼容性取舍；`initiatorDomains` 已把它限制在站点自己发起的导航。
+   ★ `initiatorDomains` 的条目**包含子域**（`verify-dnrscheme` F 组实测）：
+   账号页面被重定向到 `www.`/`sub.` 时 Bearer 仍在；反过来说，账号 host 的任意子域
+   都被视作"站点自己"，这与 `ownedBy` 的归属判定一致。
 6. **同源 iframe 的迟到 bind**：壳若在绑定建立前已置 `unbound`，只投顶层的 bind 不会
    再唤醒它；依赖各 frame 自身的 `hello` 重试。属于边缘时序，未观察到功能影响。
 7. **页面总能 DoS 自己所在的页签**（死循环、占满 CPU）。`needsReload` 限流只挡"借扩展
@@ -101,7 +104,7 @@ npm run build
 node tools/verify/verify-frameisolation.mjs     # A–K 十一组，秒级
 node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（13 条必须变红）
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
-node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（7 项，含 Cookie 回放）
+node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效；父域 initiator 覆盖子域（8 项，含 Cookie 回放）
 node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（9 项，含 ping）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
