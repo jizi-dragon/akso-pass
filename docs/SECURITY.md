@@ -44,7 +44,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 - 能在同机器上读取扩展的 `chrome.storage.local`（本地磁盘读取，非管理员提权）。
 - **不在**范围内：Chrome 自身 0day、其他扩展越权、平台服务端鉴权缺陷、物理接触。
 
-## 四、控制矩阵（v4.2.35 起）
+## 四、控制矩阵（v4.2.36 起）
 
 | 威胁 | 控制 | 判据 |
 |---|---|---|
@@ -52,6 +52,7 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 | 任意 frame 发 `hello` 换 token | 所有桥上行 op 按 `sender.url` 的 host+port 校验归属，fail-closed | B |
 | 页签漫游到外部站点仍保留凭据 | 导航归属用 `ownedBy`（精确 host/子域+端口），越界即解绑并取证 | D |
 | 同页签第三方 iframe 借 DNR 加 Bearer | Authorization 规则加 `initiatorDomains`，且只覆盖 `main_frame`/`sub_frame`/`xmlhttprequest`/`websocket`/`other`（v4.2.33 剔除静态资源） | E |
+| 同页签第三方 iframe 借回放 Cookie 发 CSRF | Cookie 规则拆三层：strip(1，全类型 remove) + nav(2，main_frame/other set) + sub(2，其余 set 且 `initiatorDomains`=账号站点) | K；`verify-cookiereplay`（浏览器） |
 | https 账号被导航到同 host 的 http，Bearer 明文出网 | 按绑定 scheme 给 Authorization 规则加 `regexFilter: '^https://'`（http 账号不加，内网明文照旧） | J；`verify-dnrscheme`（浏览器） |
 | `foo.co.uk` 被当成 `co.uk` 的同站 | 公共后缀 / 托管域表 | E |
 | 页面伪造 `bagChanged` 注入 Cookie | 名/值形状校验 + 回放侧二次过滤 + 条数/长度上限 | G |
@@ -71,9 +72,11 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 3. **Web Worker 内打开的 IndexedDB 不受补丁**。主世界只能补 `window.indexedDB`；
    Worker 有独立全局。缓解：页面功能不依赖 Worker 里的账号数据；发现站点确实在 Worker
    中开库时，按"该站点不支持并行"处理。
-4. **Cookie 的 DNR 规则没有 `initiatorDomains`**。顶层导航（reload / 地址栏 / SSO 跳转）
-   可能没有 initiator，加了会直接掉登录。Authorization 规则已加；Cookie 规则要拆成
-   「子资源 + main_frame」两条并真机验证后才敢动。
+4. **Cookie 回放靠三层优先级而不是单条 `initiatorDomains`**。`main_frame` 导航
+   （reload / 地址栏 / SSO 跳转）常无 initiator，单规则加了会整片掉登录，所以保留
+   一条无 initiator 的 nav 规则；跨域 iframe 的请求落到 priority 1 的 strip 规则上。
+   Chrome 取"同一请求优先级最高的 modifyHeaders 规则"这一行为是本设计的前提，
+   `verify-cookiereplay` 的 E 组反证在真浏览器里盯着它。
    ★ 另外 Cookie 规则**刻意不按 scheme 限定**：Cookie 有「回放」和「剥离」两种语义，
    若只对 https 生效，http 请求既不会回放也不会剥离，真实 jar 的 Cookie 会自己发出去，
    反而破坏「真实 jar 对绑定标签隐身」这条核心性质。http 降级时的 Cookie 暴露是这条
@@ -94,10 +97,11 @@ MAIN world 壳（我们的代码，但与页面 JS 同一 realm）
 ```powershell
 npm run typecheck
 npm run build
-node tools/verify/verify-frameisolation.mjs     # A–J 十组，秒级
-node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（9 条必须变红）
+node tools/verify/verify-frameisolation.mjs     # A–K 十一组，秒级
+node tools/verify/verify-falsify-frameisolation.mjs  # 上一条的反证（10 条必须变红）
 node tools/verify/verify-bindframe.mjs          # 真装 Chromium：广播 bind 也进不了跨域 iframe（8 项）
 node tools/verify/verify-dnrscheme.mjs          # 真装 Chromium：https 限定只对 https 生效（5 项）
+node tools/verify/verify-cookiereplay.mjs       # 真装 Chromium：跨域 iframe 借不到回放 Cookie（7 项）
 node tools/verify/run-all.mjs --static          # 28 个静态用例
 node tools/verify/verify-load.mjs               # 真装 Chromium，20 项
 ```

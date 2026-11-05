@@ -27,7 +27,12 @@ const COOKIE_BASE = 200_000;
 
 interface RuleMeta {
   authId?: number;
+  /** COOKIE 剥离规则（priority 1，全类型、无 initiator）：真实 jar 对绑定页签隐身 */
   cookieId?: number;
+  /** COOKIE 回放·导航（priority 2，main_frame/other，无 initiator） */
+  cookieNavId?: number;
+  /** COOKIE 回放·子资源（priority 2，其余类型，initiatorDomains=本账号站点） */
+  cookieSubId?: number;
   /** 当前 AUTH 规则的 token；null 表示未装 AUTH 规则 */
   token: string | null;
   /** 当前 COOKIE 规则的回放值；null 表示 remove（剥离）模式 */
@@ -76,6 +81,15 @@ const ALL_MATCH_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
   'media',
   'other',
 ] as chrome.declarativeNetRequest.ResourceType[];
+
+/** COOKIE 回放·导航条：`main_frame` 无 initiator；`other` 覆盖 `<a download>`。 */
+const COOKIE_NAV_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
+  'main_frame',
+  'other',
+] as chrome.declarativeNetRequest.ResourceType[];
+
+/** COOKIE 回放·子资源条：其余类型，要求 initiator 是本账号站点（v4.2.36）。 */
+const COOKIE_SUB_TYPES = ALL_MATCH_TYPES.filter((t) => !COOKIE_NAV_TYPES.includes(t));
 
 /**
  * Authorization 规则的资源类型（v4.2.33 收窄）。
@@ -245,16 +259,33 @@ function buildAuthRule(
 /**
  * COOKIE 规则：v3.6 起支持「按账号回放」——cookieHeader 非 null 时 set（服务端始终看到
  * 一致的会话身份，对齐 SessionBox 核心机制）；null 时保持 remove（共享 jar 对绑定标签隐身）。
+ *
+ * ★★ v4.2.36：回放拆成两条（导航 / 子资源），剥离保留一条全类型兜底。
+ *
+ *   背景：一条「全类型 + 无 initiatorDomains」的 set 规则，会让绑定页签里的**跨域
+ *   第三方 iframe** 发出的请求也带上本账号 Cookie —— 它读不到响应，但能触发以
+ *   "账号本人"身份执行的写请求（CSRF）。加 `initiatorDomains` 能挡住它，可是
+ *   `main_frame` 导航常常没有 initiator（地址栏、reload、SSO 跳转），单规则加了
+ *   就会掉登录。
+ *
+ *   所以按**优先级分层**（Chrome 对同一请求取优先级最高的 modifyHeaders 规则）：
+ *   - priority 1：全类型 remove，无 initiator。真实 jar 的 Cookie 对绑定页签始终
+ *     隐身；跨域 iframe 发起的请求落到这一条 ⇒ 没有 Cookie，也不会漏出真实 jar。
+ *   - priority 2：main_frame/other 的 set（导航、下载），无 initiator；
+ *   - priority 2：其余子资源类型的 set，`initiatorDomains` = 本账号站点。
+ *   页面自己发起的子资源 / 同源 iframe（initiator 是站点）拿回放值；跨域 iframe
+ *   拿不到（只剩 remove 那条）。
  */
 function buildCookieRule(
   ruleId: number,
   host: string,
   tabId: number,
   cookieHeader: string | null,
+  kind: 'strip' | 'nav' | 'sub' = 'strip',
 ): chrome.declarativeNetRequest.Rule {
   return asRule({
     id: ruleId,
-    priority: 1,
+    priority: kind === 'strip' ? 1 : 2,
     action: {
       type: 'modifyHeaders',
       requestHeaders: [
@@ -264,9 +295,15 @@ function buildCookieRule(
       ],
     },
     condition: {
-      // 全类型覆盖：绑定标签页的出站 Cookie 完全由本规则决定，与真实 jar 无关
-      resourceTypes: ALL_MATCH_TYPES,
+      // strip：全类型覆盖，绑定页签的出站 Cookie 完全由本规则决定，与真实 jar 无关；
+      // nav/sub：只覆盖各自那一半（见上方分层说明）。
+      resourceTypes: kind === 'strip'
+        ? ALL_MATCH_TYPES
+        : kind === 'nav' ? COOKIE_NAV_TYPES : COOKIE_SUB_TYPES,
       requestDomains: [hostNoPortOf(host), parentDomainOf(hostNoPortOf(host))],
+      // ★ 只有子资源那条按发起方限定；strip 与 nav 必须保持"无 initiator"（否则
+      //   地址栏/reload/SSO 跳转这类没有 initiator 的导航会掉登录）。
+      ...(kind === 'sub' ? { initiatorDomains: [hostNoPortOf(host)] } : {}),
       tabIds: [tabId],
     },
   });
@@ -326,17 +363,54 @@ export const tabRules = {
       meta.token = null;
     }
 
-    // COOKIE 规则（首次安装，或回放值发生变化时重建）
-    if (meta.cookieId === undefined || meta.cookieValue !== wanted) {
-      if (meta.cookieId !== undefined) {
-        removes.push(meta.cookieId);
-        meta.cookieId = undefined;
-      }
+    // COOKIE 剥离规则（v4.2.36：**始终存在**）。它是绑定页签的兜底：真实 jar 的
+    // Cookie 对绑定页签隐身；跨域 iframe 发起的请求在本页签没有更优先的 set 规则，
+    // 落到这条 remove 上 ⇒ 既不带账号 Cookie，也不会漏出真实 jar。
+    if (meta.cookieId === undefined) {
       const ruleId = nextCookieId++;
-      if (await addOne(buildCookieRule(ruleId, host, tabId, wanted))) {
+      if (await addOne(buildCookieRule(ruleId, host, tabId, null, 'strip'))) {
         meta.cookieId = ruleId;
-        meta.cookieValue = wanted;
       }
+    }
+
+    // COOKIE 回放规则（v4.2.36：nav + sub 两条成对）。回放值变化、任一条缺失、
+    // 或从回放切到剥离，都要把两条旧 set 规则摘掉重装。
+    if (wanted === null) {
+      if (meta.cookieNavId !== undefined) {
+        removes.push(meta.cookieNavId);
+        meta.cookieNavId = undefined;
+      }
+      if (meta.cookieSubId !== undefined) {
+        removes.push(meta.cookieSubId);
+        meta.cookieSubId = undefined;
+      }
+      meta.cookieValue = null;
+    } else if (
+      meta.cookieValue !== wanted
+      || meta.cookieNavId === undefined
+      || meta.cookieSubId === undefined
+    ) {
+      if (meta.cookieNavId !== undefined) {
+        removes.push(meta.cookieNavId);
+        meta.cookieNavId = undefined;
+      }
+      if (meta.cookieSubId !== undefined) {
+        removes.push(meta.cookieSubId);
+        meta.cookieSubId = undefined;
+      }
+      const navId = nextCookieId++;
+      const navOk = await addOne(buildCookieRule(navId, host, tabId, wanted, 'nav'));
+      if (navOk) {
+        meta.cookieNavId = navId;
+      }
+      const subId = nextCookieId++;
+      const subOk = await addOne(buildCookieRule(subId, host, tabId, wanted, 'sub'));
+      if (subOk) {
+        meta.cookieSubId = subId;
+      }
+      // 两条都装上才算回放就绪；只装一条时把值置空，下一次 sync 会整体重建，
+      // 避免「一条生效一条没装」被当成已配置（半回放比不回放更隐蔽）。
+      meta.cookieValue = navOk && subOk ? wanted : null;
     }
 
     // AUTH 规则
@@ -381,12 +455,16 @@ export const tabRules = {
     //     平台照样能打开，只是**以错误的身份**在跑。
     //     这正是 PITFALLS #1/#8 描述的那类静默失效，所以这里分成两级记。
     const authApplied = meta.authId !== undefined;
-    const cookieApplied = meta.cookieId !== undefined;
-    log.debug('applyBinding tab=%d token=%s cookie=%s → cookieId=%s authId=%s',
+    // v4.2.36：剥离规则恒需存在；回放模式还需 nav + sub 两条 set 规则都装上。
+    const cookieApplied = meta.cookieId !== undefined
+      && (wanted === null || (meta.cookieNavId !== undefined && meta.cookieSubId !== undefined));
+    log.debug('applyBinding tab=%d token=%s cookie=%s → cookieId=%s navId=%s subId=%s authId=%s',
       tabId,
       token ? '有' : '无',
       wanted ? `回放${wanted.length}B` : '剥离',
       meta.cookieId ?? '-',
+      meta.cookieNavId ?? '-',
+      meta.cookieSubId ?? '-',
       meta.authId ?? '-');
     if (token !== null && !authApplied) {
       // 有 token 却装不上 AUTH 规则 ⇒ 该页签的请求**不会带正确的 Bearer**
@@ -399,7 +477,7 @@ export const tabRules = {
         tabId, wanted ? '应回放但未回放' : '应剥离但未剥离');
     }
     void diag(
-      `applyBinding tab=${tabId} token=${token ? '有' : '无'} cookie=${wanted ? `回放${wanted.length}B` : '剥离'} cookieId=${meta.cookieId ?? '-'} authId=${meta.authId ?? '-'}`,
+      `applyBinding tab=${tabId} token=${token ? '有' : '无'} cookie=${wanted ? `回放${wanted.length}B` : '剥离'} cookieId=${meta.cookieId ?? '-'} navId=${meta.cookieNavId ?? '-'} subId=${meta.cookieSubId ?? '-'} authId=${meta.authId ?? '-'}`,
     );
   },
 
@@ -412,6 +490,12 @@ export const tabRules = {
     const removes: number[] = [];
     if (meta.cookieId !== undefined) {
       removes.push(meta.cookieId);
+    }
+    if (meta.cookieNavId !== undefined) {
+      removes.push(meta.cookieNavId);
+    }
+    if (meta.cookieSubId !== undefined) {
+      removes.push(meta.cookieSubId);
     }
     if (meta.authId !== undefined) {
       removes.push(meta.authId);
@@ -502,6 +586,8 @@ export const tabRules = {
         t,
         authId: m.authId ?? null,
         cookieId: m.cookieId ?? null,
+        cookieNavId: m.cookieNavId ?? null,
+        cookieSubId: m.cookieSubId ?? null,
         token: m.token ? '有' : '无',
         cookie: m.cookieValue ? `回放${m.cookieValue.length}B` : '剥离',
       })),

@@ -8,7 +8,7 @@
  * 本仓规矩（`tools/verify/README.md`「写新验证脚本的四条规矩」之 4）：
  * **写完断言先问"拆掉什么它才会红"**，答不上来说明它没在验任何东西。
  *
- * `verify-frameisolation.mjs` 的九组断言**全是静态形状**，而静态形状最容易写成
+ * `verify-frameisolation.mjs` 的十组断言**全是静态形状**，而静态形状最容易写成
  * 恒真（锚点选错、正则太松、窗口划错都会让它永远绿）。这里把仓库复制到 `tmp/`，
  * 对副本逐个注入"修复前"的写法，要求判据**必须变红，且必须红在对的那一节**。
  *
@@ -27,6 +27,7 @@
  * | 删掉"裸 JWT"打码规则 | H |
  * | 删掉 `locationMatchesHost` 调用 | I |
  * | 删掉 `regexFilter: '^https://'` | J |
+ * | 删掉 Cookie 子资源规则的 `initiatorDomains` | K |
  *
  * ★ 每个 `poke()` 的锚点**必须唯一**：`String.replace` 只改第一处，"第一处不是想的
  *   那处"不会报错，症状是"判据没变红"，很容易被误读成"判据恒真"。
@@ -198,6 +199,16 @@ const CASES = [
     apply: () => poke(
       'packages/extension/src/background/core/tab-rules.ts',
       "      ...(scheme === 'https' ? { regexFilter: '^https://' } : {}),\n",
+      '',
+    ),
+  },
+  {
+    name: 'K. 去掉 Cookie 子资源规则的 initiatorDomains',
+    section: '=== K.',
+    file: 'packages/extension/src/background/core/tab-rules.ts',
+    apply: () => poke(
+      'packages/extension/src/background/core/tab-rules.ts',
+      "      ...(kind === 'sub' ? { initiatorDomains: [hostNoPortOf(host)] } : {}),\n",
       '',
     ),
   },

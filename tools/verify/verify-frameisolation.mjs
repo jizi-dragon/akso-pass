@@ -204,10 +204,11 @@ console.log('\n=== E. DNR 只给"站点自己发起的请求"加 Bearer ===');
     } else {
       fail('buildAuthRule 没有使用 AUTH_MATCH_TYPES');
     }
-    if (/function buildCookieRule[\s\S]*?resourceTypes:\s*ALL_MATCH_TYPES/.test(tr)) {
-      ok('Cookie 规则仍覆盖全部资源类型（静态资源也要带会话 Cookie）');
+    if (/kind === 'strip'\s*\n?\s*\? ALL_MATCH_TYPES/.test(tr)
+      || /resourceTypes:\s*kind === 'strip'\s*\n?\s*\? ALL_MATCH_TYPES/.test(tr)) {
+      ok('Cookie 剥离规则仍覆盖全部资源类型（含受保护图片/字体，静态资源不掉会话）');
     } else {
-      fail('Cookie 规则被误收窄 ⇒ 受保护图片/字体等子资源会掉会话');
+      fail('Cookie 剥离规则被误收窄 ⇒ 受保护图片/字体等子资源会掉会话或漏真实 jar');
     }
   }
 }
@@ -323,6 +324,54 @@ console.log('\n=== J. https 账号的 Bearer 不下明文 ===');
     ok('scheme 从"未知"变为已知时也重建 AUTH 规则（升级前的持久化快照不带 scheme）');
   } else {
     fail('scheme 变更判据排除了 undefined ⇒ 旧快照恢复的 https 账号会保留一条无正则的 AUTH 规则');
+  }
+}
+
+// ---------------------------------------------------------------- K. Cookie 回放分层（v4.2.36）
+console.log('\n=== K. 跨域 iframe 借不到回放 Cookie ===');
+{
+  const cookieBody = bodyOf(tr, 'function buildCookieRule(', '\n}');
+  if (!cookieBody) {
+    fail('找不到 buildCookieRule() —— 判据锚点失效');
+  } else if (/kind:\s*'strip'\s*\|\s*'nav'\s*\|\s*'sub'\s*=\s*'strip'/.test(tr)
+    && /priority:\s*kind === 'strip' \? 1 : 2/.test(cookieBody)) {
+    ok('Cookie 规则按 strip(1)/nav+sub(2) 分层（高优先级规则胜出，跨域 iframe 落到 strip）');
+  } else {
+    fail('Cookie 规则没有分层 ⇒ 一条无 initiator 的 set 会让跨域 iframe 带上账号 Cookie（CSRF）');
+  }
+  if (/const COOKIE_NAV_TYPES[\s\S]{0,200}'main_frame'[\s\S]{0,80}'other'/.test(tr)
+    && /const COOKIE_SUB_TYPES = ALL_MATCH_TYPES\.filter/.test(tr)) {
+    ok('导航条覆盖 main_frame/other，子资源条覆盖其余类型（没有漏网类型）');
+  } else {
+    fail('导航/子资源类型划分缺失或漏类型');
+  }
+  if (/kind === 'sub' \? \{ initiatorDomains: \[hostNoPortOf\(host\)\] \} : \{\}/.test(cookieBody)) {
+    ok('只有子资源条带 initiatorDomains（strip/nav 不能带，否则无发起方的导航掉登录）');
+  } else {
+    fail('initiatorDomains 的适用面不对：要么跨域 iframe 挡住不，要么导航掉登录');
+  }
+  if (/buildCookieRule\(ruleId, host, tabId, null, 'strip'\)/.test(tr)
+    && /meta\.cookieId === undefined/.test(tr)) {
+    ok('applyBinding 始终安装 strip 兜底规则（真实 jar 对绑定页签隐身）');
+  } else {
+    fail('strip 规则不是恒装 ⇒ 回放模式下真实 jar 的 Cookie 会漏出去');
+  }
+  if (/buildCookieRule\(navId, host, tabId, wanted, 'nav'\)/.test(tr)
+    && /buildCookieRule\(subId, host, tabId, wanted, 'sub'\)/.test(tr)) {
+    ok('回放同时安装 nav 与 sub 两条规则');
+  } else {
+    fail('回放只装了单条规则 ⇒ 要么跨域 iframe 能借 Cookie，要么导航/子资源缺回放');
+  }
+  if (/const cookieApplied = meta\.cookieId !== undefined[\s\S]{0,160}meta\.cookieNavId !== undefined && meta\.cookieSubId !== undefined/.test(tr)) {
+    ok('回放就绪要求 strip+nav+sub 三条齐备（半回放会被判成未配置并重建）');
+  } else {
+    fail('cookieApplied 判据不完整 ⇒ 残缺配置会被当成已就绪');
+  }
+  if (/if \(meta\.cookieNavId !== undefined\) \{\s*removes\.push\(meta\.cookieNavId\)/.test(tr)
+    && /removes\.push\(meta\.cookieSubId\)/.test(tr)) {
+    ok('解绑/重建时摘除 nav+sub 两条 set 规则（不留半条旧回放）');
+  } else {
+    fail('clearTab/重建遗漏 nav/sub ⇒ 旧账号 Cookie 可能继续被回放');
   }
 }
 

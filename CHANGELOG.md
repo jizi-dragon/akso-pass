@@ -5,6 +5,31 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.36（2026-11-05）
+
+### Cookie 回放按发起方分层：跨域 iframe 借不到账号 Cookie
+
+- **风险（审计报告残留项）**：COOKIE 规则是「全类型 + set + 无 `initiatorDomains`」，
+  绑定页签里的**跨域第三方 iframe** 向账号站点发起的请求也会被塞进账号 Cookie。
+  它读不到响应，但能触发以"账号本人"身份执行的写请求（CSRF）；反过来，单规则若直接
+  加 `initiatorDomains`，`main_frame` 导航（地址栏、reload、SSO 跳转）常常没有
+  initiator，会整片掉登录。
+- **修正**：拆成三层，按 Chrome「同一请求取优先级最高的 modifyHeaders 规则」叠加：
+  - priority 1：全类型 `remove`（无 initiator）—— 真实 jar 对绑定页签隐身，同时是
+    跨域 iframe 的兜底；
+  - priority 2：`main_frame`/`other` 的 `set`（无 initiator）—— 导航/下载不回退；
+  - priority 2：其余子资源 `set` + `initiatorDomains: [账号站点]` —— 页面自己发起
+    的子资源与会话内同源 iframe 拿回放值，跨域 iframe 落到 remove 那条。
+  `applyBinding` 始终安装 strip 兜底；回放需 nav + sub 两条都装上才算就绪（半回放
+  会按未配置重建）；切换账号/解绑时三条一起摘。
+- **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；
+  `verify-frameisolation` 新增 K 组（7 条：分层/类型划分/initiator 适用面/恒装/
+  成对安装/就绪判据/解绑摘除）；反证新增 K 案例（10/10 变红）；
+  新增浏览器级 `verify-cookiereplay` **7/7** —— 顶层 `localhost` + iframe
+  `127.0.0.1`，断言基线真实 jar 的 `real=1` 会随请求出去、装规则后顶层拿到
+  `SID=ACC` 且 `real=1` 被剥、跨域 iframe 零 Cookie、`main_frame` 导航仍回放；
+  ★ 反证：去掉子资源规则的 `initiatorDomains` 后同一个 iframe 立刻拿到 `SID=ACC`。
+
 ## 4.2.35（2026-11-05）
 
 ### Authorization 按 scheme 限定：https 账号的 Bearer 不落明文
