@@ -37,6 +37,7 @@ npm run typecheck  # tsc --noEmit
 |---|---|
 | [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md) | **用户手册**：功能点清单 + 使用说明 |
 | [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md) | **现状快照**：隔离平面总表（历史对照）、版本里程碑、安全边界 |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | **安全模型**：资产、信任边界、控制矩阵、残余风险与验证入口（v4.2.32） |
 | [`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md) | 代码库导读：架构、关键模块、数据流、约定、风险 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本明细（含每轮缺陷的根因定位过程） |
 | [`docs/BROWSER-ONLY-MULTILOGIN-RESEARCH.md`](docs/BROWSER-ONLY-MULTILOGIN-RESEARCH.md) | 历史调研：纯扩展多账号并行的方案论证与先例（v3.4 时代） |
@@ -48,6 +49,7 @@ npm run typecheck  # tsc --noEmit
 - **Web Worker 内打开的 IndexedDB** 不受主世界补丁（待观测）。
 - Cookie 快照仅登录时点采集一次；若服务端在会话中轮转会话标识，该账号需重新登录刷新快照（JWT 主体不受影响）。
 - 轮盘页面浮层需站点授权；未授权站点按设计降级为独立小窗。
+- 上述每一项的补偿控制、**哪些是有意接受而不是漏修**、以及攻击面假设，见 [`docs/SECURITY.md`](docs/SECURITY.md)。
 
 ---
 
