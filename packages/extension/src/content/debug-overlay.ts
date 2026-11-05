@@ -133,7 +133,12 @@ async function mount(): Promise<void> {
   shadow.append(hint);
 
   document.documentElement.append(host);
-  requestAnimationFrame(() => host.classList.add('show'));
+  // ★ 共用网格样式里有 `.wheel-root:not(.in){opacity:.35}` —— 不加 `in` 整个浮层是半透明的
+  //   （截图时才会发现：浏览器里看着"能读"，但对比度已经掉了）。
+  requestAnimationFrame(() => {
+    host.classList.add('show');
+    root.classList.add('in');
+  });
 
   const $ = <T extends Element>(sel: string): T => {
     const el = shadow.querySelector(sel);
