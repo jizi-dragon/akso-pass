@@ -22,7 +22,8 @@
   若只对 https 生效，http 请求既不会回放也不会剥离，真实 jar 的 Cookie 会自己发出去，
   反而破坏「真实 jar 对绑定标签隐身」。该降级风险记入 `docs/SECURITY.md` 残余风险。
 - **验证**：`npm run typecheck` / `npm run build` / 静态门禁 **28/28**；
-  `verify-frameisolation` 新增 J 组（25 条）；反证新增 J 案例（9/9 变红）；
+  `verify-frameisolation` 新增 J 组（26 条，含「scheme 从未知变为已知时也要重建规则」）；
+  反证新增 J 案例（9/9 变红）；
   新增浏览器级 `verify-dnrscheme` **5/5** —— 本地 `http://qllocal.test` 与
   `https://qllocal.test` 各起记录请求头的服务，断言带 `regexFilter: '^https://'` 的
   规则只给 https 加头、http 不加，且去掉正则后 http 又带上头（证明缺席来自正则）。

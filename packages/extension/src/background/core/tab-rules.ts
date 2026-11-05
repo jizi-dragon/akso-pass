@@ -212,7 +212,7 @@ function buildAuthRule(
       //   regexFilter 与 requestDomains 是 AND 关系（域条件先筛，regex 只在候选上跑），
       //   正则本身只锚 scheme，不重复写 host。
       ...(scheme === 'https' ? { regexFilter: '^https://' } : {}),
-      // 全资源类型（与 COOKIE 规则同宽，v3.13.2）：
+      // 资源类型：AUTH_MATCH_TYPES（v4.2.33 从全类型收窄，静态资源不再带 Bearer）：
       // - xmlhttprequest/websocket：API 与 WS 握手；
       // - sub_frame：iframe 内嵌文档（低代码平台「管理端」控制台常以 iframe 承载，
       //   无 Bearer 的子框架会被服务端当匿名拒入）；
@@ -314,9 +314,13 @@ export const tabRules = {
     const removes: number[] = [];
 
     // ★ v4.2.35：scheme 变了（账号自学习翻转）⇒ 旧 AUTH 规则整条作废重建。
+    //   ★ 条件里**不排除** undefined：升级前的持久化快照没有 scheme，恢复时先按
+    //     undefined 装了一条无正则的规则；随后 syncAccountRules 带着真实 scheme 进来，
+    //     若只判 "旧值已知且不同"，这条规则会留到 token 变化为止（https 账号仍可被
+    //     降级到 http 时带上 Bearer）。所以 undefined → 已知也要重建。
     //   正则只写在 AUTH 规则上；Cookie 规则不按 scheme 限定（剥离语义要覆盖 http），
     //   所以这里只清 authId，不动 cookieId。
-    if (meta.scheme !== undefined && meta.scheme !== scheme && meta.authId !== undefined) {
+    if (meta.scheme !== scheme && meta.authId !== undefined) {
       removes.push(meta.authId);
       meta.authId = undefined;
       meta.token = null;

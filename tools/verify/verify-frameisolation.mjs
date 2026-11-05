@@ -319,6 +319,11 @@ console.log('\n=== J. https 账号的 Bearer 不下明文 ===');
   } else {
     fail('绑定没有携带/恢复 scheme ⇒ SW 冷启动后 https 限定消失');
   }
+  if (/if \(meta\.scheme !== scheme && meta\.authId !== undefined\)/.test(tr)) {
+    ok('scheme 从"未知"变为已知时也重建 AUTH 规则（升级前的持久化快照不带 scheme）');
+  } else {
+    fail('scheme 变更判据排除了 undefined ⇒ 旧快照恢复的 https 账号会保留一条无正则的 AUTH 规则');
+  }
 }
 
 console.log(`\n${bad === 0 ? 'RESULT: OK' : `RESULT: ${bad} 处不符`}`);
