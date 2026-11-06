@@ -7,6 +7,8 @@
  *     （chunk 里 `objectId: P.id`，`P` 是 `useSearchParams`；`_searchKey` 只是可选的搜索态，不传也行）
  *   - 对象表单布局：`/admin/config/form-layout/list?bid=<objectId>`
  *     （chunk 里 `basicObjectGetById(N.bid)`，`N` 同样来自 search params）
+ *   - 对象关系：`/admin/config/basic-objects/edit/relation?id=<objectId>`
+ *     （管理端对象配置 tab 之一，与 base 页共用 `?id=` 取参）
  *   - 对象生命周期详情：`/admin/config/lifecycle/<lifeCycleId>?__edit=2`
  *   - 工作流列表：`/admin/config/workflow`
  *
@@ -45,6 +47,17 @@ export function objectListLayoutUrl(origin: string, objectId: string): string {
  */
 export function objectFormLayoutUrl(origin: string, objectId: string): string {
   return `${origin}/admin/config/form-layout/list?bid=${encodeURIComponent(objectId)}`;
+}
+
+/**
+ * 对象的「对象关系」配置页（v4.2.52）。
+ *
+ * ★ 与管理端对象配置的 base / list-layout 同属 `/admin/config/basic-objects/edit` 下的子页，
+ *   共用 `?id=<objectId>` 取参；关系定义（父子关系、引用关系）都在这一页。
+ *   （注释里不写 `edit` 后面的星号通配 —— 字符序列会提前打开块注释，静态门禁会红。）
+ */
+export function objectRelationUrl(origin: string, objectId: string): string {
+  return `${origin}/admin/config/basic-objects/edit/relation?id=${encodeURIComponent(objectId)}`;
 }
 
 /**
@@ -106,6 +119,14 @@ export function buildDebugTargets(
       hint: '该对象的表单布局（详情页字段、分组、只读规则）',
       href: objectFormLayoutUrl(origin, object.id),
       accent: '#06b6d4',
+    },
+    {
+      kind: 'relation',
+      title: '对象关系',
+      subtitle: '父子 / 引用关系',
+      hint: '该对象的关系定义（父子关系、引用关系、级联规则）',
+      href: objectRelationUrl(origin, object.id),
+      accent: '#8b5cf6',
     },
     {
       kind: 'lifecycle',

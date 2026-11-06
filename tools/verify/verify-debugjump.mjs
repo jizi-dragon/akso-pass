@@ -238,6 +238,11 @@ try {
     targetOf('formLayout')?.href ?? '',
   );
   check(
+    'A 对象关系地址',
+    targetOf('relation')?.href === `${BASE}/admin/config/basic-objects/edit/relation?id=${OBJ}`,
+    targetOf('relation')?.href ?? '',
+  );
+  check(
     'A 生命周期地址',
     targetOf('lifecycle')?.href === `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`,
     targetOf('lifecycle')?.href ?? '',
@@ -247,8 +252,8 @@ try {
   check('A 菜单名透传', a.data?.menus?.[0]?.name === '变更控制单', JSON.stringify(a.data?.menus ?? []));
   check(
     'A 候选是数据数组（顺序 + 每格自带标题/说明）',
-    a.data?.targets?.length === 6 &&
-      a.data.targets.map((t) => t.kind).join(',') === 'object,listLayout,formLayout,lifecycle,workflow,menu' &&
+    a.data?.targets?.length === 7 &&
+      a.data.targets.map((t) => t.kind).join(',') === 'object,listLayout,formLayout,relation,lifecycle,workflow,menu' &&
       a.data.targets.every((t) => t.title && typeof t.accent === 'string'),
     JSON.stringify(a.data?.targets ?? []).slice(0, 160),
   );
@@ -273,9 +278,9 @@ try {
   check('E Alt+2 能打开调试浮层', overlay.host);
   check('E 浮层里显示对象名', /演示对象/.test(overlay.title), overlay.title);
   check(
-    'E 候选矩阵由数据渲染（6 格，顺序与后台 targets 一致）',
-    overlay.kinds.join(',') === 'object,listLayout,formLayout,lifecycle,workflow,menu' &&
-      overlay.names.join(',') === '对象配置,列表布局,表单布局,对象生命周期,工作流,业务菜单' &&
+    'E 候选矩阵由数据渲染（7 格，顺序与后台 targets 一致）',
+    overlay.kinds.join(',') === 'object,listLayout,formLayout,relation,lifecycle,workflow,menu' &&
+      overlay.names.join(',') === '对象配置,列表布局,表单布局,对象关系,对象生命周期,工作流,业务菜单' &&
       overlay.hint,
     `${overlay.kinds.join(',')} / ${overlay.names.join(',')}`,
   );
@@ -352,6 +357,12 @@ try {
   check('H 对象配置页能反查', h.ok && h.data?.object?.id === OBJ, JSON.stringify(h).slice(0, 200));
   check('H 反查后仍有业务菜单', h.ok && h.data?.menus?.[0]?.name === '变更控制单', JSON.stringify(h.data?.menus ?? []));
 
+  /* H2. 反向解析：对象关系页（同属 basic-objects/edit，?id= 取参，v4.2.52） */
+  await p5.goto(`${BASE}/admin/config/basic-objects/edit/relation?id=${OBJ}`);
+  await p5.waitForTimeout(500);
+  const h2 = await resolveFor(p5);
+  check('H2 对象关系页能反查', h2.ok && h2.data?.object?.id === OBJ, JSON.stringify(h2).slice(0, 160));
+
   /* I. 反向解析：生命周期页（只有 lifecycleId，扫 AllEnableObjects 反查对象） */
   const allBefore = calls.allObjects;
   const p6 = await ctx.newPage();
@@ -376,6 +387,7 @@ try {
 
 console.log(`=== ${results.filter(Boolean).length}/${results.length} 通过 ===`);
 process.exit(results.every(Boolean) ? 0 : 1);
+
 
 
 

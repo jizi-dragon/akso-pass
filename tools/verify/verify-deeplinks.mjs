@@ -40,7 +40,7 @@ await build({
   format: 'cjs',
   logLevel: 'silent',
 });
-const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, workflowEditUrl, objectListLayoutUrl, objectFormLayoutUrl, buildDebugTargets } = await import(
+const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, workflowEditUrl, objectListLayoutUrl, objectFormLayoutUrl, objectRelationUrl, buildDebugTargets } = await import(
   pathToFileURL(OUT).href + `?t=${Date.now()}`
 );
 
@@ -90,42 +90,45 @@ console.log('E. 候选矩阵可扩展（加一条就多一格）');
 const object = { id: OBJ, code: 'change_control__c', name: '变更控制' };
 const lifecycle = { id: LIFE, name: '变更控制生命周期' };
 const baseTargets = buildDebugTargets(BASE, object, lifecycle);
-eq('默认五条候选', baseTargets.length, 5);
-eq('候选顺序稳定', baseTargets.map((t) => t.kind).join(','), 'object,listLayout,formLayout,lifecycle,workflow');
+eq('默认六条候选', baseTargets.length, 6);
+eq('候选顺序稳定', baseTargets.map((t) => t.kind).join(','), 'object,listLayout,formLayout,relation,lifecycle,workflow');
 eq('第一格指向对象配置', baseTargets[0].href, objectConfigUrl(BASE, OBJ));
 eq('第二格指向列表布局', baseTargets[1].href, objectListLayoutUrl(BASE, OBJ));
 eq('第三格指向表单布局', baseTargets[2].href, objectFormLayoutUrl(BASE, OBJ));
-eq('第四格指向生命周期', baseTargets[3].href, lifecycleConfigUrl(BASE, LIFE));
-eq('第五格指向工作流列表', baseTargets[4].href, workflowListUrl(BASE));
-eq('第五格是浮层内二级视图（不落平台列表页）', baseTargets[4].subview === 'workflows', true);
+eq('第四格指向对象关系', baseTargets[3].href, objectRelationUrl(BASE, OBJ));
+eq('第五格指向生命周期', baseTargets[4].href, lifecycleConfigUrl(BASE, LIFE));
+eq('第六格指向工作流列表', baseTargets[5].href, workflowListUrl(BASE));
+eq('第六格是浮层内二级视图（不落平台列表页）', baseTargets[5].subview === 'workflows', true);
 
 const extra = [{ kind: 'fields', title: '对象字段', subtitle: '预留的扩展位', href: `${BASE}/admin/config/x`, accent: '#d97706' }];
 const withExtra = buildDebugTargets(BASE, object, lifecycle, extra);
-eq('额外候选被追加（不是替换）', withExtra.length, 6);
-eq('额外候选保留自己的地址', withExtra[5].href, `${BASE}/admin/config/x`);
+eq('额外候选被追加（不是替换）', withExtra.length, 7);
+eq('额外候选保留自己的地址', withExtra[6].href, `${BASE}/admin/config/x`);
 
 const noLife = buildDebugTargets(BASE, object, null);
-eq('没有生命周期时该格仍占位', noLife.length, 5);
-eq('没有生命周期时该格不可跳', noLife[3].href === null, true);
-eq('置灰格带原因', noLife[3].disabledReason === '该对象未启用生命周期', true);
+eq('没有生命周期时该格仍占位', noLife.length, 6);
+eq('没有生命周期时该格不可跳', noLife[4].href === null, true);
+eq('置灰格带原因', noLife[4].disabledReason === '该对象未启用生命周期', true);
 
 /* ---- F. 业务菜单（v4.2.51）：单个直接跳，多个先展开列表 ----
    菜单路径来自平台权限表，背景只负责拼 origin；这里钉住「单/多」两种形态。 */
 console.log('F. 业务菜单候选');
 const oneMenu = [{ id: 'm-1', name: '变更控制单', path: '/web/view?mid=m-1' }];
 const withOne = buildDebugTargets(BASE, object, lifecycle, [], oneMenu);
-eq('有菜单时多一格', withOne.length, 6);
-eq('第六格是业务菜单', withOne[5].kind, 'menu');
-eq('单个菜单直接指业务页', withOne[5].href, `${BASE}/web/view?mid=m-1`);
+eq('有菜单时多一格', withOne.length, 7);
+eq('第七格是业务菜单', withOne[6].kind, 'menu');
+eq('单个菜单直接指业务页', withOne[6].href, `${BASE}/web/view?mid=m-1`);
 const twoMenus = [oneMenu[0], { id: 'm-2', name: '变更台账', path: '/web/view?mid=m-2' }];
 const withTwo = buildDebugTargets(BASE, object, lifecycle, [], twoMenus);
-eq('多个菜单不直接跳（先展开列表）', withTwo[5].href, null);
-eq('多个菜单标记 menus 二级视图', withTwo[5].subview, 'menus');
-eq('多个菜单副标题给数量', withTwo[5].subtitle, '2 个入口');
-eq('没有菜单时不占格', buildDebugTargets(BASE, object, lifecycle, [], []).length, 5);
+eq('多个菜单不直接跳（先展开列表）', withTwo[6].href, null);
+eq('多个菜单标记 menus 二级视图', withTwo[6].subview, 'menus');
+eq('多个菜单副标题给数量', withTwo[6].subtitle, '2 个入口');
+eq('没有菜单时不占格', buildDebugTargets(BASE, object, lifecycle, [], []).length, 6);
 
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: FAIL（${bad} 项）`);
 process.exit(bad === 0 ? 0 : 1);
+
+
 
 
 

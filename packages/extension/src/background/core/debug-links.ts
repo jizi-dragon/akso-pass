@@ -127,8 +127,11 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
       }
     }
 
-    // 管理端其它配置页：对象配置 / 列表布局 / 对象接口用 ?id=，表单布局用 ?bid=
-    if (!objectId && /\/admin\/config\/(basic-objects\/edit\/(base|list-layout)|object-interface\/detail)\b/.test(pathname)) {
+    // 管理端其它配置页：对象配置 / 列表布局 / 对象关系用 ?id=，表单布局用 ?bid=
+    if (
+      !objectId &&
+      /\/admin\/config\/(basic-objects\/edit\/(base|list-layout|relation)|object-interface\/detail)\b/.test(pathname)
+    ) {
       objectId = read('id');
     }
     if (!objectId && /\/admin\/config\/form-layout\/list\b/.test(pathname)) {
