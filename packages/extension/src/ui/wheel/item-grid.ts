@@ -68,6 +68,8 @@ export interface ItemGridOpts {
   tip?: string;
   /** 是否显示左右箭头（单页时隐藏） */
   showNav?: boolean;
+  /** 页脚左侧附加内容（例如调试跳转的「复制 id」按钮）；不传则只有页码点/提示 */
+  footStart?: HTMLElement;
 }
 
 /** 建 HTML 元素（★ 不能用 `wheel-core.el()` —— 那个建的是 SVG 命名空间的元素） */
@@ -223,6 +225,10 @@ export function buildItemGrid(opts: ItemGridOpts): HTMLElement {
 
   /* ---------------- 页脚 ---------------- */
   const foot = h('div', 'ag-foot');
+  // 左侧扩展槽（调试跳转的「复制 id」按钮）；页码点与提示仍在右侧
+  if (opts.footStart) {
+    foot.append(opts.footStart);
+  }
   if (opts.pageCount > 1) {
     const dots = h('div', 'ag-dots');
     for (let i = 0; i < opts.pageCount; i++) {

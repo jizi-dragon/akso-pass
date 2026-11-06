@@ -487,6 +487,8 @@ export interface DebugTarget {
   kind: string;
   title: string;
   subtitle: string;
+  /** 悬停提示用的完整说明（格宽只有一列，`subtitle` 必须短） */
+  hint?: string;
   /** 由 background 用目标页签 origin 拼；`null` = 该候选不可跳（置灰） */
   href: string | null;
   /** 左侧色条颜色 */

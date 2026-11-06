@@ -25,7 +25,25 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const DIST = path.join(ROOT, 'dist');
 const TMP = path.join(ROOT, 'tmp');
 
-/* ---- 决策判据（v4.2.46）：跳转必须"以账号身份开新页签"，不能退回裸 tabs.create ---- */
+/* ---- 口径判据（v4.2.48）：调试浮层必须复用共用网格内核，不能自绘一套 ---- */
+{
+  const src = stripComments(
+    fs.readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'content', 'debug-overlay.ts'), 'utf8'),
+  );
+  const usesKernel = /import \{[^}]*\bbuildItemGrid\b[^}]*\bGRID_SLOTS\b[^}]*\} from '\.\.\/ui\/wheel\/item-grid'/.test(src);
+  const callsKernel = /buildItemGrid\(\{/.test(src);
+  const sharesFoot = /footStart:\s*foot/.test(src);
+  const noHandShell = !/ag-head/.test(src) && !/class="ag-cell/.test(src);
+  if (usesKernel && callsKernel && sharesFoot && noHandShell) {
+    console.log('  ✓ 调试浮层复用 buildItemGrid（5×4 定尺网格与另外三个浮层同一口径）');
+  } else {
+    console.log('  ✗ 调试浮层又变成自绘外壳了（应调用 buildItemGrid / 使用 GRID_SLOTS / footStart）');
+    process.exitCode = 1;
+    process.exit(1);
+  }
+}
+
+
 {
   const src = stripComments(
     fs.readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'background', 'service-worker.ts'), 'utf8'),

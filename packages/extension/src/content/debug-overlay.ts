@@ -1,28 +1,26 @@
 /**
- * 调试跳转浮层（v4.2.45，Alt+2；v4.2.46 统一视觉）。
+ * 调试跳转浮层（v4.2.45，Alt+2；v4.2.46 统一视觉；v4.2.48 改用共用网格内核）。
  *
  * background 对当前标签页 `executeScript` 注入本脚本；再次注入 = 关闭（幂等开关）。
  *
- * 三个按钮的目标地址**全部由 background 拼**（origin 取目标页签 URL），本脚本只负责
- * 展示与把点击转回 background —— 页面即使被 XSS，也改不了按钮指向哪里。
+ * 目标地址**全部由 background 拼**（origin 取目标页签 URL），本脚本只负责展示、
+ * 以及把点击转回 background —— 页面即使被 XSS，也改不了按钮指向哪里。
  *
- * ## 候选矩阵，不是固定三格（v4.2.47，用户反馈"未来还要加页面"）
+ * ## 与另外三个浮层同一条渲染口径（v4.2.48，用户质疑「没有统一弹出窗口径」）
  *
- * 网格内容由 `DebugLinks.targets` 驱动：数组有几条就渲染几格，3 列自动换行、
- * 超出高度可滚动（`ACCT_GRID_CSS` 的 `.ag-grid` 本来就带 `max-height + overflow-y`）。
+ * 不再自己拼 head / grid / foot：直接调 `buildItemGrid`（`ui/wheel/item-grid.ts`），
+ * 与账号（Alt+Q）、生命周期（Alt+W）、常用页面（Alt+1）**同一套 5 列 × 4 行定尺网格**：
+ * 页码点、左右箭头、滚轮翻页、不足 20 格补虚线占位、空态、页脚提示都来自同一个内核。
+ *
+ * 本文件只做两件事：
+ * 1. 把 `DebugLinks.targets` 映射成 `GridItem[]`（数组有几条就渲染几格）；
+ * 2. 给页脚左侧塞「复制 objectId / lifecycleId」——通过内核的 `footStart` 槽位。
+ *
  * **要加新的可跳转页面，只改 `shared/deeplinks.ts` 的 `buildDebugTargets`**，
  * 本文件不需要认识任何具体页面。
- *
- * ## 视觉与另外三个轮盘一致（v4.2.46，用户反馈"风格不一致"）
- *
- * 复用 `ACCT_GRID_CSS` 的同一套骨架：`.ag-head`（标题 + meta）、`.ag-cell`
- * （左侧色条 + 名称 + 说明）、`.ag-foot`、以及 `OVERLAY_CHROME_CSS` 的 `.hint` 药丸。
- * 不再自己画一张"对话框卡片"（kicker / 右上角 × / 大按钮列表）——那套视觉只此一家，
- * 和账号、状态、常用页面三个浮层放在一起明显不是同一个产品。
- *
- * 关闭方式也与它们一致：Esc（任意焦点）+ 点击遮罩空白处；不再提供 × 按钮。
  */
 import type { DebugLinks, Result } from '../shared/messages';
+import { buildItemGrid, GRID_SLOTS, type GridItem } from '../ui/wheel/item-grid';
 import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 
 const WIN = window as typeof window & {
@@ -31,20 +29,16 @@ const WIN = window as typeof window & {
 };
 const HOST_ID = 'ql-debug-overlay-host';
 
+/** 一页容量直接复用内核常量（5 × 4 = 20），避免两处数字各写一遍后漂移 */
+const PER_PAGE = GRID_SLOTS;
+
 const DEBUG_CSS = `
-.dbg-root{width:min(92vw,560px)}
-/* 3 列候选矩阵：行数由 targets 数量决定，多了换行、超出 66vh 滚动 */
-.dbg-grid{grid-auto-rows:86px;grid-auto-flow:row}
-.dbg-cell{align-items:flex-start;justify-content:center}
-.dbg-sub{
-  font-size:var(--fs-11,11px);line-height:1.35;color:#8494b4;white-space:normal;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
-.dbg-meta{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dbg-copies{display:flex;align-items:center;gap:var(--sp-2,8px);min-width:0}
+.dbg-root{width:min(92vw,720px)}
+.dbg-copies{display:flex;align-items:center;gap:var(--sp-2,8px);min-width:0;overflow:hidden}
 .dbg-copy{
   border:0;background:transparent;color:#66759b;font:inherit;font-size:var(--fs-11,11px);
   cursor:pointer;padding:var(--sp-hair,1px) var(--sp-2,8px);border-radius:var(--sb-radius-sm,8px);
+  white-space:nowrap;
 }
 .dbg-copy:hover{background:#f2f6ff;color:var(--acc,#1e6fff)}
 .dbg-copy:disabled{opacity:.45;cursor:default;background:transparent;color:#66759b}
@@ -89,62 +83,36 @@ async function mount(): Promise<void> {
 
   const root = document.createElement('div');
   root.className = 'wheel-root acct-grid dbg-root';
-  root.innerHTML = `
-    <div class="ag-wrap">
-      <div class="ag-head">
-        <div class="ag-title">
-          <span class="ag-box" data-el="title">调试跳转</span>
-          <span class="ag-meta dbg-meta" data-el="meta"></span>
-        </div>
-      </div>
-      <div class="ag-grid dbg-grid" data-el="grid" style="--ag-cols:3"></div>
-      <div class="ag-foot">
-        <div class="dbg-copies">
-          <button class="dbg-copy" data-copy="object" type="button" disabled>复制 objectId</button>
-          <button class="dbg-copy" data-copy="lifecycle" type="button" disabled>复制 lifecycleId</button>
-        </div>
-        <span class="ag-tip dbg-msg" data-el="msg">正在解析…</span>
-      </div>
-    </div>`;
-  shadow.append(root);
 
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.innerHTML = '<b>调试跳转</b><i></i><span>已登录平台即可使用</span><i></i><span><kbd>Esc</kbd> 关闭</span>';
-  shadow.append(hint);
-
+  hint.innerHTML =
+    '<b>调试跳转</b><i></i><span data-el="hint-text">正在解析…</span><i></i><span><kbd>Esc</kbd> 关闭</span>';
+  shadow.append(root, hint);
   document.documentElement.append(host);
-  // ★ 共用网格样式里有 `.wheel-root:not(.in){opacity:.35}` —— 不加 `in` 整个浮层是半透明的
-  //   （截图时才会发现：浏览器里看着"能读"，但对比度已经掉了）。
-  requestAnimationFrame(() => {
-    host.classList.add('show');
-    root.classList.add('in');
-  });
 
-  const $ = <T extends Element>(sel: string): T => {
-    const el = shadow.querySelector(sel);
-    if (!el) {
-      throw new Error(`调试浮层缺少节点：${sel}`);
-    }
-    return el as T;
-  };
+  const hintText = hint.querySelector('[data-el="hint-text"]') as HTMLElement | null;
 
-  const wrapEl = $<HTMLElement>('.ag-wrap');
-  const titleEl = $<HTMLElement>('[data-el="title"]');
-  const metaEl = $<HTMLElement>('[data-el="meta"]');
-  const msgEl = $<HTMLElement>('[data-el="msg"]');
-  const gridEl = $<HTMLElement>('[data-el="grid"]');
-  const copyBtns = Array.from(shadow.querySelectorAll<HTMLButtonElement>('[data-copy]'));
+  /* 页脚左侧：复制按钮 + 消息。节点跨页复用，每次 draw 由内核重新挂到 ag-foot。 */
+  const foot = document.createElement('div');
+  foot.className = 'dbg-copies';
+  const copyObj = makeCopyButton('复制 objectId');
+  const copyLife = makeCopyButton('复制 lifecycleId');
+  const msg = document.createElement('span');
+  msg.className = 'dbg-msg';
+  foot.append(copyObj, copyLife, msg);
 
   let links: DebugLinks | null = null;
+  let page = 0;
+  let failText = '';
   let closing = false;
 
   const prevOverflow = document.documentElement.style.overflow;
   document.documentElement.style.overflow = 'hidden';
 
   const setMsg = (text: string, kind: 'ok' | 'bad' | '' = ''): void => {
-    msgEl.textContent = text;
-    msgEl.className = `ag-tip dbg-msg${kind ? ` ${kind}` : ''}`;
+    msg.textContent = text;
+    msg.className = `dbg-msg${kind ? ` ${kind}` : ''}`;
   };
 
   const close = (): void => {
@@ -161,6 +129,17 @@ async function mount(): Promise<void> {
   WIN.__QL_DEBUG_CLEANUP__ = close;
 
   function onKey(e: KeyboardEvent): void {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const pages = links ? Math.max(1, Math.ceil(links.targets.length / PER_PAGE)) : 1;
+      if (pages <= 1) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      page += e.key === 'ArrowRight' ? 1 : -1;
+      draw();
+      return;
+    }
     if (e.key !== 'Escape') {
       return;
     }
@@ -169,7 +148,8 @@ async function mount(): Promise<void> {
     close();
   }
   document.addEventListener('keydown', onKey, true);
-  // 与三个轮盘一致：点遮罩空白处关闭（点卡片内部不关）
+
+  // 与三个轮盘一致：点遮罩空白处关闭（点面板内部不关）
   host.addEventListener('click', (e) => {
     if (e.target === host) {
       close();
@@ -207,81 +187,116 @@ async function mount(): Promise<void> {
     }
   };
 
-  const render = (data: DebugLinks): void => {
-    links = data;
-    titleEl.textContent = data.object.name || data.object.code || data.object.id;
-    metaEl.textContent = [data.object.code, data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期']
-      .filter(Boolean)
-      .join(' · ');
+  /** 唯一绘制入口：候选 → GridItem，几何/分页/滚轮全部交给 buildItemGrid */
+  function draw(): void {
+    const data = links;
+    const pages = data ? Math.max(1, Math.ceil(data.targets.length / PER_PAGE)) : 1;
+    page = Math.min(Math.max(page, 0), pages - 1);
+    const slice = data ? data.targets.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE) : [];
 
-    // ★ 候选由 background 给（v4.2.47）：数组有几条就渲染几格，多了自动换行。
-    //   这里**不认识任何具体页面**，加新跳转只改 shared/deeplinks.ts。
-    gridEl.textContent = '';
-    for (const target of data.targets) {
-      const cell = document.createElement('button');
-      cell.type = 'button';
-      cell.className = 'ag-cell dbg-cell';
-      cell.style.setProperty('--acct', target.accent);
-      cell.dataset.kind = target.kind;
+    const items: GridItem[] = slice.map((target) => ({
+      key: target.kind,
+      label: target.title,
+      sub: target.subtitle,
+      accent: target.accent,
+      disabled: !target.href,
+      title: target.href ? (target.hint ?? `${target.title} — ${target.subtitle}`) : (target.disabledReason ?? target.title),
+    }));
 
-      const name = document.createElement('span');
-      name.className = 'ag-name';
-      name.textContent = target.title;
-      const sub = document.createElement('span');
-      sub.className = 'dbg-sub';
-      sub.textContent = target.subtitle;
-      cell.append(name, sub);
+    copyObj.disabled = !data?.object.id;
+    copyLife.disabled = !data?.lifecycle?.id;
 
-      if (!target.href) {
-        cell.disabled = true;
-        cell.classList.add('ag-cell-disabled');
-        cell.title = target.disabledReason ?? '暂不可跳转';
-      } else {
-        cell.addEventListener('click', () => void openTarget(target.href));
+    const grid = buildItemGrid({
+      items,
+      pageCount: pages,
+      pagePos: page,
+      title: data ? data.object.name || data.object.code || data.object.id : '调试跳转',
+      meta: data
+        ? [
+            data.object.code,
+            data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期',
+            pages > 1 ? `第 ${page + 1}/${pages} 页` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : '正在解析…',
+      onPage: (delta) => {
+        page += delta;
+        draw();
+      },
+      onPick: (kind) => {
+        const target = data?.targets.find((t) => t.kind === kind);
+        void openTarget(target?.href ?? null);
+      },
+      empty: data
+        ? { line1: '没有可跳转的目标', line2: '当前对象没有可用的管理端入口' }
+        : failText
+          ? { line1: '无法定位当前对象', line2: failText }
+          : { line1: '正在解析当前对象…', line2: '读取页面上下文与菜单权限' },
+      tip: pages > 1 ? '点击跳转 · 滚轮 / ← → 翻页' : '点击跳转',
+      footStart: foot,
+    });
+
+    // 判据与排错都按 kind 定位；内核给的是 data-item-key，这里补一个同名 data-kind
+    grid.querySelectorAll<HTMLElement>('.ag-cell').forEach((cell) => {
+      cell.classList.add('dbg-cell');
+      if (cell.dataset.itemKey) {
+        cell.dataset.kind = cell.dataset.itemKey;
       }
-      gridEl.append(cell);
+    });
+
+    root.textContent = '';
+    root.append(grid);
+    // ★ 共用样式里有 `.wheel-root:not(.in){opacity:.35}` —— 不加 `in` 整层半透明
+    requestAnimationFrame(() => {
+      host.classList.add('show');
+      root.classList.add('in');
+    });
+    if (hintText) {
+      hintText.textContent = pages > 1 ? '滚轮 / ← → / 点页码翻页' : '点击格子跳转';
     }
+  }
 
-    copyBtns[0].disabled = !data.object.id;
-    copyBtns[1].disabled = !data.lifecycle?.id;
-    setMsg('');
-  };
+  copyObj.addEventListener('click', () => void copyText(links?.object.id));
+  copyLife.addEventListener('click', () => void copyText(links?.lifecycle?.id));
 
-  /** 与另外三个浮层同样的空态：`.ag-empty` 两行文案，而不是自定义错误框 */
-  const fail = (message: string): void => {
-    links = null;
-    wrapEl.textContent = '';
-    const empty = document.createElement('div');
-    empty.className = 'ag-empty';
-    const t = document.createElement('div');
-    t.className = 'ag-empty-t';
-    t.textContent = '无法定位当前对象';
-    const s = document.createElement('div');
-    s.className = 'ag-empty-s';
-    s.textContent = message;
-    empty.append(t, s);
-    wrapEl.append(empty);
-  };
-
-  copyBtns[0].addEventListener('click', () => void copyText(links?.object.id));
-  copyBtns[1].addEventListener('click', () => void copyText(links?.lifecycle?.id));
+  // 先画「正在解析…」的空态，解析完成再换成候选矩阵
+  draw();
 
   try {
     const res = (await Promise.race([
-      chrome.runtime.sendMessage({ kind: 'debug.resolve' }) as Promise<{ result?: Result<DebugLinks> } | undefined>,
+      chrome.runtime.sendMessage({ kind: 'debug.resolve' }) as Promise<
+        { result?: Result<DebugLinks> } | undefined
+      >,
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000)),
     ])) as { result?: Result<DebugLinks> } | undefined;
+
     if (!res) {
-      fail('后台没有响应（8 秒超时）');
+      failText = '后台没有响应（8 秒超时）';
+      draw();
       return;
     }
     const r = res.result;
     if (!r?.ok) {
-      fail(r?.error ?? '解析失败');
+      failText = r?.error ?? '解析失败';
+      draw();
       return;
     }
-    render(r.data);
+    links = r.data;
+    page = 0;
+    draw();
+    setMsg('');
   } catch (e) {
-    fail(e instanceof Error ? e.message : String(e));
+    failText = e instanceof Error ? e.message : String(e);
+    draw();
   }
+}
+
+function makeCopyButton(label: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dbg-copy';
+  btn.textContent = label;
+  btn.disabled = true;
+  return btn;
 }

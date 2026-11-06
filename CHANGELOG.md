@@ -5,6 +5,26 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.48（2026-11-06）
+
+### 调试跳转接回共用网格内核：和三个轮盘是同一份渲染代码
+
+- **问题**：v4.2.47 虽然把内容改成了数据驱动，但浮层仍在**自己拼** head / grid / foot
+  （`.ag-head`、`.ag-cell`、20 格占位都是手写的），和账号（Alt+Q）、状态（Alt+W）、
+  常用页面（Alt+1）调用的 `buildItemGrid` 只是「长得像」。用户直接质疑「根本没有统一
+  弹出窗口径」——这个判断是对的：改内核时调试浮层不会跟着变。
+- **改法**：`content/debug-overlay.ts` 删掉自绘外壳，改为
+  `buildItemGrid({ items, pageCount, pagePos, onPage, onPick, empty, tip, footStart })`：
+  - 5 列 × 4 行定尺网格、不足 20 格补 `.ag-slot`、页码点 / 左右箭头 / 滚轮翻页、
+    空态 `.ag-empty`、页脚提示，全部来自 `ui/wheel/item-grid.ts`；
+  - `PER_PAGE` 直接用内核的 `GRID_SLOTS`，不再另写一个 20；
+  - 「复制 objectId / lifecycleId」通过新增的 `footStart?: HTMLElement` 槽位进页脚左侧；
+  - 单元格仍是 `targets` 驱动（v4.2.47），副行改短（格宽只有一列），完整说明放 `title` 悬停。
+- **判据**：`verify-debugjump.mjs` 增加源码级「口径判据」——必须 import
+  `buildItemGrid` + `GRID_SLOTS`、必须调用内核、必须用 `footStart`，且**不得**再出现
+  手写的 `ag-head` / `ag-cell` 外壳；浏览器侧仍断言 4 个 `data-kind` 的顺序与名称。
+  结果 **16/16**；静态门禁 **31/31**。
+
 ## 4.2.47（2026-11-06）
 
 ### 调试跳转改成「候选矩阵」：数据驱动，加页面只多一格
