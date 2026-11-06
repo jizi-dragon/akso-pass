@@ -40,7 +40,7 @@ await build({
   format: 'cjs',
   logLevel: 'silent',
 });
-const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, objectInterfaceUrl, buildDebugTargets } = await import(
+const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, objectInterfaceUrl, objectListLayoutUrl, objectFormLayoutUrl, buildDebugTargets } = await import(
   pathToFileURL(OUT).href + `?t=${Date.now()}`
 );
 
@@ -56,8 +56,10 @@ const eq = (label, actual, expected) => {
   }
 };
 
-console.log('A. 三个深链的形状');
+console.log('A. 深链的形状');
 eq('对象配置页', objectConfigUrl(BASE, OBJ), `${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}&__edit=2`);
+eq('对象列表布局页', objectListLayoutUrl(BASE, OBJ), `${BASE}/admin/config/basic-objects/edit/list-layout?id=${OBJ}`);
+eq('对象表单布局页', objectFormLayoutUrl(BASE, OBJ), `${BASE}/admin/config/form-layout/list?bid=${OBJ}`);
 eq('对象生命周期页', lifecycleConfigUrl(BASE, LIFE), `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`);
 eq('工作流列表页', workflowListUrl(BASE), `${BASE}/admin/config/workflow`);
 
@@ -67,6 +69,8 @@ eq('http 内网 origin', workflowListUrl('http://10.100.0.105'), 'http://10.100.
 
 console.log('C. id 必须被编码（防 query 注入）');
 eq('对象 id 里的 & 被编码', objectConfigUrl(BASE, 'a&b=c'), `${BASE}/admin/config/basic-objects/edit/base?id=a%26b%3Dc&__edit=2`);
+eq('列表布局 ?id= 里的 & 被编码', objectListLayoutUrl(BASE, 'a&b=c'), `${BASE}/admin/config/basic-objects/edit/list-layout?id=a%26b%3Dc`);
+eq('表单布局 ?bid= 里的 & 被编码', objectFormLayoutUrl(BASE, 'a&b=c'), `${BASE}/admin/config/form-layout/list?bid=a%26b%3Dc`);
 eq('生命周期 id 里的斜杠被编码', lifecycleConfigUrl(BASE, '../x'), `${BASE}/admin/config/lifecycle/..%2Fx?__edit=2`);
 eq('对象 id 里的空格被编码', objectConfigUrl(BASE, 'a b'), `${BASE}/admin/config/basic-objects/edit/base?id=a%20b&__edit=2`);
 
@@ -85,22 +89,24 @@ console.log('E. 候选矩阵可扩展（加一条就多一格）');
 const object = { id: OBJ, code: 'change_control__c', name: '变更控制' };
 const lifecycle = { id: LIFE, name: '变更控制生命周期' };
 const baseTargets = buildDebugTargets(BASE, object, lifecycle);
-eq('默认四条候选', baseTargets.length, 4);
-eq('候选顺序稳定', baseTargets.map((t) => t.kind).join(','), 'object,lifecycle,workflow,interfaces');
+eq('默认六条候选', baseTargets.length, 6);
+eq('候选顺序稳定', baseTargets.map((t) => t.kind).join(','), 'object,listLayout,formLayout,lifecycle,workflow,interfaces');
 eq('第一格指向对象配置', baseTargets[0].href, objectConfigUrl(BASE, OBJ));
-eq('第二格指向生命周期', baseTargets[1].href, lifecycleConfigUrl(BASE, LIFE));
-eq('第三格指向工作流列表', baseTargets[2].href, workflowListUrl(BASE));
-eq('第四格指向对象接口', baseTargets[3].href, objectInterfaceUrl(BASE, OBJ));
+eq('第二格指向列表布局', baseTargets[1].href, objectListLayoutUrl(BASE, OBJ));
+eq('第三格指向表单布局', baseTargets[2].href, objectFormLayoutUrl(BASE, OBJ));
+eq('第四格指向生命周期', baseTargets[3].href, lifecycleConfigUrl(BASE, LIFE));
+eq('第五格指向工作流列表', baseTargets[4].href, workflowListUrl(BASE));
+eq('第六格指向对象接口', baseTargets[5].href, objectInterfaceUrl(BASE, OBJ));
 
 const extra = [{ kind: 'fields', title: '对象字段', subtitle: '预留的扩展位', href: `${BASE}/admin/config/x`, accent: '#d97706' }];
 const withExtra = buildDebugTargets(BASE, object, lifecycle, extra);
-eq('额外候选被追加（不是替换）', withExtra.length, 5);
-eq('额外候选保留自己的地址', withExtra[4].href, `${BASE}/admin/config/x`);
+eq('额外候选被追加（不是替换）', withExtra.length, 7);
+eq('额外候选保留自己的地址', withExtra[6].href, `${BASE}/admin/config/x`);
 
 const noLife = buildDebugTargets(BASE, object, null);
-eq('没有生命周期时该格仍占位', noLife.length, 4);
-eq('没有生命周期时该格不可跳', noLife[1].href === null, true);
-eq('置灰格带原因', noLife[1].disabledReason === '该对象未启用生命周期', true);
+eq('没有生命周期时该格仍占位', noLife.length, 6);
+eq('没有生命周期时该格不可跳', noLife[3].href === null, true);
+eq('置灰格带原因', noLife[3].disabledReason === '该对象未启用生命周期', true);
 
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: FAIL（${bad} 项）`);
 process.exit(bad === 0 ? 0 : 1);

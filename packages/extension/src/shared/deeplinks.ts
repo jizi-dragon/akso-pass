@@ -1,8 +1,12 @@
 /**
  * 平台管理端深链（v4.2.45，调试跳转）。
  *
- * ★ 四处路径都来自平台前端自己的链接构造器（bundle 里的 `EA` 表），不是猜的：
+ * ★ 路径都来自平台前端自己的链接构造器（bundle 里的 `EA` 表）或页面 chunk 的取参代码，不是猜的：
  *   - 对象详情：`/admin/config/basic-objects/edit/base?id=<objectId>&__edit=2`
+ *   - 对象列表布局：`/admin/config/basic-objects/edit/list-layout?id=<objectId>`
+ *     （chunk 里 `objectId: P.id`，`P` 是 `useSearchParams`；`_searchKey` 只是可选的搜索态，不传也行）
+ *   - 对象表单布局：`/admin/config/form-layout/list?bid=<objectId>`
+ *     （chunk 里 `basicObjectGetById(N.bid)`，`N` 同样来自 search params）
  *   - 对象生命周期详情：`/admin/config/lifecycle/<lifeCycleId>?__edit=2`
  *   - 工作流列表：`/admin/config/workflow`
  *   - 对象接口详情：`/admin/config/object-interface/detail?id=<objectId>`
@@ -22,6 +26,26 @@ export function objectConfigUrl(origin: string, objectId: string): string {
 /** 对象生命周期详情页（某个 lifecycle 的状态与阶段配置）。 */
 export function lifecycleConfigUrl(origin: string, lifecycleId: string): string {
   return `${origin}/admin/config/lifecycle/${encodeURIComponent(lifecycleId)}?__edit=2`;
+}
+
+/**
+ * 对象的「列表布局」列表页（v4.2.49）。
+ *
+ * ★ `?id=` 是页面 chunk 里真正用来过滤的参数名（`objectId: P.id`），
+ *   不是对象详情页那个 `?id=` 的巧合；`_searchKey` 在 bundle 里 0 命中，属于可省略的搜索态。
+ */
+export function objectListLayoutUrl(origin: string, objectId: string): string {
+  return `${origin}/admin/config/basic-objects/edit/list-layout?id=${encodeURIComponent(objectId)}`;
+}
+
+/**
+ * 对象的「表单布局」列表页（v4.2.49）。
+ *
+ * ★ 参数名是 `bid`（chunk 里 `basicObjectGetById(N.bid)`），不是 `id`；
+ *   用错参数名页面会退化成「全部对象的表单布局」，而且不会报错。
+ */
+export function objectFormLayoutUrl(origin: string, objectId: string): string {
+  return `${origin}/admin/config/form-layout/list?bid=${encodeURIComponent(objectId)}`;
 }
 
 /**
@@ -61,6 +85,22 @@ export function buildDebugTargets(
       hint: '对象配置 · 基础信息 / 字段 / 布局',
       href: objectConfigUrl(origin, object.id),
       accent: '#1e6fff',
+    },
+    {
+      kind: 'listLayout',
+      title: '列表布局',
+      subtitle: '列表页 / 列配置',
+      hint: '该对象的列表布局（列表页字段、列宽、筛选项）',
+      href: objectListLayoutUrl(origin, object.id),
+      accent: '#0ea5e9',
+    },
+    {
+      kind: 'formLayout',
+      title: '表单布局',
+      subtitle: '表单页 / 字段',
+      hint: '该对象的表单布局（详情页字段、分组、只读规则）',
+      href: objectFormLayoutUrl(origin, object.id),
+      accent: '#06b6d4',
     },
     {
       kind: 'lifecycle',

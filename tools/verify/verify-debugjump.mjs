@@ -198,6 +198,16 @@ try {
     targetOf('object')?.href ?? '',
   );
   check(
+    'A 列表布局地址',
+    targetOf('listLayout')?.href === `${BASE}/admin/config/basic-objects/edit/list-layout?id=${OBJ}`,
+    targetOf('listLayout')?.href ?? '',
+  );
+  check(
+    'A 表单布局地址',
+    targetOf('formLayout')?.href === `${BASE}/admin/config/form-layout/list?bid=${OBJ}`,
+    targetOf('formLayout')?.href ?? '',
+  );
+  check(
     'A 生命周期地址',
     targetOf('lifecycle')?.href === `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`,
     targetOf('lifecycle')?.href ?? '',
@@ -205,8 +215,8 @@ try {
   check('A 工作流列表地址', targetOf('workflow')?.href === `${BASE}/admin/config/workflow`, targetOf('workflow')?.href ?? '');
   check(
     'A 候选是数据数组（顺序 + 每格自带标题/说明）',
-    a.data?.targets?.length === 4 &&
-      a.data.targets.map((t) => t.kind).join(',') === 'object,lifecycle,workflow,interfaces' &&
+    a.data?.targets?.length === 6 &&
+      a.data.targets.map((t) => t.kind).join(',') === 'object,listLayout,formLayout,lifecycle,workflow,interfaces' &&
       a.data.targets.every((t) => t.title && typeof t.accent === 'string'),
     JSON.stringify(a.data?.targets ?? []).slice(0, 160),
   );
@@ -231,9 +241,9 @@ try {
   check('E Alt+2 能打开调试浮层', overlay.host);
   check('E 浮层里显示对象名', /演示对象/.test(overlay.title), overlay.title);
   check(
-    'E 候选矩阵由数据渲染（4 格，顺序与后台 targets 一致）',
-    overlay.kinds.join(',') === 'object,lifecycle,workflow,interfaces' &&
-      overlay.names.join(',') === '对象配置,对象生命周期,工作流,对象接口' &&
+    'E 候选矩阵由数据渲染（6 格，顺序与后台 targets 一致）',
+    overlay.kinds.join(',') === 'object,listLayout,formLayout,lifecycle,workflow,interfaces' &&
+      overlay.names.join(',') === '对象配置,列表布局,表单布局,对象生命周期,工作流,对象接口' &&
       overlay.hint,
     `${overlay.kinds.join(',')} / ${overlay.names.join(',')}`,
   );

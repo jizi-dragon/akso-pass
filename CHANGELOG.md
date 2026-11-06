@@ -1,3 +1,17 @@
+## 4.2.49（2026-11-06）
+
+**调试跳转增加「列表布局」「表单布局」两个候选**
+
+- 需求：Alt+2 候选矩阵里补上该对象的列表布局页与表单布局页，少跳一次菜单。
+- 深链：`/admin/config/basic-objects/edit/list-layout?id=<objectId>`、
+  `/admin/config/form-layout/list?bid=<objectId>`。参数名都取自平台页面 chunk 的取参代码
+  （`objectId: P.id` / `basicObjectGetById(N.bid)`），不是猜的；`_searchKey` 属可选搜索态，不传也能过滤。
+- 候选顺序：对象配置 → 列表布局 → 表单布局 → 对象生命周期 → 工作流 → 对象接口（共 6 格，
+  仍是 `buildItemGrid` 的 5×4 定尺网格，加页面只改 `buildDebugTargets`）。
+- 判据：`verify-deeplinks` 20 项（含两条新地址与 id 编码）、`verify-debugjump` 18/18（含 6 格顺序），
+  静态 31/31、`verify-load` 1/1。
+- 未做：工作流页按生命周期自动筛选 —— 平台列表页不解析任何 URL 筛选参数（见 4.2.48 后的调研），
+  需要产品在「落页后自动点筛选」和「扩展内列出该生命周期的工作流」之间选。
 # Changelog
 
 版本号约定：每次功能性更新同步递增根 `package.json`、`packages/extension/manifest.json` 与 UI 内显性展示的 `EXT_VERSION`（`src/shared/constants.ts`），三处必须一致。
@@ -3117,3 +3131,4 @@ Monorepo 化 + 本地引擎（NM host / SQLite / spawn 多开实例）与并行�
 ## 2.1.0
 
 单账号免密快速切换稳定版：登出→自动填表登录→标签标题改写为账号名。
+
