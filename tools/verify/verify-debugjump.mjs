@@ -94,7 +94,7 @@ fs.writeFileSync(path.join(TESTDIST, 'manifest.json'), JSON.stringify(mf, null, 
 const OBJ = '3a1934a8-738a-dd93-dfb0-de2669ba0a11';
 const LIFE = '3a1934a8-738a-f302-f044-e3dd70e30e6a';
 const TOKEN = 'tok-debugjump';
-const calls = { menu: 0, form: 0 };
+const calls = { menu: 0, form: 0, workflows: 0 };
 
 function html(body, token) {
   return `<!doctype html><meta charset="utf-8"><title>probe</title>
@@ -125,6 +125,21 @@ const server = http.createServer((req, res) => {
         },
       }));
     });
+    return;
+  }
+  if (u.pathname === '/api/platform/Workflow/GetObjectWorkflowList') {
+    calls.workflows++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      code: 0,
+      data: [
+        { id: 'wf-1', name: '变更审批流程', code: 'DC_FLOW__c', status: 20, newVersionWorkflowConfigId: 'cfg-1', lifecycleStatusIds: null },
+        { id: 'wf-2', name: '变更关闭流程', code: 'DC_CLOSE__c', status: 20, newVersionWorkflowConfigId: 'cfg-2', lifecycleStatusIds: null },
+        // 停用（30）/ 未启用（10）都要被过滤掉：列表里留着只会点进空编辑器
+        { id: 'wf-3', name: '已停用的旧流程', code: 'OLD__c', status: 30, newVersionWorkflowConfigId: 'cfg-3', lifecycleStatusIds: null },
+        { id: 'wf-4', name: '还没启用', code: 'DRAFT__c', status: 10, newVersionWorkflowConfigId: 'cfg-4', lifecycleStatusIds: null },
+      ],
+    }));
     return;
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -247,6 +262,40 @@ try {
       overlay.hint,
     `${overlay.kinds.join(',')} / ${overlay.names.join(',')}`,
   );
+  /* F. 第二层：点「工作流」直接列该对象上启用的工作流（v4.2.50） */
+  const clickCell = (key) =>
+    p1.evaluate((k) => {
+      const sr = document.getElementById('ql-debug-overlay-host')?.shadowRoot;
+      const cell = Array.from(sr?.querySelectorAll('.ag-cell') ?? []).find((c) => (c.dataset.itemKey ?? '') === k);
+      cell?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return !!cell;
+    }, key);
+  check('F 找到工作流格', await clickCell('workflow'));
+  await p1.waitForTimeout(900);
+  const wfView = await p1.evaluate(() => {
+    const sr = document.getElementById('ql-debug-overlay-host')?.shadowRoot;
+    const cells = Array.from(sr?.querySelectorAll('.ag-cell') ?? []);
+    return {
+      keys: cells.map((c) => c.dataset.itemKey ?? ''),
+      names: cells.map((c) => c.querySelector('.ag-name')?.textContent ?? ''),
+      meta: sr?.querySelector('.ag-meta')?.textContent ?? '',
+      tip: sr?.querySelector('.ag-tip')?.textContent ?? '',
+    };
+  });
+  check('F 只列启用中的工作流（2 个；停用 30 / 未启用 10 被过滤）', wfView.keys.join(',') === 'wf-1,wf-2', JSON.stringify(wfView));
+  check('F 顶部计数如实', /启用 2 个/.test(wfView.meta), wfView.meta);
+  check('F 页脚提示切到编辑器', /编辑器/.test(wfView.tip), wfView.tip);
+  check('F 工作流接口只调一次', calls.workflows === 1, `workflows=${calls.workflows}`);
+
+  /* G. 点工作流 → 打开编辑器深链（必须用 config id，不是 workflowBasicId） */
+  const newPage = ctx.waitForEvent('page', { timeout: 6000 }).catch(() => null);
+  await clickCell('wf-1');
+  const popup = await newPage;
+  check('G 点击工作流打开新页签', !!popup, popup?.url() ?? '');
+  check('G 编辑器地址用 config id', /\/admin\/config\/workflow\/edit\?__edit=2&id=cfg-1/.test(popup?.url() ?? ''), popup?.url() ?? '');
+  await popup?.close().catch(() => {});
+
+  await p1.bringToFront();
   await p1.keyboard.press('Escape');
   await p1.waitForTimeout(300);
   const closed = await p1.evaluate(() => !document.getElementById('ql-debug-overlay-host'));

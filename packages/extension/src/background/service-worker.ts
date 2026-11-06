@@ -146,7 +146,7 @@ import {
 import { clearSnapshot } from './core/account-cache';
 import { cancelDeviceFlow, pollDeviceFlow, startDeviceFlow } from './core/cloud-device';
 import { listFavorites, resetFavorites, resolveFavoriteUrl, saveFavorites } from './core/favorites';
-import { resolveDebugLinks } from './core/debug-links';
+import { loadObjectWorkflows, resolveDebugLinks } from './core/debug-links';
 import {
   changeInstanceStatus,
   isInstanceContext,
@@ -661,6 +661,21 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
         return parsed.data;
       });
       return { kind: 'debug.resolve', result: r };
+    }
+    case 'debug.workflows': {
+      const r = await tryRun(async () => {
+        // 与 debug.resolve 同一口径：只认内容脚本所在页签，扩展页不能借它去查别人的页签。
+        const tabId = /^https?:/i.test(sender.url ?? '') ? sender.tab?.id : undefined;
+        if (!tabId) {
+          throw new Error('只能从平台页面列出工作流');
+        }
+        const out = await loadObjectWorkflows(tabId, req.objectId);
+        if (!out.ok) {
+          throw new Error(out.error);
+        }
+        return out.data;
+      });
+      return { kind: 'debug.workflows', result: r };
     }
     case 'debug.open': {
       const r = await tryRun(async () => {

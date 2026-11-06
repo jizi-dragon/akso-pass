@@ -59,6 +59,16 @@ export function workflowListUrl(origin: string): string {
   return `${origin}/admin/config/workflow`;
 }
 
+/**
+ * 工作流编辑器（v4.2.50）。
+ *
+ * ★ 参数是 `newVersionWorkflowConfigId` 而不是 `workflowBasicId`：`GetWorkflowBasic?id=`
+ *   只认 config id，传 basicId 会回 null，页面表现是「打不开/空白」。
+ */
+export function workflowEditUrl(origin: string, configId: string): string {
+  return `${origin}/admin/config/workflow/edit?__edit=2&id=${encodeURIComponent(configId)}`;
+}
+
 /** 对象接口详情页（该对象的接口清单，调试时用来核对入参/出参）。 */
 export function objectInterfaceUrl(origin: string, objectId: string): string {
   return `${origin}/admin/config/object-interface/detail?id=${encodeURIComponent(objectId)}`;
@@ -114,10 +124,11 @@ export function buildDebugTargets(
     {
       kind: 'workflow',
       title: '工作流',
-      subtitle: '工作流列表',
-      hint: '工作流列表页（进入后按对象自己搜）',
+      subtitle: '该对象上启用的',
+      hint: '点开后直接列该对象上启用的工作流（不落平台列表页）；列表页兜底仍可打开',
       href: workflowListUrl(origin),
       accent: '#7c3aed',
+      subview: 'workflows',
     },
     {
       kind: 'interfaces',

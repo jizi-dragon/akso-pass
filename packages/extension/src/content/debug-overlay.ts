@@ -19,7 +19,8 @@
  * **要加新的可跳转页面，只改 `shared/deeplinks.ts` 的 `buildDebugTargets`**，
  * 本文件不需要认识任何具体页面。
  */
-import type { DebugLinks, Result } from '../shared/messages';
+import type { DebugLinks, DebugWorkflowRef, Result } from '../shared/messages';
+import { workflowEditUrl } from '../shared/deeplinks';
 import { buildItemGrid, GRID_SLOTS, type GridItem } from '../ui/wheel/item-grid';
 import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 
@@ -96,16 +97,24 @@ async function mount(): Promise<void> {
   /* 页脚左侧：复制按钮 + 消息。节点跨页复用，每次 draw 由内核重新挂到 ag-foot。 */
   const foot = document.createElement('div');
   foot.className = 'dbg-copies';
+  const back = makeCopyButton('← 返回');
+  back.classList.add('dbg-back');
+  back.hidden = true;
   const copyObj = makeCopyButton('复制 objectId');
   const copyLife = makeCopyButton('复制 lifecycleId');
   const msg = document.createElement('span');
   msg.className = 'dbg-msg';
-  foot.append(copyObj, copyLife, msg);
+  foot.append(back, copyObj, copyLife, msg);
 
   let links: DebugLinks | null = null;
   let page = 0;
   let failText = '';
   let closing = false;
+  /** v4.2.50：第二层 —— 该对象上启用的工作流（点「工作流」格进入，不跳平台列表页） */
+  let view: 'targets' | 'workflows' = 'targets';
+  let workflows: DebugWorkflowRef[] | null = null;
+  let wfFail = '';
+  let wfLoading = false;
 
   const prevOverflow = document.documentElement.style.overflow;
   document.documentElement.style.overflow = 'hidden';
@@ -130,7 +139,8 @@ async function mount(): Promise<void> {
 
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      const pages = links ? Math.max(1, Math.ceil(links.targets.length / PER_PAGE)) : 1;
+      const total = view === 'workflows' ? (workflows?.length ?? 0) : (links?.targets.length ?? 0);
+      const pages = Math.max(1, Math.ceil(total / PER_PAGE));
       if (pages <= 1) {
         return;
       }
@@ -187,22 +197,82 @@ async function mount(): Promise<void> {
     }
   };
 
+  /** v4.2.50：从候选矩阵进入「工作流」第二层（不跳平台列表页） */
+  const openWorkflows = async (): Promise<void> => {
+    const objectId = links?.object.id;
+    if (!objectId) {
+      setMsg('缺少对象 id，无法列工作流', 'bad');
+      return;
+    }
+    view = 'workflows';
+    page = 0;
+    workflows = null;
+    wfFail = '';
+    wfLoading = true;
+    setMsg('');
+    draw();
+    try {
+      const res = (await Promise.race([
+        chrome.runtime.sendMessage({ kind: 'debug.workflows', objectId }) as Promise<
+          { result?: Result<{ workflows: DebugWorkflowRef[] }> } | undefined
+        >,
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8000)),
+      ])) as { result?: Result<{ workflows: DebugWorkflowRef[] }> } | undefined;
+      wfLoading = false;
+      if (!res) {
+        wfFail = '后台没有响应（8 秒超时）';
+        draw();
+        return;
+      }
+      const r = res.result;
+      if (!r?.ok) {
+        wfFail = r?.error ?? '读取失败';
+        draw();
+        return;
+      }
+      workflows = r.data.workflows;
+      draw();
+    } catch (e) {
+      wfLoading = false;
+      wfFail = e instanceof Error ? e.message : String(e);
+      draw();
+    }
+  };
+
   /** 唯一绘制入口：候选 → GridItem，几何/分页/滚轮全部交给 buildItemGrid */
   function draw(): void {
     const data = links;
-    const pages = data ? Math.max(1, Math.ceil(data.targets.length / PER_PAGE)) : 1;
+    const wfMode = view === 'workflows';
+    const total = wfMode ? (workflows?.length ?? 0) : (data?.targets.length ?? 0);
+    const pages = Math.max(1, Math.ceil(total / PER_PAGE));
     page = Math.min(Math.max(page, 0), pages - 1);
-    const slice = data ? data.targets.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE) : [];
+    const slice = wfMode
+      ? (workflows ?? []).slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE)
+      : (data?.targets ?? []).slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
 
-    const items: GridItem[] = slice.map((target) => ({
-      key: target.kind,
-      label: target.title,
-      sub: target.subtitle,
-      accent: target.accent,
-      disabled: !target.href,
-      title: target.href ? (target.hint ?? `${target.title} — ${target.subtitle}`) : (target.disabledReason ?? target.title),
-    }));
+    const items: GridItem[] = wfMode
+      ? (slice as DebugWorkflowRef[]).map((wf) => ({
+          key: wf.id,
+          label: wf.name,
+          sub: wf.code ?? '工作流',
+          accent: '#7c3aed',
+          disabled: !wf.configId,
+          title: wf.configId ? `打开工作流编辑器：${wf.name}` : '该工作流没有可编辑的当前版本',
+        }))
+      : (slice as DebugLinks['targets']).map((target) => ({
+          key: target.kind,
+          label: target.title,
+          sub: target.subtitle,
+          accent: target.accent,
+          disabled: !target.href,
+          title: target.href
+            ? (target.hint ?? `${target.title} — ${target.subtitle}`)
+            : (target.disabledReason ?? target.title),
+        }));
 
+    back.hidden = !wfMode;
+    copyObj.hidden = wfMode;
+    copyLife.hidden = wfMode;
     copyObj.disabled = !data?.object.id;
     copyLife.disabled = !data?.lifecycle?.id;
 
@@ -211,29 +281,65 @@ async function mount(): Promise<void> {
       pageCount: pages,
       pagePos: page,
       title: data ? data.object.name || data.object.code || data.object.id : '调试跳转',
-      meta: data
+      meta: wfMode
         ? [
-            data.object.code,
-            data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期',
+            '工作流',
+            `启用 ${workflows?.length ?? 0} 个`,
             pages > 1 ? `第 ${page + 1}/${pages} 页` : '',
           ]
             .filter(Boolean)
             .join(' · ')
-        : '正在解析…',
+        : data
+          ? [
+              data.object.code,
+              data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期',
+              pages > 1 ? `第 ${page + 1}/${pages} 页` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : '正在解析…',
       onPage: (delta) => {
         page += delta;
         draw();
       },
-      onPick: (kind) => {
-        const target = data?.targets.find((t) => t.kind === kind);
+      onPick: (key) => {
+        if (wfMode) {
+          const wf = workflows?.find((w) => w.id === key);
+          if (!wf) {
+            return;
+          }
+          if (!wf.configId) {
+            setMsg('该工作流没有可编辑的当前版本', 'bad');
+            return;
+          }
+          void openTarget(workflowEditUrl(location.origin, wf.configId));
+          return;
+        }
+        const target = data?.targets.find((t) => t.kind === key);
+        if (target?.subview === 'workflows') {
+          void openWorkflows();
+          return;
+        }
         void openTarget(target?.href ?? null);
       },
-      empty: data
-        ? { line1: '没有可跳转的目标', line2: '当前对象没有可用的管理端入口' }
-        : failText
-          ? { line1: '无法定位当前对象', line2: failText }
-          : { line1: '正在解析当前对象…', line2: '读取页面上下文与菜单权限' },
-      tip: pages > 1 ? '点击跳转 · 滚轮 / ← → 翻页' : '点击跳转',
+      empty: wfMode
+        ? wfLoading
+          ? { line1: '正在读取工作流…', line2: '只显示启用状态的工作流' }
+          : wfFail
+            ? { line1: '读取工作流失败', line2: wfFail }
+            : { line1: '该对象没有启用的工作流', line2: '未启用 / 禁用 / 编辑中的工作流不在这里显示' }
+        : data
+          ? { line1: '没有可跳转的目标', line2: '当前对象没有可用的管理端入口' }
+          : failText
+            ? { line1: '无法定位当前对象', line2: failText }
+            : { line1: '正在解析当前对象…', line2: '读取页面上下文与菜单权限' },
+      tip: wfMode
+        ? pages > 1
+          ? '点击进入编辑器 · 滚轮 / ← → 翻页'
+          : '点击进入编辑器'
+        : pages > 1
+          ? '点击跳转 · 滚轮 / ← → 翻页'
+          : '点击跳转',
       footStart: foot,
     });
 
@@ -253,12 +359,24 @@ async function mount(): Promise<void> {
       root.classList.add('in');
     });
     if (hintText) {
-      hintText.textContent = pages > 1 ? '滚轮 / ← → / 点页码翻页' : '点击格子跳转';
+      hintText.textContent = wfMode
+        ? pages > 1
+          ? '工作流 · 滚轮 / ← → / 点页码翻页'
+          : '工作流 · 点击进入编辑器'
+        : pages > 1
+          ? '滚轮 / ← → / 点页码翻页'
+          : '点击格子跳转';
     }
   }
 
   copyObj.addEventListener('click', () => void copyText(links?.object.id));
   copyLife.addEventListener('click', () => void copyText(links?.lifecycle?.id));
+  back.addEventListener('click', () => {
+    view = 'targets';
+    page = 0;
+    setMsg('');
+    draw();
+  });
 
   // 先画「正在解析…」的空态，解析完成再换成候选矩阵
   draw();

@@ -40,7 +40,7 @@ await build({
   format: 'cjs',
   logLevel: 'silent',
 });
-const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, objectInterfaceUrl, objectListLayoutUrl, objectFormLayoutUrl, buildDebugTargets } = await import(
+const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, workflowEditUrl, objectInterfaceUrl, objectListLayoutUrl, objectFormLayoutUrl, buildDebugTargets } = await import(
   pathToFileURL(OUT).href + `?t=${Date.now()}`
 );
 
@@ -62,6 +62,7 @@ eq('对象列表布局页', objectListLayoutUrl(BASE, OBJ), `${BASE}/admin/confi
 eq('对象表单布局页', objectFormLayoutUrl(BASE, OBJ), `${BASE}/admin/config/form-layout/list?bid=${OBJ}`);
 eq('对象生命周期页', lifecycleConfigUrl(BASE, LIFE), `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`);
 eq('工作流列表页', workflowListUrl(BASE), `${BASE}/admin/config/workflow`);
+eq('工作流编辑器（config id）', workflowEditUrl(BASE, 'cfg 1'), `${BASE}/admin/config/workflow/edit?__edit=2&id=cfg%201`);
 
 console.log('B. 非默认端口 / http 站点');
 eq('保留 origin 端口', objectConfigUrl('http://127.0.0.1:8080', OBJ), `http://127.0.0.1:8080/admin/config/basic-objects/edit/base?id=${OBJ}&__edit=2`);
@@ -96,6 +97,7 @@ eq('第二格指向列表布局', baseTargets[1].href, objectListLayoutUrl(BASE,
 eq('第三格指向表单布局', baseTargets[2].href, objectFormLayoutUrl(BASE, OBJ));
 eq('第四格指向生命周期', baseTargets[3].href, lifecycleConfigUrl(BASE, LIFE));
 eq('第五格指向工作流列表', baseTargets[4].href, workflowListUrl(BASE));
+eq('第五格是浮层内二级视图（不落平台列表页）', baseTargets[4].subview === 'workflows', true);
 eq('第六格指向对象接口', baseTargets[5].href, objectInterfaceUrl(BASE, OBJ));
 
 const extra = [{ kind: 'fields', title: '对象字段', subtitle: '预留的扩展位', href: `${BASE}/admin/config/x`, accent: '#d97706' }];
@@ -110,5 +112,6 @@ eq('置灰格带原因', noLife[3].disabledReason === '该对象未启用生命�
 
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: FAIL（${bad} 项）`);
 process.exit(bad === 0 ? 0 : 1);
+
 
 

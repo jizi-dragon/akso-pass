@@ -342,7 +342,7 @@
 | **Alt+W** | 实例生命周期状态 | 只在**具体数据页**（URL 带 `id`）弹出；列表页 / 菜单页没有当前数据，不会弹 |
 | **Alt+1** | 常用页面书签 | 全部书签；相对路径的格子会标出**将打开哪个域名** |
 
-### 8.5 调试跳转（Alt+2，v4.2.45；v4.2.48 与轮盘同一网格内核；v4.2.49 增加列表/表单布局）
+### 8.5 调试跳转（Alt+2，v4.2.45；v4.2.48 与轮盘同一网格内核；v4.2.49 增加列表/表单布局；v4.2.50 工作流在浮层内列出）
 
 在业务菜单页按 **Alt+2**，浮层会解析当前页面对应的对象，给出一个**候选矩阵**
 （与 Alt+Q / Alt+W / Alt+1 **调用同一个 `buildItemGrid` 内核**：5 列 × 4 行定尺网格、不足 20 格补虚线占位、滚轮 / ← → / 页码点翻页；`Esc` 或点击遮罩空白处关闭）。
@@ -354,8 +354,10 @@
 | 列表布局 | 该对象的「列表布局」列表页（`/admin/config/basic-objects/edit/list-layout?id=…`） | 解析失败时置灰 |
 | 表单布局 | 该对象的「表单布局」列表页（`/admin/config/form-layout/list?bid=…`） | 解析失败时置灰 |
 | 对象生命周期 | 该对象的生命周期配置页（`/admin/config/lifecycle/<id>`） | 对象没启用生命周期时置灰，标题写明原因 |
-| 工作流 | 工作流列表页（`/admin/config/workflow`）；列表页不支持按对象/生命周期过滤，落页后需手动筛选 | — |
+| 工作流 | **浮层内直接列**该对象上启用的工作流（接口 `GetObjectWorkflowList`，只留状态 20 启用；点条目进编辑器） | 没有启用工作流时显示空态，页脚可「← 返回」 |
 | 对象接口 | 该对象的接口清单（`/admin/config/object-interface/detail?id=…`），调试入参/出参用 | 解析失败时置灰 |
+
+工作流不在平台列表页里筛：列表页不解析任何 URL 筛选参数（bundle 里没有 searchParams → filters 的代码），所以点「工作流」格是在浮层内展开第二层，只列该对象上**启用**的工作流（未启用 10 / 禁用 30 / 编辑中 40 不列），点条目按 `newVersionWorkflowConfigId` 直接进编辑器。
 
 对象 id 优先取 URL 的 `bid`；只有 `mid` 时用 `GetUserMenuPermission` 反查菜单对应的对象。
 生命周期来自 `GetFormInstance` 的 `basicObject.lifeCycleId`。所有地址的 origin 取自**页签自己的地址**，
@@ -525,6 +527,7 @@ v3.10.9 已修复。此前扩展固定按 `https://` 打开站点——内网纯
 ---
 
 *项目文档索引见根目录 `README.md`；架构与实现细节见 `docs/PROJECT-STATUS.md`、`docs/CODEBASE_OVERVIEW.md`。*
+
 
 
 

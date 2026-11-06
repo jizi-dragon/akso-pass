@@ -1,3 +1,15 @@
+## 4.2.50（2026-11-06）
+
+**工作流改为浮层内直接列出（只列启用状态），不再落平台列表页**
+
+- 背景：平台工作流列表页不解析任何 URL 筛选参数（bundle 里没有 `searchParams → filters` 的代码，
+  「生命周期」是页面内 UI 状态），深链无法预置筛选。
+- 改法：点「工作流」格不再开新页签，而是在同一浮层里展开第二层，调 `GetObjectWorkflowList`
+  取该对象的工作流，只保留 `status === 20`（启用）；10 未启用 / 30 禁用 / 40 编辑中不列。
+  点条目按 `newVersionWorkflowConfigId` 打开编辑器（`/admin/config/workflow/edit?__edit=2&id=…`），
+  用 basicId 会打不开。页脚「← 返回」回候选矩阵，第二层仍是 `buildItemGrid` 的 5×4 网格。
+- 判据：`verify-debugjump` 25/25（含停用/未启用被过滤、接口只调一次、编辑器用 config id）、
+  `verify-deeplinks` 含 `workflowEditUrl` 编码断言；静态 31/31、`verify-load` 1/1。
 ## 4.2.49（2026-11-06）
 
 **调试跳转增加「列表布局」「表单布局」两个候选**
@@ -3131,4 +3143,5 @@ Monorepo 化 + 本地引擎（NM host / SQLite / spawn 多开实例）与并行�
 ## 2.1.0
 
 单账号免密快速切换稳定版：登出→自动填表登录→标签标题改写为账号名。
+
 

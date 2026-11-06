@@ -258,7 +258,9 @@ export type RuntimeRequest =
    */
   | { kind: 'debug.resolve'; tabId?: number }
   /** 在**新页签**打开调试目标；只接受与来源页同源的 http(s) 地址 */
-  | { kind: 'debug.open'; url: string };
+  | { kind: 'debug.open'; url: string }
+  /** 列该对象上**启用**的工作流（v4.2.50，浮层第二层） */
+  | { kind: 'debug.workflows'; objectId: string };
 
 /**
  * 备份文件结构（v1）。
@@ -366,7 +368,8 @@ export type RuntimeResponse =
   | { kind: 'favorites.open'; result: Result<{ url: string }> }
   | { kind: 'favorites.resolve'; result: Result<{ url: string }> }
   | { kind: 'debug.resolve'; result: Result<DebugLinks> }
-  | { kind: 'debug.open'; result: Result<null> };
+  | { kind: 'debug.open'; result: Result<null> }
+  | { kind: 'debug.workflows'; result: Result<{ workflows: DebugWorkflowRef[] }> };
 
 /**
  * 实例状态上下文（v3.15）：从**当前活动页签的 URL** 解析出来的可操作对象。
@@ -476,6 +479,20 @@ export interface DebugLifecycleRef {
 }
 
 /**
+ * 该对象上的一个工作流（v4.2.50）。
+ *
+ * ★ 只回「启用」的（`status === 20`）：未启用 10 / 禁用 30 / 编辑中 40 都没有可运行的
+ *   当前版本，列出来只会让人点进一个空编辑器。
+ */
+export interface DebugWorkflowRef {
+  id: string;
+  name: string;
+  code?: string;
+  /** 编辑器地址用的 config id（`newVersionWorkflowConfigId`）；缺失时该格置灰 */
+  configId?: string;
+}
+
+/**
  * 调试跳转的一个候选格（v4.2.47）。
  *
  * ★ 浮层是**候选矩阵**，不是固定三个按钮：`targets` 是数组，加一项就多一格，
@@ -495,6 +512,11 @@ export interface DebugTarget {
   accent: string;
   /** href 为 null 时展示的原因 */
   disabledReason?: string;
+  /**
+   * 点开后**不跳页**，而是在浮层里展开下一层（v4.2.50）。
+   * 目前只有 `workflows`：直接列该对象上启用的工作流，避免落进平台列表页再手工筛。
+   */
+  subview?: 'workflows';
 }
 
 /**

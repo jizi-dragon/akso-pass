@@ -11,7 +11,7 @@
  */
 
 import { buildDebugTargets } from '../../shared/deeplinks';
-import type { DebugLinks } from '../../shared/messages';
+import type { DebugLinks, DebugWorkflowRef } from '../../shared/messages';
 import { getLogger } from '../../shared/log';
 
 const log = getLogger('debug-links');
@@ -148,6 +148,85 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
     };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 在页面里列该对象上**启用**的工作流（v4.2.50）。
+ *
+ * ★ 平台列表页不解析任何 URL 筛选参数（bundle 里没有 searchParams → filters 的代码），
+ *   所以「只显示该对象生命周期上的工作流」不能靠深链，只能在页面上下文里自己取数：
+ *   由页面自己的 token 带 Bearer 调 `GetObjectWorkflowList`。
+ * ★ `status`：10 未启用 / 20 启用 / 30 禁用 / 40 编辑中（平台枚举），只回 20 ——
+ *   其余状态都没有可运行的当前版本，列出来只会点进空编辑器。
+ */
+async function pageLoadObjectWorkflows(objectId: string): Promise<{ workflows?: DebugWorkflowRef[]; error?: string }> {
+  const readToken = (): string => {
+    const raw = window.sessionStorage.getItem('__auth_token__') ?? window.localStorage.getItem('__auth_token__');
+    if (!raw) return '';
+    return raw.replace(/^"|"$/g, '');
+  };
+  const token = readToken();
+  if (!token) return { error: '未登录：当前页没有平台令牌' };
+
+  try {
+    const r = await fetch('/api/platform/Workflow/GetObjectWorkflowList', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id: objectId }),
+    });
+    if (r.status === 401 || r.status === 403) return { error: '登录已失效，请在平台重新登录' };
+    const body = (await r.json()) as { code?: number; message?: string; data?: unknown };
+    if (body.code !== 0) return { error: body.message || `接口返回 code=${String(body.code)}` };
+    const rows = Array.isArray(body.data) ? (body.data as Array<Record<string, unknown>>) : [];
+    const workflows: DebugWorkflowRef[] = [];
+    for (const row of rows) {
+      if (Number(row.status) !== 20) continue;
+      const id = typeof row.id === 'string' ? row.id : '';
+      const name = typeof row.name === 'string' ? row.name : '';
+      if (!id || !name) continue;
+      workflows.push({
+        id,
+        name,
+        code: typeof row.code === 'string' ? row.code : undefined,
+        configId: typeof row.newVersionWorkflowConfigId === 'string' ? row.newVersionWorkflowConfigId : undefined,
+      });
+    }
+    return { workflows };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 列某个页签当前对象上启用的工作流。
+ *
+ * ★ tabId 由 background 从 `sender` 取（内容脚本不可自报），objectId 也要先过形状校验：
+ *   它会进页面 fetch 的 body，不能让页面借扩展之手打任意 id。
+ */
+export async function loadObjectWorkflows(
+  tabId: number,
+  objectId: string,
+): Promise<{ ok: true; data: { workflows: DebugWorkflowRef[] } } | { ok: false; error: string }> {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(objectId)) {
+    return { ok: false, error: '对象 id 形状不合法' };
+  }
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'MAIN',
+      func: pageLoadObjectWorkflows,
+      args: [objectId],
+    });
+    const out = res?.result as { workflows?: DebugWorkflowRef[]; error?: string } | undefined;
+    if (!out) return { ok: false, error: '页面没有返回工作流' };
+    if (out.error) return { ok: false, error: out.error };
+    return { ok: true, data: { workflows: out.workflows ?? [] } };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.warn('debug.workflows 注入失败：%s', msg);
+    return { ok: false, error: `无法访问页面：${msg}` };
   }
 }
 
