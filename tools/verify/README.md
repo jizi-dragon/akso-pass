@@ -63,7 +63,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-ruleidem.mjs` | ★★ **SW 冷启不叠 DNR 规则**（v4.2.39）：写 `ql:parTabBindings` / `ql:parTokens` 造一个绑定页签，用 CDP 杀掉 `background.js` 的 service worker 再拉起（模块重新求值 → `restore()`），断言冷启后会话规则总数不增长、AUTH 与回放 Cookie 仍是当前快照。★ 修复前实测第二轮 **8 条**（首轮 4 条 + 重建 4 条）；旧规则不在 `installed` 里，`clearTab` 永远摘不掉 ⇒ 解绑后旧 token 仍被改写，规则数还会撞 5000 上限 | 5/5 | ✔ |
 | `verify-favui.mjs` | ★★ **常用页面编辑器的浏览器级判据**（v4.2.44）：真装扩展打开 `parallel.html`，摘掉未登录遮罩后切到「常用页面」——① 是行编辑器（无 textarea）且默认 6 条名称对得上 ② 「＋ 添加一条」新增并聚焦名称框 ③ 编辑后出现「有未保存的修改」 ④ 保存后**真的**写进 `chrome.storage.local`、相对路径补成 `/admin/…`、提示「已保存 7 条」 ⑤ 重新打开页面第 7 条仍在（不是内存态） ⑥ 「恢复默认」删用户键并回 6 条 ⑦ 全程无未捕获页面错误。<br>★ 纯逻辑在 `verify-favorites.mjs`；这条只补它覆盖不到的「HTML id / 事件绑定 / 与后台消息往返」那一层 | 10/10 | ✔ |
 | `verify-autologin.mjs` | 自愈式提交（首击被吞后重试 ≤4 次 / 提交时值完整 / 用户键入即让位） | 5/5 | ✔ |
-| `verify-debugjump.mjs` | ★★ **调试跳转的浏览器级判据**（v4.2.45）：本地服务同时扮演业务页与平台接口 —— ① 只有 `mid` 时经菜单反查 objectId ② 带 `bid` 时不重复请求菜单 ③ 三个深链地址精确（对象配置 / 生命周期 / 工作流） ④ **Alt+2 页面热键**能开浮层、显示对象名、Esc 关闭 ⑤ 无对象上下文 / 未登录各自明确报错。<br>★ 顺带钉住一个 Chrome 限制：`chrome.commands` 只允许 **4 个**命令带默认键，第 5 个会让**整个扩展装载失败**（`ERR_BLOCKED_BY_CLIENT`）—— 所以 Alt+2 由 `content/debug-hotkey.js` 在页面侧监听后转给后台 | 14/14 | ✔ |
+| `verify-debugjump.mjs` | ★★ **调试跳转的浏览器级判据**（v4.2.45）：本地服务同时扮演业务页与平台接口 —— ① 只有 `mid` 时经菜单反查 objectId ② 带 `bid` 时不重复请求菜单 ③ 三个深链地址精确（对象配置 / 生命周期 / 工作流） ④ **Alt+2 页面热键**能开浮层、显示对象名、沿用统一网格骨架、Esc 关闭 ⑤ v4.2.46：`debug.open` 必须走账号绑定（含离线回退） ⑤ 无对象上下文 / 未登录各自明确报错。<br>★ 顺带钉住一个 Chrome 限制：`chrome.commands` 只允许 **4 个**命令带默认键，第 5 个会让**整个扩展装载失败**（`ERR_BLOCKED_BY_CLIENT`）—— 所以 Alt+2 由 `content/debug-hotkey.js` 在页面侧监听后转给后台 | 15/15 | ✔ |
 | `verify-autologin-gap.mjs` | ★ **自动填表"值进了 DOM、平台状态没收到"**：密码框在同源 srcdoc iframe 里、平台的 input 监听器晚于我们首次填充才挂上 ⇒ 点登录后平台校验报「请输入密码」。断言**只看平台状态**，不看 DOM；PITFALLS #55 | 7/7 | ✔ |
 | `verify-dynsnap.mjs` | 快照动态化（登录后票据实时进回放 / 轮换 / 作废移除 / 袋回流） | 6/6 | ✔ |
 | `verify-fillrhythm.mjs` | 填充节奏五重门控（iframe 延迟挂载 / 拒绝后重填 / 让位 / 停止重试） | 9/9 | ✔ |
@@ -84,7 +84,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-falsify-icons.mjs`** | **上一条的反证**：换占位源 / Icon16 弄成 16×9 / 抹掉小档手调 / 放回假源 ⇒ 各自变红 | **4/4** | ✘ |
 | **`verify-user-docs.mjs`** | **用户可见的功能描述必须与代码一致**：`USER-MANUAL.md` 里"数据在哪 / 备份含什么"不得与代码相反、**真相必须被明说**、`manifest.description` 不声称本地加密、翻译图标的"填充/复制"开关在 UI/内容脚本/手册三处一致、快捷键 `Ctrl+X` 与译文 50 字符限制（含词边界） | **14/14** | ✘ |
 | **`verify-status-cache.mjs`** | **状态轮盘缓存的纯逻辑**：TTL 命中/过期、按页签失效、容量淘汰、clear；防止"缓存跨账号/永不失效"回归 | **6/6** | ✘ |
-| **`verify-statusfilter.mjs`** | ★ **状态轮盘只呈现「启用」的生命周期状态**（v4.2.42）：用 `esbuild` 把 `instance-status.ts` 就地转成 CJS，喂假接口响应后**真的调** `pageLoadStatuses` —— ① `isEnabled=false` / `isDeleted=true` 被过滤 ② `0` / `"false"` / `enabled:false` 等形态也认 ③ **响应里没有启停字段时一个都不许少**（不能把"未知"当"停用"清空整表）④ 全停用时 `statuses` 为空但 `hiddenCount` 如实 ⑤ 当前状态落在停用项上时 `currentDisabled=true`。 | **8/8** | ✘ |
+| **`verify-statusfilter.mjs`** | ★ **状态轮盘只呈现「启用」的生命周期状态**（v4.2.42）：用 `esbuild` 把 `instance-status.ts` 就地转成 CJS，喂假接口响应后**真的调** `pageLoadStatuses` —— ① `isEnabled=false` / `isDeleted=true` 被过滤 ② `0` / `"false"` / `enabled:false` 等形态也认 ③ **响应里没有启停字段时一个都不许少**（不能把"未知"当"停用"清空整表）④ 全停用时 `statuses` 为空但 `hiddenCount` 如实 ⑤ 当前状态落在停用项上时 `currentDisabled=true` ⑥ v4.2.46：列表页（只有 bid/mid、无 id）与管理端 `/admin/` 不算实例页，带 `id` 的数据页才算。 | **12/12** | ✘ |
 | **`verify-favorites.mjs`** | ★ **常用页面保存链路的纯逻辑**（v4.2.44）：用 `esbuild` 打包 `favorites.ts` + `chrome.storage.local` 替身，断言 ① 相对路径补前导 `/`、完整 http(s) 原样、名称去空白 ② `javascript:` / `data:` / 协议相对 `//host` / 反斜杠 / 空名称全部忽略并计入 `skipped` ③ 归一化后同路径去重（`/a` 与 `a` 算一条，保留先出现的）④ **空数组不回落默认**（删光不复活）、只有键不存在才回落 ⑤ 超 60 条截断且 `truncated` 如实 ⑥ `resetFavorites` 删键回默认 ⑦ `resolveFavoriteUrl` 拒绝 `javascript:`、相对路径按 base 拼接 ⑧ 超长名称截到 60 字但条目保留。<br>★ 起因：旧版是 textarea +「每行 `名称,路径`」，保存是**静默**的 —— 协议不对/路径重复/超 10 条都被无声丢掉，用户只看到"我加过怎么没了" | **9/9** | ✘ |
 | **`verify-falsify-userdocs.mjs`** | **上一条的反证**：把修复前那**五处原文**逐条注回去 ⇒ 各自变红（缺陷版用真句，不是我编的近似句） | **5/5** | ✘ |
 | **`verify-load.mjs`** | ★ **装载冒烟**（本篇唯一**需要浏览器**的那条）：真起 Chromium + `--load-extension`，验 ① 扩展被装载 ② 产物齐全性（**能取的从页面内 `fetch`、不能取的查磁盘**）③ 三个自有页面能开且无未捕获错误 ④ ★ **SW 真的活着**（能应答 `ql.diag` 且回了 `logs` 数组）⑤ 无致命错误。<br>★ 它**不验**登录 / 列表 / 开页签 / 盒子 / 设备流 / 离线降级 —— 那些要真实云端账号 + 真实内网平台，**必须人工走**（B7 的剩余部分），本脚本**不冒充**那部分覆盖 | **17/17** | ✔ |
@@ -180,6 +180,8 @@ node tools/verify/run-all.mjs --list              # 与上一条应当一致
    —— 本目录深度是两层，写一层会**静默**指向 `tools/` 并去找 `tools/dist/manifest.json`。
 4. **断言必须能红**：写完先问"拆掉什么它才会红"，答不上来说明它没在验任何东西
    （同 `akso-mogul` 的 PITFALLS #119）。
+
+
 
 
 

@@ -41,9 +41,15 @@ await build({
   target: 'node20',
   logLevel: 'silent',
 });
-const { pageLoadStatuses } = await import(pathToFileURL(OUT).href);
+const { pageLoadStatuses, parseInstanceContext, isInstanceContext } = await import(
+  pathToFileURL(OUT).href
+);
 if (typeof pageLoadStatuses !== 'function') {
   console.error('✗ instance-status.ts 没有导出 pageLoadStatuses');
+  process.exit(2);
+}
+if (typeof parseInstanceContext !== 'function' || typeof isInstanceContext !== 'function') {
+  console.error('✗ instance-status.ts 没有导出 parseInstanceContext / isInstanceContext');
   process.exit(2);
 }
 
@@ -158,6 +164,36 @@ const codes = (r) => r.statuses.map((s) => s.code);
     ok('无启停字段时全部保留（不误杀）');
   } else {
     fail(`无字段时被过滤：${JSON.stringify(codes(r))} hidden=${r.hiddenCount}`);
+  }
+}
+
+// 5. 实例页判定（v4.2.46）：列表页只有 bid/mid，没有具体数据 id，不该点亮 Alt+W
+{
+  const listPage = parseInstanceContext('https://qllocal.test/web/view?mid=m1&bid=b1');
+  if (listPage && !isInstanceContext(listPage)) {
+    ok('列表页（只有 mid/bid、没有 id）不算实例页');
+  } else {
+    fail(`列表页被误判为实例页：${JSON.stringify(listPage)}`);
+  }
+
+  const instancePage = parseInstanceContext('https://qllocal.test/web/view?mid=m1&bid=b1&id=i1');
+  if (instancePage && isInstanceContext(instancePage)) {
+    ok('带 id 的数据页算实例页');
+  } else {
+    fail('数据页（带 id）没有通过实例页判定');
+  }
+
+  const adminPage = parseInstanceContext('https://qllocal.test/admin/config/basic-objects/edit/base?id=o1');
+  if (adminPage && !isInstanceContext(adminPage)) {
+    ok('管理端 /admin 的 id 是配置对象 id，不算实例页');
+  } else {
+    fail('管理端页面被误判为实例页');
+  }
+
+  if (parseInstanceContext('chrome-extension://abc/x.html') === null) {
+    ok('非 http(s) 页面直接解析失败');
+  } else {
+    fail('chrome-extension:// 页面不该被解析');
   }
 }
 

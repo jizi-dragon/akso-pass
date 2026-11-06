@@ -108,9 +108,28 @@ export function parseInstanceContext(rawUrl: string): InstanceContext | null {
   return { href: rawUrl, origin, objectId, instanceId, menuId };
 }
 
-/** 能否据此定位一个实例（B3 的最低前提：至少要有 objectId） */
+/**
+ * 能否据此定位一个**具体实例**（B3 的最低前提）。
+ *
+ * ★ v4.2.46：此前只要求 `objectId || menuId`，于是一张**列表页**（只有 `bid`/`mid`，
+ *   没有 `id`）也会点亮 Alt+W —— 但列表页没有"当前这条数据"，轮盘既读不到状态，
+ *   选中后也没有可切换的实例。用户反馈这是错的，现在收紧为：
+ *   - 必须有 `instanceId`（URL 的 `id`）；
+ *   - 管理端 `/admin/...` 的 `id` 是**配置对象 id**（对象/生命周期/工作流），不是实例 id，
+ *     这类页面同样不算实例页。
+ */
 export function isInstanceContext(ctx: InstanceContext | null): boolean {
-  return Boolean(ctx && (ctx.objectId || ctx.menuId));
+  if (!ctx || !ctx.instanceId) {
+    return false;
+  }
+  try {
+    if (new URL(ctx.href).pathname.startsWith('/admin/')) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /* ==================== 注入到页面主世界执行的函数 ====================

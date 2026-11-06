@@ -1,15 +1,22 @@
 /**
- * 调试跳转浮层（v4.2.45，Alt+2）。
+ * 调试跳转浮层（v4.2.45，Alt+2；v4.2.46 统一视觉）。
  *
  * background 对当前标签页 `executeScript` 注入本脚本；再次注入 = 关闭（幂等开关）。
  *
  * 三个按钮的目标地址**全部由 background 拼**（origin 取目标页签 URL），本脚本只负责
  * 展示与把点击转回 background —— 页面即使被 XSS，也改不了按钮指向哪里。
  *
- * Esc 在任意焦点下都关闭（与 v4.2.43 的三个轮盘一致，输入框守卫不拦 Esc）。
+ * ## 视觉与另外三个轮盘一致（v4.2.46，用户反馈"风格不一致"）
+ *
+ * 复用 `ACCT_GRID_CSS` 的同一套骨架：`.ag-head`（标题 + meta）、`.ag-cell`
+ * （左侧色条 + 名称 + 说明）、`.ag-foot`、以及 `OVERLAY_CHROME_CSS` 的 `.hint` 药丸。
+ * 不再自己画一张"对话框卡片"（kicker / 右上角 × / 大按钮列表）——那套视觉只此一家，
+ * 和账号、状态、常用页面三个浮层放在一起明显不是同一个产品。
+ *
+ * 关闭方式也与它们一致：Esc（任意焦点）+ 点击遮罩空白处；不再提供 × 按钮。
  */
 import type { DebugLinks, Result } from '../shared/messages';
-import { OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
+import { ACCT_GRID_CSS, OVERLAY_CHROME_CSS } from '../ui/wheel/ring-wheel-style';
 
 const WIN = window as typeof window & {
   __QL_DEBUG_ACTIVE__?: boolean;
@@ -18,42 +25,24 @@ const WIN = window as typeof window & {
 const HOST_ID = 'ql-debug-overlay-host';
 
 const DEBUG_CSS = `
-.dbg-root{width:min(92vw,460px)}
-.dbg-card{
-  background:#fff;border:1px solid #e6ecf6;border-radius:var(--sb-radius-lg,16px);
-  box-shadow:0 24px 60px rgba(23,42,84,.18);
-  padding:var(--sp-5,20px);display:flex;flex-direction:column;gap:var(--sp-3,12px);
+.dbg-root{width:min(92vw,560px)}
+.dbg-grid{grid-auto-rows:86px}
+.dbg-cell{align-items:flex-start;justify-content:center}
+.dbg-sub{
+  font-size:var(--fs-11,11px);line-height:1.35;color:#8494b4;white-space:normal;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
-.dbg-head{display:flex;align-items:flex-start;gap:var(--sp-2,8px)}
-.dbg-kicker{font-size:var(--fs-11,11px);letter-spacing:.08em;color:#8494b4;font-weight:600}
-.dbg-title{font-size:var(--fs-18,18px);font-weight:700;color:#1b2a4a;margin-top:2px;word-break:break-all}
-.dbg-sub{font-size:var(--fs-12,12px);color:#66759b;margin-top:2px;word-break:break-all}
-.dbg-x{
-  margin-left:auto;flex:none;width:28px;height:28px;border:0;border-radius:var(--sb-radius-sm,8px);
-  background:#f3f6fc;color:#5b6b8f;font-size:var(--fs-18,18px);line-height:1;cursor:pointer;
+.dbg-meta{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbg-copies{display:flex;align-items:center;gap:var(--sp-2,8px);min-width:0}
+.dbg-copy{
+  border:0;background:transparent;color:#66759b;font:inherit;font-size:var(--fs-11,11px);
+  cursor:pointer;padding:var(--sp-hair,1px) var(--sp-2,8px);border-radius:var(--sb-radius-sm,8px);
 }
-.dbg-x:hover{background:#e8eefb;color:#1b2a4a}
-.dbg-rows{display:flex;flex-direction:column;gap:var(--sp-2,8px)}
-.dbg-row{
-  display:grid;grid-template-columns:1fr auto;grid-template-areas:"t a" "s a";
-  gap:var(--sp-hair,1px) var(--sp-2,8px);align-items:center;text-align:left;
-  padding:var(--sp-3,12px) var(--sp-4,16px);border:1px solid #e6ecf6;border-radius:var(--sb-radius,12px);
-  background:#fbfdff;cursor:pointer;font:inherit;
+.dbg-copy:hover{background:#f2f6ff;color:var(--acc,#1e6fff)}
+.dbg-copy:disabled{opacity:.45;cursor:default;background:transparent;color:#66759b}
+.dbg-msg{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;
 }
-.dbg-row:hover{border-color:#1e6fff;background:#f5f9ff}
-.dbg-row:disabled{opacity:.55;cursor:not-allowed;border-color:#e6ecf6;background:#fafbfe}
-.dbg-row-t{grid-area:t;font-size:var(--fs-15,15px);font-weight:600;color:#1b2a4a}
-.dbg-row-s{grid-area:s;font-size:var(--fs-12,12px);color:#7b8aab}
-.dbg-arrow{grid-area:a;color:#9fb0cc;font-size:var(--fs-13,13px)}
-.dbg-row:not(:disabled):hover .dbg-arrow{color:#1e6fff}
-.dbg-foot{display:flex;align-items:center;gap:var(--sp-2,8px);flex-wrap:wrap;margin-top:2px}
-.dbg-mini{
-  border:1px solid #e6ecf6;background:#fff;border-radius:var(--sb-radius-sm,8px);
-  padding:var(--sp-1,4px) var(--sp-2,8px);
-  font:inherit;font-size:var(--fs-11,11px);color:#5b6b8f;cursor:pointer;
-}
-.dbg-mini:hover{border-color:#1e6fff;color:#1e6fff}
-.dbg-msg{margin-left:auto;font-size:var(--fs-11,11px);color:#8494b4;min-height:14px}
 .dbg-msg.bad{color:#dc2626}
 .dbg-msg.ok{color:#16a34a}
 `;
@@ -87,49 +76,46 @@ async function mount(): Promise<void> {
   const shadow = host.attachShadow({ mode: 'open' });
 
   const style = document.createElement('style');
-  style.textContent = OVERLAY_CHROME_CSS + DEBUG_CSS;
+  style.textContent = ACCT_GRID_CSS + OVERLAY_CHROME_CSS + DEBUG_CSS;
   shadow.append(style);
 
   const root = document.createElement('div');
-  root.className = 'wheel-root dbg-root';
+  root.className = 'wheel-root acct-grid dbg-root';
   root.innerHTML = `
-    <div class="dbg-card" role="dialog" aria-label="调试跳转">
-      <div class="dbg-head">
-        <div>
-          <div class="dbg-kicker">调试跳转</div>
-          <div class="dbg-title" data-el="title">正在解析当前对象…</div>
-          <div class="dbg-sub" data-el="sub"></div>
+    <div class="ag-wrap">
+      <div class="ag-head">
+        <div class="ag-title">
+          <span class="ag-box" data-el="title">调试跳转</span>
+          <span class="ag-meta dbg-meta" data-el="meta"></span>
         </div>
-        <button class="dbg-x" data-el="close" title="关闭（Esc）" aria-label="关闭">×</button>
       </div>
-      <div class="dbg-rows">
-        <button class="dbg-row" data-go="object" disabled>
-          <span class="dbg-row-t">对象配置</span>
-          <span class="dbg-row-s">基础信息 / 字段 / 布局入口</span>
-          <span class="dbg-arrow">→</span>
+      <div class="ag-grid dbg-grid" data-el="grid" style="--ag-cols:3">
+        <button class="ag-cell dbg-cell" data-go="object" type="button" disabled style="--acct:#1e6fff">
+          <span class="ag-name">对象配置</span>
+          <span class="dbg-sub">基础信息 / 字段 / 布局</span>
         </button>
-        <button class="dbg-row" data-go="lifecycle" disabled>
-          <span class="dbg-row-t">对象生命周期</span>
-          <span class="dbg-row-s">状态、阶段与流转配置</span>
-          <span class="dbg-arrow">→</span>
+        <button class="ag-cell dbg-cell" data-go="lifecycle" type="button" disabled style="--acct:#16a34a">
+          <span class="ag-name">对象生命周期</span>
+          <span class="dbg-sub">状态、阶段与流转配置</span>
         </button>
-        <button class="dbg-row" data-go="workflow" disabled>
-          <span class="dbg-row-t">工作流</span>
-          <span class="dbg-row-s">工作流列表页（按对象自己搜）</span>
-          <span class="dbg-arrow">→</span>
+        <button class="ag-cell dbg-cell" data-go="workflow" type="button" disabled style="--acct:#7c3aed">
+          <span class="ag-name">工作流</span>
+          <span class="dbg-sub">工作流列表页（按对象自己搜）</span>
         </button>
       </div>
-      <div class="dbg-foot">
-        <button class="dbg-mini" data-copy="object" disabled>复制 objectId</button>
-        <button class="dbg-mini" data-copy="lifecycle" disabled>复制 lifecycleId</button>
-        <span class="dbg-msg" data-el="msg"></span>
+      <div class="ag-foot">
+        <div class="dbg-copies">
+          <button class="dbg-copy" data-copy="object" type="button" disabled>复制 objectId</button>
+          <button class="dbg-copy" data-copy="lifecycle" type="button" disabled>复制 lifecycleId</button>
+        </div>
+        <span class="ag-tip dbg-msg" data-el="msg">正在解析…</span>
       </div>
     </div>`;
   shadow.append(root);
 
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.innerHTML = '<b>调试跳转</b><i></i>Esc 关闭 · 已登录平台即可使用';
+  hint.innerHTML = '<b>调试跳转</b><i></i><span>已登录平台即可使用</span><i></i><span><kbd>Esc</kbd> 关闭</span>';
   shadow.append(hint);
 
   document.documentElement.append(host);
@@ -148,11 +134,11 @@ async function mount(): Promise<void> {
     return el as T;
   };
 
+  const wrapEl = $<HTMLElement>('.ag-wrap');
   const titleEl = $<HTMLElement>('[data-el="title"]');
-  const subEl = $<HTMLElement>('[data-el="sub"]');
+  const metaEl = $<HTMLElement>('[data-el="meta"]');
   const msgEl = $<HTMLElement>('[data-el="msg"]');
-  const closeBtn = $<HTMLButtonElement>('[data-el="close"]');
-  const rows = Array.from(shadow.querySelectorAll<HTMLButtonElement>('.dbg-row'));
+  const rows = Array.from(shadow.querySelectorAll<HTMLButtonElement>('.dbg-cell'));
   const copyBtns = Array.from(shadow.querySelectorAll<HTMLButtonElement>('[data-copy]'));
 
   let links: DebugLinks | null = null;
@@ -163,7 +149,7 @@ async function mount(): Promise<void> {
 
   const setMsg = (text: string, kind: 'ok' | 'bad' | '' = ''): void => {
     msgEl.textContent = text;
-    msgEl.className = `dbg-msg${kind ? ` ${kind}` : ''}`;
+    msgEl.className = `ag-tip dbg-msg${kind ? ` ${kind}` : ''}`;
   };
 
   const close = (): void => {
@@ -188,8 +174,12 @@ async function mount(): Promise<void> {
     close();
   }
   document.addEventListener('keydown', onKey, true);
-
-  closeBtn.addEventListener('click', close);
+  // 与三个轮盘一致：点遮罩空白处关闭（点卡片内部不关）
+  host.addEventListener('click', (e) => {
+    if (e.target === host) {
+      close();
+    }
+  });
 
   const openTarget = async (url: string | null): Promise<void> => {
     if (!url) {
@@ -225,35 +215,41 @@ async function mount(): Promise<void> {
   const render = (data: DebugLinks): void => {
     links = data;
     titleEl.textContent = data.object.name || data.object.code || data.object.id;
-    subEl.textContent = [data.object.code, data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期']
+    metaEl.textContent = [data.object.code, data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期']
       .filter(Boolean)
       .join(' · ');
     for (const row of rows) {
       const key = row.dataset.go as 'object' | 'lifecycle' | 'workflow';
       const url = key === 'lifecycle' ? data.urls.lifecycle : data.urls[key];
       row.disabled = !url;
+      row.classList.toggle('ag-cell-disabled', !url);
       row.title = url || (key === 'lifecycle' ? '该对象未启用生命周期' : '');
     }
     copyBtns[0].disabled = !data.object.id;
     copyBtns[1].disabled = !data.lifecycle?.id;
+    setMsg('');
   };
 
+  /** 与另外三个浮层同样的空态：`.ag-empty` 两行文案，而不是自定义错误框 */
   const fail = (message: string): void => {
-    titleEl.textContent = '无法定位当前对象';
-    subEl.textContent = message;
-    for (const row of rows) {
-      row.disabled = true;
-    }
-    for (const btn of copyBtns) {
-      btn.disabled = true;
-    }
-    setMsg('重试请先按 Esc 关闭，再按 Alt+2', '');
+    links = null;
+    wrapEl.textContent = '';
+    const empty = document.createElement('div');
+    empty.className = 'ag-empty';
+    const t = document.createElement('div');
+    t.className = 'ag-empty-t';
+    t.textContent = '无法定位当前对象';
+    const s = document.createElement('div');
+    s.className = 'ag-empty-s';
+    s.textContent = message;
+    empty.append(t, s);
+    wrapEl.append(empty);
   };
 
   for (const row of rows) {
     row.addEventListener('click', () => {
       const key = row.dataset.go as 'object' | 'lifecycle' | 'workflow';
-      if (!links) {
+      if (!links || row.disabled) {
         return;
       }
       void openTarget(key === 'lifecycle' ? links.urls.lifecycle : links.urls[key]);
@@ -277,8 +273,6 @@ async function mount(): Promise<void> {
       return;
     }
     render(r.data);
-    setMsg('');
-    closeBtn.focus();
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
   }

@@ -19,10 +19,29 @@ import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { stripComments } from './_lib/strip-comments.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST = path.join(ROOT, 'dist');
 const TMP = path.join(ROOT, 'tmp');
+
+/* ---- 决策判据（v4.2.46）：跳转必须"以账号身份开新页签"，不能退回裸 tabs.create ---- */
+{
+  const src = stripComments(
+    fs.readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'background', 'service-worker.ts'), 'utf8'),
+  );
+  const bound = /parallelSession\.open\(accountId, true, \{ targetUrl: target\.href, stageCredentials: false \}\)/.test(src);
+  const owner = /parallelSession\.boundAccountOf\(tabId\)/.test(src) && /parallelSession\.boundHostOf\(tabId\)/.test(src);
+  const fallback = /debug\.open 以账号身份打开失败，退回普通新页签/.test(src);
+  if (bound && owner && fallback) {
+    console.log('  ✓ 跳转走账号绑定（含取不到账号时的可解释回退）');
+  } else {
+    console.log('  ✗ debug.open 的账号绑定链路缺失或退化');
+    process.exitCode = 1;
+    process.exit(1);
+  }
+}
+
 
 function findPwChromium() {
   const mp = path.join(os.homedir(), 'AppData', 'Local', 'ms-playwright');
@@ -165,10 +184,21 @@ try {
   await p1.waitForTimeout(1200);
   const overlay = await p1.evaluate(() => {
     const host = document.getElementById('ql-debug-overlay-host');
-    return { host: !!host, text: host?.shadowRoot?.textContent ?? '' };
+    const sr = host?.shadowRoot;
+    return {
+      host: !!host,
+      title: sr?.querySelector('.ag-box')?.textContent ?? '',
+      cells: sr?.querySelectorAll('.dbg-cell').length ?? 0,
+      hint: !!sr?.querySelector('.hint'),
+    };
   });
   check('E Alt+2 能打开调试浮层', overlay.host);
-  check('E 浮层里显示对象名', /演示对象/.test(overlay.text), overlay.text.slice(0, 80));
+  check('E 浮层里显示对象名', /演示对象/.test(overlay.title), overlay.title);
+  check(
+    'E 沿用统一网格骨架（三个入口 + hint 药丸）',
+    overlay.cells === 3 && overlay.hint,
+    `cells=${overlay.cells}`,
+  );
   await p1.keyboard.press('Escape');
   await p1.waitForTimeout(300);
   const closed = await p1.evaluate(() => !document.getElementById('ql-debug-overlay-host'));

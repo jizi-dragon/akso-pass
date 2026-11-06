@@ -675,7 +675,36 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
         if (target.origin !== new URL(base).origin) {
           throw new Error('只允许打开同源地址');
         }
+        /* ★ v4.2.46：普通 `tabs.create` 开出来的是**未绑定账号**的新页签 —— 没有 DNR 的
+         *   Authorization、没有 Cookie 回放、也没有命名空间种子，管理端只认页面里的
+         *   `__auth_token__`，于是直接跳登录页（用户反馈）。
+         *   这里改走与 `favorites.open` 同一条「以账号身份开新页签」的路径：
+         *   只有能确认当前页签属于某账号、且目标与账号站点同 host 时才绑定；
+         *   认不出来就保持普通新页签，绝不猜账号。 */
+        const tabId = sender.tab?.id;
+        const accountId = tabId !== undefined ? parallelSession.boundAccountOf(tabId) : undefined;
+        const boundHost = tabId !== undefined ? parallelSession.boundHostOf(tabId) : undefined;
+        let sameHost = false;
+        if (boundHost) {
+          try {
+            sameHost = hostNoPortOf(target.host) === hostNoPortOf(boundHost);
+          } catch {
+            sameHost = false;
+          }
+        }
+        if (accountId && sameHost) {
+          try {
+            await parallelSession.open(accountId, true, { targetUrl: target.href, stageCredentials: false });
+            void forensics('debug-open', { accountId, tabId, url: target.href, mode: 'bound-new-tab' });
+            return null;
+          } catch (e) {
+            // 账号信息拉不到（离线/会话过期）时不要连"打开"一起失败：退回普通新页签，
+            // 代价是可能要重新登录一次；这比"点了没反应"更可解释。
+            log.warn('debug.open 以账号身份打开失败，退回普通新页签：%s', e instanceof Error ? e.message : String(e));
+          }
+        }
         await chrome.tabs.create({ url: target.href, active: true });
+        void forensics('debug-open', { accountId: accountId ?? null, tabId: tabId ?? null, url: target.href, mode: 'plain-new-tab' });
         return null;
       });
       return { kind: 'debug.open', result: r };
@@ -1248,7 +1277,7 @@ function statusContextFor(tab: chrome.tabs.Tab | undefined): Promise<Result<Stat
       instanceId: ctx.instanceId,
       menuId: ctx.menuId,
       operable,
-      reason: operable ? '' : '当前页面不是对象实例页（地址里没有 bid / id）',
+      reason: operable ? '' : '当前页面不是对象实例页（列表页/菜单页没有具体数据的 id）',
     }),
   );
 }
