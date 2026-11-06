@@ -125,6 +125,8 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
           lifecycleId = lifecycleId || str(wf.lifecycleId);
         }
       }
+      // 这里的 ?id= 是工作流 config id，不是实例 id；传给 GetFormInstance 会被当成实例而失败
+      instanceId = '';
     }
 
     // 管理端其它配置页：对象配置 / 列表布局 / 对象关系用 ?id=，表单布局用 ?bid=
@@ -133,9 +135,13 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
       /\/admin\/config\/(basic-objects\/edit\/(base|list-layout|relation)|object-interface\/detail)\b/.test(pathname)
     ) {
       objectId = read('id');
+      // ★ 管理端 ?id= 是**对象** id，不是实例 id；必须清空，否则 GetFormInstance 会拿对象 id
+      //   当 instanceId 查实例，接口失败，整页 Alt+2 就报「读取对象信息失败」（v4.2.53 修）。
+      instanceId = '';
     }
     if (!objectId && /\/admin\/config\/form-layout\/list\b/.test(pathname)) {
       objectId = read('bid') || read('id');
+      instanceId = '';
     }
 
     // 拿一次菜单权限表：既用于 mid 反查，也用于「业务菜单」入口
@@ -149,10 +155,14 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
 
     // 生命周期页只有 lifecycleId：扫启用对象表反查（平台没有 lifecycle → object 的直连接口）
     if (!objectId && lifecycleId) {
-      const raw = (await call('/api/platform/BasicObject/AllEnableObjects')) as unknown;
-      const all = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
-      const hit = all.find((o) => str(o.lifeCycleId) === lifecycleId);
-      if (hit) objectId = str(hit.id);
+      try {
+        const raw = (await call('/api/platform/BasicObject/AllEnableObjects')) as unknown;
+        const all = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+        const hit = all.find((o) => str(o.lifeCycleId) === lifecycleId);
+        if (hit) objectId = str(hit.id);
+      } catch {
+        // 反查失败只影响「这一页能不能跳」，不影响别的入口；下面没有 objectId 会给出明确报错
+      }
     }
 
     // 业务页：只有 mid 时按菜单反查 objectId
@@ -174,17 +184,35 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
       };
     }
 
-    const form = (await call('/api/platform/Layout/GetFormInstance', {
-      method: 'POST',
-      body: JSON.stringify({ objectId, instanceId, isCopy: false }),
-    })) as Record<string, unknown> | null;
-    if (!form || typeof form !== 'object') {
-      return { error: '读取对象信息失败（可能没有该对象的权限）' };
+    // 对象详情（名称 / code / 生命周期）。
+    // ★ 失败要容忍：配置页上有些对象没有可读的表单实例（或没配菜单/生命周期），
+    //   这个接口会失败；对象 id 已经从 URL 拿到，跳转照样成立，不能因此整次解析失败。
+    let form: Record<string, unknown> | null = null;
+    try {
+      const raw = (await call('/api/platform/Layout/GetFormInstance', {
+        method: 'POST',
+        body: JSON.stringify({ objectId, instanceId, isCopy: false }),
+      })) as Record<string, unknown> | null;
+      form = raw && typeof raw === 'object' ? raw : null;
+    } catch {
+      form = null;
     }
-    const basic = (form.basicObject && typeof form.basicObject === 'object'
+    let basic = (form?.basicObject && typeof form.basicObject === 'object'
       ? form.basicObject
-      : form) as Record<string, unknown>;
-    const lifeRaw = (form.lifecycle && typeof form.lifecycle === 'object'
+      : (form ?? { id: objectId })) as Record<string, unknown>;
+    // GetFormInstance 对「没有表单实例」的对象会回 code=500（实测「数据不存在」）。
+    // 退一层：从启用对象表按 id 找名称 / code / lifecycleId —— 跳转信息就够了。
+    if (!form || !str(basic.name)) {
+      try {
+        const raw = (await call('/api/platform/BasicObject/AllEnableObjects')) as unknown;
+        const all = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+        const hit = all.find((o) => str(o.id) === objectId);
+        if (hit) basic = { ...basic, ...hit };
+      } catch {
+        // 还是拿不到就接受空名称，不影响 id 与其它入口
+      }
+    }
+    const lifeRaw = (form?.lifecycle && typeof form.lifecycle === 'object'
       ? form.lifecycle
       : null) as Record<string, unknown> | null;
 

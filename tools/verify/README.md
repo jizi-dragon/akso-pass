@@ -63,7 +63,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-ruleidem.mjs` | ★★ **SW 冷启不叠 DNR 规则**（v4.2.39）：写 `ql:parTabBindings` / `ql:parTokens` 造一个绑定页签，用 CDP 杀掉 `background.js` 的 service worker 再拉起（模块重新求值 → `restore()`），断言冷启后会话规则总数不增长、AUTH 与回放 Cookie 仍是当前快照。★ 修复前实测第二轮 **8 条**（首轮 4 条 + 重建 4 条）；旧规则不在 `installed` 里，`clearTab` 永远摘不掉 ⇒ 解绑后旧 token 仍被改写，规则数还会撞 5000 上限 | 5/5 | ✔ |
 | `verify-favui.mjs` | ★★ **常用页面编辑器的浏览器级判据**（v4.2.44）：真装扩展打开 `parallel.html`，摘掉未登录遮罩后切到「常用页面」——① 是行编辑器（无 textarea）且默认 6 条名称对得上 ② 「＋ 添加一条」新增并聚焦名称框 ③ 编辑后出现「有未保存的修改」 ④ 保存后**真的**写进 `chrome.storage.local`、相对路径补成 `/admin/…`、提示「已保存 7 条」 ⑤ 重新打开页面第 7 条仍在（不是内存态） ⑥ 「恢复默认」删用户键并回 6 条 ⑦ 全程无未捕获页面错误。<br>★ 纯逻辑在 `verify-favorites.mjs`；这条只补它覆盖不到的「HTML id / 事件绑定 / 与后台消息往返」那一层 | 10/10 | ✔ |
 | `verify-autologin.mjs` | 自愈式提交（首击被吞后重试 ≤4 次 / 提交时值完整 / 用户键入即让位） | 5/5 | ✔ |
-| `verify-debugjump.mjs` | ★★ **调试跳转的浏览器级判据**（v4.2.45）：本地服务同时扮演业务页与平台接口 —— ① 只有 `mid` 时经菜单反查 objectId ② 带 `bid` 时不重复请求菜单 ③ 四个候选地址精确（对象配置 / 生命周期 / 工作流 / 对象接口） ④ **Alt+2 页面热键**能开浮层、显示对象名、**复用 `buildItemGrid` 的 5×4 定尺网格**（与账号/状态/常用页面同一内核，v4.2.48）、Esc 关闭 ⑤ v4.2.46：`debug.open` 必须走账号绑定（含离线回退） ⑥ 无对象上下文 / 未登录各自明确报错。<br>★ 顺带钉住一个 Chrome 限制：`chrome.commands` 只允许 **4 个**命令带默认键，第 5 个会让**整个扩展装载失败**（`ERR_BLOCKED_BY_CLIENT`）—— 所以 Alt+2 由 `content/debug-hotkey.js` 在页面侧监听后转给后台 | 36/36 | ✔ |
+| `verify-debugjump.mjs` | ★★ **调试跳转的浏览器级判据**（v4.2.45）：本地服务同时扮演业务页与平台接口 —— ① 只有 `mid` 时经菜单反查 objectId ② 带 `bid` 时不重复请求菜单 ③ 四个候选地址精确（对象配置 / 生命周期 / 工作流 / 对象接口） ④ **Alt+2 页面热键**能开浮层、显示对象名、**复用 `buildItemGrid` 的 5×4 定尺网格**（与账号/状态/常用页面同一内核，v4.2.48）、Esc 关闭 ⑤ v4.2.46：`debug.open` 必须走账号绑定（含离线回退） ⑥ 无对象上下文 / 未登录各自明确报错。<br>★ 顺带钉住一个 Chrome 限制：`chrome.commands` 只允许 **4 个**命令带默认键，第 5 个会让**整个扩展装载失败**（`ERR_BLOCKED_BY_CLIENT`）—— 所以 Alt+2 由 `content/debug-hotkey.js` 在页面侧监听后转给后台；v4.2.53 起含管理端反查与「拿不到就忽略」的兜底 | 41/41 | ✔ |
 | `verify-autologin-gap.mjs` | ★ **自动填表"值进了 DOM、平台状态没收到"**：密码框在同源 srcdoc iframe 里、平台的 input 监听器晚于我们首次填充才挂上 ⇒ 点登录后平台校验报「请输入密码」。断言**只看平台状态**，不看 DOM；PITFALLS #55 | 7/7 | ✔ |
 | `verify-dynsnap.mjs` | 快照动态化（登录后票据实时进回放 / 轮换 / 作废移除 / 袋回流） | 6/6 | ✔ |
 | `verify-fillrhythm.mjs` | 填充节奏五重门控（iframe 延迟挂载 / 拒绝后重填 / 让位 / 停止重试） | 9/9 | ✔ |
@@ -180,6 +180,8 @@ node tools/verify/run-all.mjs --list              # 与上一条应当一致
    —— 本目录深度是两层，写一层会**静默**指向 `tools/` 并去找 `tools/dist/manifest.json`。
 4. **断言必须能红**：写完先问"拆掉什么它才会红"，答不上来说明它没在验任何东西
    （同 `akso-mogul` 的 PITFALLS #119）。
+
+
 
 
 

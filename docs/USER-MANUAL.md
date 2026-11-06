@@ -360,7 +360,9 @@
 
 工作流不在平台列表页里筛：列表页不解析任何 URL 筛选参数（bundle 里没有 searchParams → filters 的代码），所以点「工作流」格是在浮层内展开第二层，只列该对象上**启用**的工作流（未启用 10 / 禁用 30 / 编辑中 40 不列），点条目按 `newVersionWorkflowConfigId` 直接进编辑器。
 
-反向也成立（v4.2.51）：在对象配置 / 列表布局 / 表单布局页按 Alt+2，用 URL 的 `id`（表单布局是 `bid`）取对象；在生命周期配置页用 `AllEnableObjects` 按 `lifeCycleId` 反查对象；在工作流编辑页用 `GetWorkflowBasic` 按 config id 反查对象。业务菜单由 `GetUserMenuPermission` 按 objectId 过滤，路径只接受站内 `/` 开头。
+反向也成立（v4.2.51）：在对象配置 / 列表布局 / 表单布局 / 对象关系页按 Alt+2，用 URL 的 `id`（表单布局是 `bid`）取对象；在生命周期配置页用 `AllEnableObjects` 按 `lifeCycleId` 反查对象；在工作流编辑页用 `GetWorkflowBasic` 按 config id 反查对象。业务菜单由 `GetUserMenuPermission` 按 objectId 过滤，路径只接受站内 `/` 开头。
+
+**拿不到的可选项直接忽略，不算解析失败**（v4.2.53）：对象没配业务菜单就不出「业务菜单」格；对象没有可读的表单实例（接口失败）时仍按 URL 里的 id 正常给出其余入口，只是名称/生命周期留空并置灰，不会整次报「无法定位当前对象」。
 
 对象 id 优先取 URL 的 `bid`；只有 `mid` 时用 `GetUserMenuPermission` 反查菜单对应的对象。
 生命周期来自 `GetFormInstance` 的 `basicObject.lifeCycleId`。所有地址的 origin 取自**页签自己的地址**，

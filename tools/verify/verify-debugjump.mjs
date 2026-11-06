@@ -94,7 +94,7 @@ fs.writeFileSync(path.join(TESTDIST, 'manifest.json'), JSON.stringify(mf, null, 
 const OBJ = '3a1934a8-738a-dd93-dfb0-de2669ba0a11';
 const LIFE = '3a1934a8-738a-f302-f044-e3dd70e30e6a';
 const TOKEN = 'tok-debugjump';
-const calls = { menu: 0, form: 0, workflows: 0, wfBasic: 0, allObjects: 0 };
+const calls = { menu: 0, form: 0, workflows: 0, wfBasic: 0, allObjects: 0, formBodies: [] };
 
 function html(body, token) {
   return `<!doctype html><meta charset="utf-8"><title>probe</title>
@@ -106,15 +106,25 @@ const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/api/platform/Menu/GetUserMenuPermission') {
     calls.menu++;
+    const noMenu = (req.headers.referer ?? '').includes('noform=1');
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ code: 0, data: [{ menuId: 'm-1', name: '变更控制单', code: 'dc_menu__c', objectId: OBJ, linkurl: `/web/view?mid=m-1&bid=${OBJ}` }] }));
+    res.end(JSON.stringify({ code: 0, data: noMenu ? [] : [{ menuId: 'm-1', name: '变更控制单', code: 'dc_menu__c', objectId: OBJ, linkurl: `/web/view?mid=m-1&bid=${OBJ}` }] }));
     return;
   }
   if (u.pathname === '/api/platform/Layout/GetFormInstance') {
     calls.form++;
+    // 页面地址带 noform=1 时模拟「该对象没有可读的表单实例」：接口 500，
+    // 解析应当继续（对象 id 来自 URL），只是拿不到名称/生命周期，不能整次失败。
+    if ((req.headers.referer ?? '').includes('noform=1')) {
+      req.resume();
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ code: 500, message: 'no form instance' }));
+      return;
+    }
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
+      calls.formBodies.push(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         code: 0,
@@ -138,8 +148,9 @@ const server = http.createServer((req, res) => {
   }
   if (u.pathname === '/api/platform/BasicObject/AllEnableObjects') {
     calls.allObjects++;
+    const noObjects = (req.headers.referer ?? '').includes('noobjects=1');
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ code: 0, data: [{ id: OBJ, code: 'demo__c', name: '演示对象', lifeCycleId: LIFE }] }));
+    res.end(JSON.stringify({ code: 0, data: noObjects ? [] : [{ id: OBJ, code: 'demo__c', name: '演示对象', lifeCycleId: LIFE }] }));
     return;
   }
   if (u.pathname === '/api/platform/Workflow/GetObjectWorkflowList') {
@@ -355,6 +366,14 @@ try {
   await p5.waitForTimeout(500);
   const h = await resolveFor(p5);
   check('H 对象配置页能反查', h.ok && h.data?.object?.id === OBJ, JSON.stringify(h).slice(0, 200));
+  check(
+    'H 管理端 ?id= 不会被当成 instanceId 传给 GetFormInstance',
+    (() => {
+      const body = calls.formBodies[calls.formBodies.length - 1] ?? '';
+      try { return JSON.parse(body).instanceId === ''; } catch { return false; }
+    })(),
+    calls.formBodies[calls.formBodies.length - 1] ?? '(no body)',
+  );
   check('H 反查后仍有业务菜单', h.ok && h.data?.menus?.[0]?.name === '变更控制单', JSON.stringify(h.data?.menus ?? []));
 
   /* H2. 反向解析：对象关系页（同属 basic-objects/edit，?id= 取参，v4.2.52） */
@@ -362,6 +381,30 @@ try {
   await p5.waitForTimeout(500);
   const h2 = await resolveFor(p5);
   check('H2 对象关系页能反查', h2.ok && h2.data?.object?.id === OBJ, JSON.stringify(h2).slice(0, 160));
+
+  /* K. 对象没有可读表单实例时：不整次失败，只少名称/生命周期，其余入口照常（v4.2.53） */
+  await p5.goto(`${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}&noform=1`);
+  await p5.waitForTimeout(500);
+  const k = await resolveFor(p5);
+  const kTargets = k.ok ? k.data?.targets ?? [] : [];
+  check('K 表单实例失败仍能解析出对象 id', k.ok && k.data?.object?.id === OBJ, JSON.stringify(k).slice(0, 160));
+  check('K 没有菜单就不出业务菜单格', k.ok && kTargets.every((t) => t.kind !== 'menu'), kTargets.map((t) => t.kind).join(','));
+  check(
+    'K 生命周期从启用对象表兜底出来（不置灰）',
+    k.ok && kTargets.find((t) => t.kind === 'lifecycle')?.href !== null && kTargets.length === 6,
+    `${kTargets.length} 格 / ${kTargets.map((t) => t.kind).join(',')}`,
+  );
+
+  // K2. 表单实例与启用对象表都拿不到时，才允许生命周期置灰（仍然整页可用）
+  await p5.goto(`${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}&noform=1&noobjects=1`);
+  await p5.waitForTimeout(500);
+  const k2 = await resolveFor(p5);
+  const k2Targets = k2.ok ? k2.data?.targets ?? [] : [];
+  check(
+    'K2 两处都拿不到时生命周期置灰、不整次报错',
+    k2.ok && k2Targets.find((t) => t.kind === 'lifecycle')?.href === null && k2Targets.length === 6,
+    `${k2Targets.length} 格 / ${k2Targets.map((t) => t.kind).join(',')}`,
+  );
 
   /* I. 反向解析：生命周期页（只有 lifecycleId，扫 AllEnableObjects 反查对象） */
   const allBefore = calls.allObjects;
@@ -387,6 +430,7 @@ try {
 
 console.log(`=== ${results.filter(Boolean).length}/${results.length} 通过 ===`);
 process.exit(results.every(Boolean) ? 0 : 1);
+
 
 
 
