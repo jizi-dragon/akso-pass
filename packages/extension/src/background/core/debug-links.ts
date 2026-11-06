@@ -1,17 +1,20 @@
 /**
- * 调试跳转（v4.2.45，Alt+2）：业务页 → 对象配置 / 对象生命周期 / 工作流列表。
+ * 调试跳转（v4.2.45，Alt+2）：业务页 ↔ 对象配置 / 布局 / 生命周期 / 工作流 / 对象接口。
  *
- * ★ 数据链路（三段都只读）：
- *   1. `bid` 就是 objectId；只有 `mid` 时用 `Menu/GetUserMenuPermission` 反查；
- *   2. `Layout/GetFormInstance {objectId, instanceId}` 拿 basicObject（含 lifeCycleId）；
- *   3. 工作流只跳**列表页**，不猜某一条（列表接口会忽略筛选条件，实测）。
+ * ★ 数据链路（全部只读）：
+ *   1. 正向：`bid` 就是 objectId；只有 `mid` 时用 `Menu/GetUserMenuPermission` 反查；
+ *   2. 反向（v4.2.51）：管理端页面也能解析——对象配置/列表布局/对象接口取 `?id=`，
+ *      表单布局取 `?bid=`，工作流编辑页用 config id 调 `GetWorkflowBasic` 拿 objectId，
+ *      生命周期页用 `lifecycleId` 扫 `AllEnableObjects` 反查对象；
+ *   3. `Layout/GetFormInstance {objectId, instanceId}` 拿 basicObject（含 lifeCycleId）；
+ *   4. 业务菜单按 `objectId` 过滤同一份菜单权限表，得到回业务页的入口。
  *
  * ★ 解析函数在页面主世界执行：这样 DNR 能按账号补 Bearer、`_qlck` 缓存分区也生效；
  *   同时读的是**页面自己的** `__auth_token__`，不在扩展侧另存一份令牌。
  */
 
 import { buildDebugTargets } from '../../shared/deeplinks';
-import type { DebugLinks, DebugWorkflowRef } from '../../shared/messages';
+import type { DebugLinks, DebugMenuRef, DebugWorkflowRef } from '../../shared/messages';
 import { getLogger } from '../../shared/log';
 
 const log = getLogger('debug-links');
@@ -19,6 +22,7 @@ const log = getLogger('debug-links');
 interface PageDebugContext {
   object?: { id: string; code?: string; name?: string };
   lifecycle?: { id: string; name?: string } | null;
+  menus?: DebugMenuRef[];
   error?: string;
 }
 
@@ -37,10 +41,7 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
     const i = hash.indexOf('?');
     return i >= 0 ? (new URLSearchParams(hash.slice(i + 1)).get(key) ?? '') : '';
   };
-
-  const menuId = read('mid') || read('menuId');
-  let objectId = read('bid') || read('objectId');
-  const instanceId = read('id') || read('instanceId') || '';
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
   let token = '';
   try {
@@ -62,7 +63,7 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
 
   const call = async (path: string, init?: RequestInit): Promise<unknown> => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
@@ -99,21 +100,75 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
   };
 
   try {
+    const pathname = location.pathname;
+    const menuId = read('mid') || read('menuId');
+    let objectId = read('bid') || read('objectId');
+    let lifecycleId = '';
+    let instanceId = read('id') || read('instanceId') || '';
+
+    // 生命周期详情页：/admin/config/lifecycle/<lifecycleId>
+    const lifeMatch = pathname.match(/\/admin\/config\/lifecycle\/([A-Za-z0-9_-]{8,64})/);
+    if (lifeMatch) {
+      lifecycleId = lifeMatch[1];
+      instanceId = '';
+    }
+
+    // 工作流编辑器：?id= 是 newVersionWorkflowConfigId，不是 objectId
+    if (!objectId && /\/admin\/config\/workflow\/edit\b/.test(pathname)) {
+      const cfgId = read('id');
+      if (cfgId) {
+        const wf = (await call(
+          `/api/platform/Workflow/GetWorkflowBasic?id=${encodeURIComponent(cfgId)}`,
+        )) as Record<string, unknown> | null;
+        if (wf) {
+          objectId = str(wf.objectId);
+          lifecycleId = lifecycleId || str(wf.lifecycleId);
+        }
+      }
+    }
+
+    // 管理端其它配置页：对象配置 / 列表布局 / 对象接口用 ?id=，表单布局用 ?bid=
+    if (!objectId && /\/admin\/config\/(basic-objects\/edit\/(base|list-layout)|object-interface\/detail)\b/.test(pathname)) {
+      objectId = read('id');
+    }
+    if (!objectId && /\/admin\/config\/form-layout\/list\b/.test(pathname)) {
+      objectId = read('bid') || read('id');
+    }
+
+    // 拿一次菜单权限表：既用于 mid 反查，也用于「业务菜单」入口
+    let allMenus: Array<Record<string, unknown>> = [];
+    try {
+      const raw = (await call('/api/platform/Menu/GetUserMenuPermission')) as unknown;
+      allMenus = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+    } catch {
+      allMenus = [];
+    }
+
+    // 生命周期页只有 lifecycleId：扫启用对象表反查（平台没有 lifecycle → object 的直连接口）
+    if (!objectId && lifecycleId) {
+      const raw = (await call('/api/platform/BasicObject/AllEnableObjects')) as unknown;
+      const all = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+      const hit = all.find((o) => str(o.lifeCycleId) === lifecycleId);
+      if (hit) objectId = str(hit.id);
+    }
+
+    // 业务页：只有 mid 时按菜单反查 objectId
     if (!objectId && menuId) {
-      const menus = (await call('/api/platform/Menu/GetUserMenuPermission')) as Array<Record<string, unknown>>;
-      const list = Array.isArray(menus) ? menus : [];
-      const hit = list.find(
-        (m) => String(m.menuId ?? '') === menuId || String(m.id ?? '') === menuId,
+      const hit = allMenus.find(
+        (m) => str(m.menuId) === menuId || str(m.id) === menuId,
       );
       const found = hit
-        ? [hit.objectId, hit.bid, hit.businessObjectId].find((x): x is string => typeof x === 'string' && x.length > 0)
+        ? [str(hit.objectId), str(hit.bid), str(hit.businessObjectId)].find((x) => x.length > 0)
         : undefined;
       if (found) {
         objectId = found;
       }
     }
+
     if (!objectId) {
-      return { error: '当前页没有业务对象上下文（URL 里没有 bid，菜单里也没找到）' };
+      return {
+        error: '当前页没有业务对象上下文（URL 里没有 bid / id，菜单里也没找到）',
+      };
     }
 
     const form = (await call('/api/platform/Layout/GetFormInstance', {
@@ -130,21 +185,37 @@ async function pageResolveDebugContext(): Promise<PageDebugContext> {
       ? form.lifecycle
       : null) as Record<string, unknown> | null;
 
-    const id = typeof basic.id === 'string' && basic.id ? basic.id : objectId;
-    const lifeId = typeof basic.lifeCycleId === 'string' && basic.lifeCycleId
-      ? basic.lifeCycleId
-      : (typeof lifeRaw?.id === 'string' ? lifeRaw.id : '');
+    const id = str(basic.id) || objectId;
+    const lifeId = str(basic.lifeCycleId) || str(lifeRaw?.id) || lifecycleId;
     const enabled = basic.enableLifeCycle !== false;
+
+    // 业务菜单：按 objectId 过滤；linkurl 不是站内路径时退回 /web/view?mid=
+    const menus: DebugMenuRef[] = [];
+    const seen = new Set<string>();
+    for (const m of allMenus) {
+      if (str(m.objectId).toLowerCase() !== id.toLowerCase()) continue;
+      const mid = str(m.menuId) || str(m.id);
+      const name = str(m.name);
+      const link = str(m.linkurl);
+      const path = link.startsWith('/') && !link.startsWith('//') && !link.includes('\\')
+        ? link
+        : `/web/view?mid=${encodeURIComponent(mid)}`;
+      if (!mid || !name || !path || seen.has(path)) continue;
+      seen.add(path);
+      menus.push({ id: mid, name, code: str(m.code) || undefined, path });
+      if (menus.length >= 12) break;
+    }
 
     return {
       object: {
         id,
-        code: typeof basic.code === 'string' ? basic.code : undefined,
-        name: typeof basic.name === 'string' ? basic.name : undefined,
+        code: str(basic.code) || undefined,
+        name: str(basic.name) || undefined,
       },
       lifecycle: enabled && lifeId
-        ? { id: lifeId, name: typeof lifeRaw?.name === 'string' ? lifeRaw.name : undefined }
+        ? { id: lifeId, name: str(lifeRaw?.name) || undefined }
         : null,
+      menus,
     };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
@@ -273,12 +344,14 @@ export async function resolveDebugLinks(
       return { ok: false, error: '当前页没有对象上下文' };
     }
     const lifecycle = ctx.lifecycle ?? null;
+    const menus = ctx.menus ?? [];
     return {
       ok: true,
       data: {
         object: ctx.object,
         lifecycle,
-        targets: buildDebugTargets(origin, ctx.object, lifecycle),
+        targets: buildDebugTargets(origin, ctx.object, lifecycle, [], menus),
+        menus,
       },
     };
   } catch (e) {

@@ -492,6 +492,15 @@ export interface DebugWorkflowRef {
   configId?: string;
 }
 
+/** 指向该对象的业务菜单（`/web/view?mid=…` 或菜单自己的 linkurl）；v4.2.51 反向解析用 */
+export interface DebugMenuRef {
+  id: string;
+  name: string;
+  code?: string;
+  /** 站内路径（以 `/` 开头），由 background 拼 origin */
+  path: string;
+}
+
 /**
  * 调试跳转的一个候选格（v4.2.47）。
  *
@@ -514,9 +523,10 @@ export interface DebugTarget {
   disabledReason?: string;
   /**
    * 点开后**不跳页**，而是在浮层里展开下一层（v4.2.50）。
-   * 目前只有 `workflows`：直接列该对象上启用的工作流，避免落进平台列表页再手工筛。
+   * `workflows`：直接列该对象上启用的工作流，避免落进平台列表页再手工筛；
+   * `menus`：该对象有多个业务菜单时，先列出来再选（v4.2.51）。
    */
-  subview?: 'workflows';
+  subview?: 'workflows' | 'menus';
 }
 
 /**
@@ -529,6 +539,8 @@ export interface DebugLinks {
   object: DebugObjectRef;
   lifecycle: DebugLifecycleRef | null;
   targets: DebugTarget[];
+  /** 该对象的业务菜单入口（v4.2.51）；空数组表示没有菜单或未解析 */
+  menus: DebugMenuRef[];
 }
 
 /** 保存结果（v4.2.44）：把「为什么少了几条」如实带回界面，而不是静默丢弃 */
@@ -543,3 +555,4 @@ export interface FavoritesSaveResult {
 }
 
 export type { Result };
+

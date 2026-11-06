@@ -1,3 +1,17 @@
+## 4.2.51（2026-11-06）
+
+**调试跳转：管理端页也能反查；修掉「点面板内任意处就关浮层」**
+
+- 需求：在对象配置 / 列表布局 / 表单布局 / 生命周期配置 / 工作流编辑页按 Alt+2，也要能拿到可跳转信息
+  （尤其是回业务菜单）。
+- 反查：管理端 `?id=`、表单布局 `?bid=` 直接取对象；生命周期路径用 `AllEnableObjects` 按 `lifeCycleId`
+  反查对象；工作流编辑页用 `GetWorkflowBasic?id=<configId>` 反查 `objectId/lifecycleId`；业务菜单由
+  `GetUserMenuPermission` 按 objectId 过滤（单个直接跳，多个在浮层内展开第二层）。
+- 修复：遮罩关闭曾写成 `e.target === host`，但面板在 shadow root 内，真实点击冒泡到 host 会被**重定向**
+  成 host ⇒ 点面板内任何位置都关闭浮层（工作流二级层刚展开就被关掉，表现为「点了没反应」）。
+  改为 `e.composedPath().includes(root)`；判据用 `el.click()`（`composed=true`）专门覆盖这条路径。
+- 移除：按反馈删掉「对象接口」候选（实际调试用不到）。
+- 判据：`verify-debugjump` 34/34、`verify-deeplinks` OK；静态 31/31、`verify-load` 1/1。
 ## 4.2.50（2026-11-06）
 
 **工作流改为浮层内直接列出（只列启用状态），不再落平台列表页**

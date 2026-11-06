@@ -9,14 +9,13 @@
  *     （chunk 里 `basicObjectGetById(N.bid)`，`N` 同样来自 search params）
  *   - 对象生命周期详情：`/admin/config/lifecycle/<lifeCycleId>?__edit=2`
  *   - 工作流列表：`/admin/config/workflow`
- *   - 对象接口详情：`/admin/config/object-interface/detail?id=<objectId>`
  *
  * ★ 这里只做**纯字符串拼接**，不碰 chrome API：静态判据可以直接 import 测试，
  *   不需要起浏览器。origin 由调用方（background）从目标页签 URL 取，
  *   绝不接受页面自报的 origin —— 否则页面能把这几个按钮指向任意站点。
  */
 
-import type { DebugLifecycleRef, DebugObjectRef, DebugTarget } from './messages';
+import type { DebugLifecycleRef, DebugMenuRef, DebugObjectRef, DebugTarget } from './messages';
 
 /** 对象配置页（基础信息）。`__edit=2` 让管理端直接进编辑态。 */
 export function objectConfigUrl(origin: string, objectId: string): string {
@@ -69,11 +68,6 @@ export function workflowEditUrl(origin: string, configId: string): string {
   return `${origin}/admin/config/workflow/edit?__edit=2&id=${encodeURIComponent(configId)}`;
 }
 
-/** 对象接口详情页（该对象的接口清单，调试时用来核对入参/出参）。 */
-export function objectInterfaceUrl(origin: string, objectId: string): string {
-  return `${origin}/admin/config/object-interface/detail?id=${encodeURIComponent(objectId)}`;
-}
-
 /**
  * 把当前对象组装成**候选矩阵**（v4.2.47）。
  *
@@ -86,6 +80,7 @@ export function buildDebugTargets(
   object: DebugObjectRef,
   lifecycle: DebugLifecycleRef | null,
   extra: readonly DebugTarget[] = [],
+  menus: readonly DebugMenuRef[] = [],
 ): DebugTarget[] {
   const targets: DebugTarget[] = [
     {
@@ -130,14 +125,22 @@ export function buildDebugTargets(
       accent: '#7c3aed',
       subview: 'workflows',
     },
-    {
-      kind: 'interfaces',
-      title: '对象接口',
-      subtitle: '入参 / 出参',
-      hint: '对象接口 · 接口清单（调试入参 / 出参）',
-      href: objectInterfaceUrl(origin, object.id),
-      accent: '#d97706',
-    },
   ];
+
+  // 业务菜单（v4.2.51）：从管理端页反查回业务页。菜单路径由页面侧带回（`linkurl` 或 `/web/view?mid=`），
+  // 这里只做「站内路径」校验并拼 origin；多个菜单时先展开列表，避免只给一个入口却猜错。
+  if (menus.length > 0) {
+    const many = menus.length > 1;
+    targets.push({
+      kind: 'menu',
+      title: '业务菜单',
+      subtitle: many ? `${menus.length} 个入口` : '回业务页面',
+      hint: many ? '该对象挂在多个菜单下，点开选一个' : `回业务菜单：${menus[0].name}`,
+      href: many ? null : `${origin}${menus[0].path}`,
+      accent: '#0f766e',
+      subview: many ? 'menus' : undefined,
+    });
+  }
+
   return [...targets, ...extra];
 }

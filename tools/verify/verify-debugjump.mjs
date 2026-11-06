@@ -94,7 +94,7 @@ fs.writeFileSync(path.join(TESTDIST, 'manifest.json'), JSON.stringify(mf, null, 
 const OBJ = '3a1934a8-738a-dd93-dfb0-de2669ba0a11';
 const LIFE = '3a1934a8-738a-f302-f044-e3dd70e30e6a';
 const TOKEN = 'tok-debugjump';
-const calls = { menu: 0, form: 0, workflows: 0 };
+const calls = { menu: 0, form: 0, workflows: 0, wfBasic: 0, allObjects: 0 };
 
 function html(body, token) {
   return `<!doctype html><meta charset="utf-8"><title>probe</title>
@@ -107,7 +107,7 @@ const server = http.createServer((req, res) => {
   if (u.pathname === '/api/platform/Menu/GetUserMenuPermission') {
     calls.menu++;
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ code: 0, data: [{ menuId: 'm-1', objectId: OBJ, linkurl: `/web/view?mid=m-1&bid=${OBJ}` }] }));
+    res.end(JSON.stringify({ code: 0, data: [{ menuId: 'm-1', name: '变更控制单', code: 'dc_menu__c', objectId: OBJ, linkurl: `/web/view?mid=m-1&bid=${OBJ}` }] }));
     return;
   }
   if (u.pathname === '/api/platform/Layout/GetFormInstance') {
@@ -125,6 +125,21 @@ const server = http.createServer((req, res) => {
         },
       }));
     });
+    return;
+  }
+  if (u.pathname === '/api/platform/Workflow/GetWorkflowBasic') {
+    calls.wfBasic++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      code: 0,
+      data: { objectId: OBJ, lifecycleId: LIFE, name: '流程A', code: 'FLOW_A__c', status: 20 },
+    }));
+    return;
+  }
+  if (u.pathname === '/api/platform/BasicObject/AllEnableObjects') {
+    calls.allObjects++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ code: 0, data: [{ id: OBJ, code: 'demo__c', name: '演示对象', lifeCycleId: LIFE }] }));
     return;
   }
   if (u.pathname === '/api/platform/Workflow/GetObjectWorkflowList') {
@@ -228,10 +243,12 @@ try {
     targetOf('lifecycle')?.href ?? '',
   );
   check('A 工作流列表地址', targetOf('workflow')?.href === `${BASE}/admin/config/workflow`, targetOf('workflow')?.href ?? '');
+  check('A 业务菜单回到业务页', targetOf('menu')?.href === `${BASE}/web/view?mid=m-1&bid=${OBJ}`, targetOf('menu')?.href ?? '');
+  check('A 菜单名透传', a.data?.menus?.[0]?.name === '变更控制单', JSON.stringify(a.data?.menus ?? []));
   check(
     'A 候选是数据数组（顺序 + 每格自带标题/说明）',
     a.data?.targets?.length === 6 &&
-      a.data.targets.map((t) => t.kind).join(',') === 'object,listLayout,formLayout,lifecycle,workflow,interfaces' &&
+      a.data.targets.map((t) => t.kind).join(',') === 'object,listLayout,formLayout,lifecycle,workflow,menu' &&
       a.data.targets.every((t) => t.title && typeof t.accent === 'string'),
     JSON.stringify(a.data?.targets ?? []).slice(0, 160),
   );
@@ -257,21 +274,24 @@ try {
   check('E 浮层里显示对象名', /演示对象/.test(overlay.title), overlay.title);
   check(
     'E 候选矩阵由数据渲染（6 格，顺序与后台 targets 一致）',
-    overlay.kinds.join(',') === 'object,listLayout,formLayout,lifecycle,workflow,interfaces' &&
-      overlay.names.join(',') === '对象配置,列表布局,表单布局,对象生命周期,工作流,对象接口' &&
+    overlay.kinds.join(',') === 'object,listLayout,formLayout,lifecycle,workflow,menu' &&
+      overlay.names.join(',') === '对象配置,列表布局,表单布局,对象生命周期,工作流,业务菜单' &&
       overlay.hint,
     `${overlay.kinds.join(',')} / ${overlay.names.join(',')}`,
   );
-  /* F. 第二层：点「工作流」直接列该对象上启用的工作流（v4.2.50） */
+  /* F. 第二层：点「工作流」直接列该对象上启用的工作流（v4.2.50）
+     ★ 用 el.click() 而不是 dispatchEvent：click() 的事件带 composed=true，会真的
+       穿过 shadow 边界冒泡到 host —— 正是 v4.2.51 踩过的「点面板内任意处把浮层关掉」。 */
   const clickCell = (key) =>
     p1.evaluate((k) => {
       const sr = document.getElementById('ql-debug-overlay-host')?.shadowRoot;
       const cell = Array.from(sr?.querySelectorAll('.ag-cell') ?? []).find((c) => (c.dataset.itemKey ?? '') === k);
-      cell?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      cell?.click();
       return !!cell;
     }, key);
   check('F 找到工作流格', await clickCell('workflow'));
   await p1.waitForTimeout(900);
+  check('F 点面板内不会把浮层关掉（shadow 点击不误关）', await p1.evaluate(() => !!document.getElementById('ql-debug-overlay-host')));
   const wfView = await p1.evaluate(() => {
     const sr = document.getElementById('ql-debug-overlay-host')?.shadowRoot;
     const cells = Array.from(sr?.querySelectorAll('.ag-cell') ?? []);
@@ -301,14 +321,14 @@ try {
   const closed = await p1.evaluate(() => !document.getElementById('ql-debug-overlay-host'));
   check('E Esc 关闭浮层', closed);
 
-  /* B. 带 bid：不该再打菜单接口 */
+  /* B. 带 bid：直接解析；菜单表仍只取一次（业务菜单入口要用） */
   const menuBefore = calls.menu;
   const p2 = await ctx.newPage();
   await p2.goto(`${BASE}/web/view?bid=${OBJ}`);
   await p2.waitForTimeout(600);
   const b = await resolveFor(p2);
   check('B 带 bid 时直接解析', b.ok && b.data?.object?.id === OBJ);
-  check('B 没有重复请求菜单接口', calls.menu === menuBefore, `menu ${menuBefore}→${calls.menu}`);
+  check('B 每页只取一次菜单权限表', calls.menu - menuBefore === 1, `menu ${menuBefore}→${calls.menu}`);
 
   /* C. 有 token、没有对象上下文 */
   const p3 = await ctx.newPage();
@@ -323,6 +343,31 @@ try {
   await p4.waitForTimeout(500);
   const d = await resolveFor(p4);
   check('D 未登录时明确报错', !d.ok && /未登录/.test(d.error ?? ''), d.error ?? '');
+
+  /* H. 反向解析：对象配置页（?id= 就是 objectId，v4.2.51） */
+  const p5 = await ctx.newPage();
+  await p5.goto(`${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}`);
+  await p5.waitForTimeout(500);
+  const h = await resolveFor(p5);
+  check('H 对象配置页能反查', h.ok && h.data?.object?.id === OBJ, JSON.stringify(h).slice(0, 200));
+  check('H 反查后仍有业务菜单', h.ok && h.data?.menus?.[0]?.name === '变更控制单', JSON.stringify(h.data?.menus ?? []));
+
+  /* I. 反向解析：生命周期页（只有 lifecycleId，扫 AllEnableObjects 反查对象） */
+  const allBefore = calls.allObjects;
+  const p6 = await ctx.newPage();
+  await p6.goto(`${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`);
+  await p6.waitForTimeout(500);
+  const i = await resolveFor(p6);
+  check('I 生命周期页能反查对象', i.ok && i.data?.object?.id === OBJ, JSON.stringify(i).slice(0, 200));
+  check('I 生命周期页确实扫了对象表', calls.allObjects > allBefore, `allObjects ${allBefore}→${calls.allObjects}`);
+
+  /* J. 反向解析：工作流编辑页（?id= 是 config id，必须换成 objectId） */
+  const p7 = await ctx.newPage();
+  await p7.goto(`${BASE}/admin/config/workflow/edit?__edit=2&id=cfg-1`);
+  await p7.waitForTimeout(500);
+  const j = await resolveFor(p7);
+  check('J 工作流编辑页能反查对象', j.ok && j.data?.object?.id === OBJ, JSON.stringify(j).slice(0, 200));
+  check('J 用 GetWorkflowBasic 换 config id', calls.wfBasic >= 1, `wfBasic=${calls.wfBasic}`);
 } finally {
   await ctx.close();
   server.close();
@@ -331,4 +376,6 @@ try {
 
 console.log(`=== ${results.filter(Boolean).length}/${results.length} 通过 ===`);
 process.exit(results.every(Boolean) ? 0 : 1);
+
+
 
