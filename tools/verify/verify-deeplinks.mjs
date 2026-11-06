@@ -40,7 +40,7 @@ await build({
   format: 'cjs',
   logLevel: 'silent',
 });
-const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl } = await import(
+const { objectConfigUrl, lifecycleConfigUrl, workflowListUrl, objectInterfaceUrl, buildDebugTargets } = await import(
   pathToFileURL(OUT).href + `?t=${Date.now()}`
 );
 
@@ -78,5 +78,31 @@ if (wf.includes('?')) {
   ok('工作流列表没有 query（不伪造 objectId 筛选）');
 }
 
+/* ---- E. 候选矩阵是「数据驱动」的（v4.2.47） ----
+   用户要的是**可以继续加页面**的候选矩阵，不是写死的三格。这里直接钉住：
+   加一条 extra，数组就多一条，浮层按数组渲染 ⇒ 加页面只改一个函数。 */
+console.log('E. 候选矩阵可扩展（加一条就多一格）');
+const object = { id: OBJ, code: 'change_control__c', name: '变更控制' };
+const lifecycle = { id: LIFE, name: '变更控制生命周期' };
+const baseTargets = buildDebugTargets(BASE, object, lifecycle);
+eq('默认四条候选', baseTargets.length, 4);
+eq('候选顺序稳定', baseTargets.map((t) => t.kind).join(','), 'object,lifecycle,workflow,interfaces');
+eq('第一格指向对象配置', baseTargets[0].href, objectConfigUrl(BASE, OBJ));
+eq('第二格指向生命周期', baseTargets[1].href, lifecycleConfigUrl(BASE, LIFE));
+eq('第三格指向工作流列表', baseTargets[2].href, workflowListUrl(BASE));
+eq('第四格指向对象接口', baseTargets[3].href, objectInterfaceUrl(BASE, OBJ));
+
+const extra = [{ kind: 'fields', title: '对象字段', subtitle: '预留的扩展位', href: `${BASE}/admin/config/x`, accent: '#d97706' }];
+const withExtra = buildDebugTargets(BASE, object, lifecycle, extra);
+eq('额外候选被追加（不是替换）', withExtra.length, 5);
+eq('额外候选保留自己的地址', withExtra[4].href, `${BASE}/admin/config/x`);
+
+const noLife = buildDebugTargets(BASE, object, null);
+eq('没有生命周期时该格仍占位', noLife.length, 4);
+eq('没有生命周期时该格不可跳', noLife[1].href === null, true);
+eq('置灰格带原因', noLife[1].disabledReason === '该对象未启用生命周期', true);
+
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: FAIL（${bad} 项）`);
 process.exit(bad === 0 ? 0 : 1);
+
+

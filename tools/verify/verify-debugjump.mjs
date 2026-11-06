@@ -173,9 +173,25 @@ try {
   check('A 只有 mid 时能解析出对象', a.ok && a.data?.object?.id === OBJ, JSON.stringify(a).slice(0, 200));
   check('A 菜单接口被调用', calls.menu >= 1, `menu=${calls.menu}`);
   check('A 生命周期拿到', a.data?.lifecycle?.id === LIFE && a.data?.lifecycle?.name === '演示生命周期');
-  check('A 对象配置地址', a.data?.urls?.object === `${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}&__edit=2`, a.data?.urls?.object ?? '');
-  check('A 生命周期地址', a.data?.urls?.lifecycle === `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`, a.data?.urls?.lifecycle ?? '');
-  check('A 工作流列表地址', a.data?.urls?.workflow === `${BASE}/admin/config/workflow`, a.data?.urls?.workflow ?? '');
+  const targetOf = (kind) => a.data?.targets?.find((t) => t.kind === kind);
+  check(
+    'A 对象配置地址',
+    targetOf('object')?.href === `${BASE}/admin/config/basic-objects/edit/base?id=${OBJ}&__edit=2`,
+    targetOf('object')?.href ?? '',
+  );
+  check(
+    'A 生命周期地址',
+    targetOf('lifecycle')?.href === `${BASE}/admin/config/lifecycle/${LIFE}?__edit=2`,
+    targetOf('lifecycle')?.href ?? '',
+  );
+  check('A 工作流列表地址', targetOf('workflow')?.href === `${BASE}/admin/config/workflow`, targetOf('workflow')?.href ?? '');
+  check(
+    'A 候选是数据数组（顺序 + 每格自带标题/说明）',
+    a.data?.targets?.length === 4 &&
+      a.data.targets.map((t) => t.kind).join(',') === 'object,lifecycle,workflow,interfaces' &&
+      a.data.targets.every((t) => t.title && typeof t.accent === 'string'),
+    JSON.stringify(a.data?.targets ?? []).slice(0, 160),
+  );
   check('A 对象名与 code 透传', a.data?.object?.name === '演示对象' && a.data?.object?.code === 'demo__c');
 
   /* E. Alt+2 页面热键：页面侧监听 → 后台注入浮层 → Esc 关闭 */
@@ -185,19 +201,23 @@ try {
   const overlay = await p1.evaluate(() => {
     const host = document.getElementById('ql-debug-overlay-host');
     const sr = host?.shadowRoot;
+    const cells = Array.from(sr?.querySelectorAll('.dbg-cell') ?? []);
     return {
       host: !!host,
       title: sr?.querySelector('.ag-box')?.textContent ?? '',
-      cells: sr?.querySelectorAll('.dbg-cell').length ?? 0,
+      kinds: cells.map((c) => c.dataset.kind ?? ''),
+      names: cells.map((c) => c.querySelector('.ag-name')?.textContent ?? ''),
       hint: !!sr?.querySelector('.hint'),
     };
   });
   check('E Alt+2 能打开调试浮层', overlay.host);
   check('E 浮层里显示对象名', /演示对象/.test(overlay.title), overlay.title);
   check(
-    'E 沿用统一网格骨架（三个入口 + hint 药丸）',
-    overlay.cells === 3 && overlay.hint,
-    `cells=${overlay.cells}`,
+    'E 候选矩阵由数据渲染（4 格，顺序与后台 targets 一致）',
+    overlay.kinds.join(',') === 'object,lifecycle,workflow,interfaces' &&
+      overlay.names.join(',') === '对象配置,对象生命周期,工作流,对象接口' &&
+      overlay.hint,
+    `${overlay.kinds.join(',')} / ${overlay.names.join(',')}`,
   );
   await p1.keyboard.press('Escape');
   await p1.waitForTimeout(300);
@@ -234,3 +254,4 @@ try {
 
 console.log(`=== ${results.filter(Boolean).length}/${results.length} 通过 ===`);
 process.exit(results.every(Boolean) ? 0 : 1);
+

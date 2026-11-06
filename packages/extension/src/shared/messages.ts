@@ -476,19 +476,35 @@ export interface DebugLifecycleRef {
 }
 
 /**
- * 三个管理端深链。
+ * 调试跳转的一个候选格（v4.2.47）。
  *
- * ★ `urls` 由 background 用**目标页签的 origin** 拼，不接受页面自报地址；
- *   生命周期为空时 `lifecycle` 与 `urls.lifecycle` 同时为 null（按钮置灰）。
+ * ★ 浮层是**候选矩阵**，不是固定三个按钮：`targets` 是数组，加一项就多一格，
+ *   单元格按网格自动换行。要加新的可跳转页面，只需在 `buildDebugTargets`
+ *   （`shared/deeplinks.ts`）里 push 一条，浮层与判据都不用改。
+ */
+export interface DebugTarget {
+  /** 稳定标识（`object` / `lifecycle` / `workflow` / 未来新增） */
+  kind: string;
+  title: string;
+  subtitle: string;
+  /** 由 background 用目标页签 origin 拼；`null` = 该候选不可跳（置灰） */
+  href: string | null;
+  /** 左侧色条颜色 */
+  accent: string;
+  /** href 为 null 时展示的原因 */
+  disabledReason?: string;
+}
+
+/**
+ * 当前业务页可跳转的调试目标。
+ *
+ * ★ 地址由 background 用**目标页签的 origin** 拼，不接受页面自报地址；
+ *   `targets` 为空数组表示没有候选（理论上不会：对象配置总能跳）。
  */
 export interface DebugLinks {
   object: DebugObjectRef;
   lifecycle: DebugLifecycleRef | null;
-  urls: {
-    object: string;
-    lifecycle: string | null;
-    workflow: string;
-  };
+  targets: DebugTarget[];
 }
 
 /** 保存结果（v4.2.44）：把「为什么少了几条」如实带回界面，而不是静默丢弃 */

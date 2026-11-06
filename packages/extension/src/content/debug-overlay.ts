@@ -6,6 +6,13 @@
  * 三个按钮的目标地址**全部由 background 拼**（origin 取目标页签 URL），本脚本只负责
  * 展示与把点击转回 background —— 页面即使被 XSS，也改不了按钮指向哪里。
  *
+ * ## 候选矩阵，不是固定三格（v4.2.47，用户反馈"未来还要加页面"）
+ *
+ * 网格内容由 `DebugLinks.targets` 驱动：数组有几条就渲染几格，3 列自动换行、
+ * 超出高度可滚动（`ACCT_GRID_CSS` 的 `.ag-grid` 本来就带 `max-height + overflow-y`）。
+ * **要加新的可跳转页面，只改 `shared/deeplinks.ts` 的 `buildDebugTargets`**，
+ * 本文件不需要认识任何具体页面。
+ *
  * ## 视觉与另外三个轮盘一致（v4.2.46，用户反馈"风格不一致"）
  *
  * 复用 `ACCT_GRID_CSS` 的同一套骨架：`.ag-head`（标题 + meta）、`.ag-cell`
@@ -26,7 +33,8 @@ const HOST_ID = 'ql-debug-overlay-host';
 
 const DEBUG_CSS = `
 .dbg-root{width:min(92vw,560px)}
-.dbg-grid{grid-auto-rows:86px}
+/* 3 列候选矩阵：行数由 targets 数量决定，多了换行、超出 66vh 滚动 */
+.dbg-grid{grid-auto-rows:86px;grid-auto-flow:row}
 .dbg-cell{align-items:flex-start;justify-content:center}
 .dbg-sub{
   font-size:var(--fs-11,11px);line-height:1.35;color:#8494b4;white-space:normal;
@@ -89,20 +97,7 @@ async function mount(): Promise<void> {
           <span class="ag-meta dbg-meta" data-el="meta"></span>
         </div>
       </div>
-      <div class="ag-grid dbg-grid" data-el="grid" style="--ag-cols:3">
-        <button class="ag-cell dbg-cell" data-go="object" type="button" disabled style="--acct:#1e6fff">
-          <span class="ag-name">对象配置</span>
-          <span class="dbg-sub">基础信息 / 字段 / 布局</span>
-        </button>
-        <button class="ag-cell dbg-cell" data-go="lifecycle" type="button" disabled style="--acct:#16a34a">
-          <span class="ag-name">对象生命周期</span>
-          <span class="dbg-sub">状态、阶段与流转配置</span>
-        </button>
-        <button class="ag-cell dbg-cell" data-go="workflow" type="button" disabled style="--acct:#7c3aed">
-          <span class="ag-name">工作流</span>
-          <span class="dbg-sub">工作流列表页（按对象自己搜）</span>
-        </button>
-      </div>
+      <div class="ag-grid dbg-grid" data-el="grid" style="--ag-cols:3"></div>
       <div class="ag-foot">
         <div class="dbg-copies">
           <button class="dbg-copy" data-copy="object" type="button" disabled>复制 objectId</button>
@@ -138,7 +133,7 @@ async function mount(): Promise<void> {
   const titleEl = $<HTMLElement>('[data-el="title"]');
   const metaEl = $<HTMLElement>('[data-el="meta"]');
   const msgEl = $<HTMLElement>('[data-el="msg"]');
-  const rows = Array.from(shadow.querySelectorAll<HTMLButtonElement>('.dbg-cell'));
+  const gridEl = $<HTMLElement>('[data-el="grid"]');
   const copyBtns = Array.from(shadow.querySelectorAll<HTMLButtonElement>('[data-copy]'));
 
   let links: DebugLinks | null = null;
@@ -218,13 +213,35 @@ async function mount(): Promise<void> {
     metaEl.textContent = [data.object.code, data.lifecycle ? `生命周期：${data.lifecycle.name || data.lifecycle.id}` : '未启用生命周期']
       .filter(Boolean)
       .join(' · ');
-    for (const row of rows) {
-      const key = row.dataset.go as 'object' | 'lifecycle' | 'workflow';
-      const url = key === 'lifecycle' ? data.urls.lifecycle : data.urls[key];
-      row.disabled = !url;
-      row.classList.toggle('ag-cell-disabled', !url);
-      row.title = url || (key === 'lifecycle' ? '该对象未启用生命周期' : '');
+
+    // ★ 候选由 background 给（v4.2.47）：数组有几条就渲染几格，多了自动换行。
+    //   这里**不认识任何具体页面**，加新跳转只改 shared/deeplinks.ts。
+    gridEl.textContent = '';
+    for (const target of data.targets) {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'ag-cell dbg-cell';
+      cell.style.setProperty('--acct', target.accent);
+      cell.dataset.kind = target.kind;
+
+      const name = document.createElement('span');
+      name.className = 'ag-name';
+      name.textContent = target.title;
+      const sub = document.createElement('span');
+      sub.className = 'dbg-sub';
+      sub.textContent = target.subtitle;
+      cell.append(name, sub);
+
+      if (!target.href) {
+        cell.disabled = true;
+        cell.classList.add('ag-cell-disabled');
+        cell.title = target.disabledReason ?? '暂不可跳转';
+      } else {
+        cell.addEventListener('click', () => void openTarget(target.href));
+      }
+      gridEl.append(cell);
     }
+
     copyBtns[0].disabled = !data.object.id;
     copyBtns[1].disabled = !data.lifecycle?.id;
     setMsg('');
@@ -246,15 +263,6 @@ async function mount(): Promise<void> {
     wrapEl.append(empty);
   };
 
-  for (const row of rows) {
-    row.addEventListener('click', () => {
-      const key = row.dataset.go as 'object' | 'lifecycle' | 'workflow';
-      if (!links || row.disabled) {
-        return;
-      }
-      void openTarget(key === 'lifecycle' ? links.urls.lifecycle : links.urls[key]);
-    });
-  }
   copyBtns[0].addEventListener('click', () => void copyText(links?.object.id));
   copyBtns[1].addEventListener('click', () => void copyText(links?.lifecycle?.id));
 

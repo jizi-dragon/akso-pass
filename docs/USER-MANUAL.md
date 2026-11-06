@@ -342,19 +342,21 @@
 | **Alt+W** | 实例生命周期状态 | 只在**具体数据页**（URL 带 `id`）弹出；列表页 / 菜单页没有当前数据，不会弹 |
 | **Alt+1** | 常用页面书签 | 全部书签；相对路径的格子会标出**将打开哪个域名** |
 
-### 8.5 调试跳转（Alt+2，v4.2.45；v4.2.46 统一视觉）
+### 8.5 调试跳转（Alt+2，v4.2.45；v4.2.47 候选矩阵）
 
-在业务菜单页按 **Alt+2**，浮层会解析当前页面对应的对象，给出三个直达入口
-（与 Alt+Q / Alt+W / Alt+1 使用同一套网格外观，`Esc` 或点击遮罩空白处关闭）：
+在业务菜单页按 **Alt+2**，浮层会解析当前页面对应的对象，给出一个**候选矩阵**
+（与 Alt+Q / Alt+W / Alt+1 使用同一套网格外观，`Esc` 或点击遮罩空白处关闭）。
+候选是数据驱动的：目前四格，以后加页面只会多一格，不会改布局。
 
-| 按钮 | 打开什么 | 拿不到时 |
+| 格子 | 打开什么 | 拿不到时 |
 |---|---|---|
-| 对象配置 | 对象的「基础信息」页（`/admin/config/basic-objects/edit/base?id=…`） | 解析失败时按钮置灰 |
+| 对象配置 | 对象的「基础信息」页（`/admin/config/basic-objects/edit/base?id=…`） | 解析失败时置灰 |
 | 对象生命周期 | 该对象的生命周期配置页（`/admin/config/lifecycle/<id>`） | 对象没启用生命周期时置灰，标题写明原因 |
 | 工作流 | 工作流列表页（`/admin/config/workflow`）；列表页不支持按对象过滤，落页后按对象名搜索 | — |
+| 对象接口 | 该对象的接口清单（`/admin/config/object-interface/detail?id=…`），调试入参/出参用 | 解析失败时置灰 |
 
 对象 id 优先取 URL 的 `bid`；只有 `mid` 时用 `GetUserMenuPermission` 反查菜单对应的对象。
-生命周期来自 `GetFormInstance` 的 `basicObject.lifeCycleId`。三个地址的 origin 取自**页签自己的地址**，
+生命周期来自 `GetFormInstance` 的 `basicObject.lifeCycleId`。四个地址的 origin 取自**页签自己的地址**，
 所以内网纯 http 站点也能用。浮层底部可复制 objectId / lifecycleId。
 
 > **跳转不会掉登录**：点击入口时后台会用当前页签所属的账号身份打开新标签（与「常用页面」同一条
@@ -520,3 +522,4 @@ v3.10.9 已修复。此前扩展固定按 `https://` 打开站点——内网纯
 ---
 
 *项目文档索引见根目录 `README.md`；架构与实现细节见 `docs/PROJECT-STATUS.md`、`docs/CODEBASE_OVERVIEW.md`。*
+

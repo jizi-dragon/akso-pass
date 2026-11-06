@@ -5,6 +5,28 @@
 > **更名说明（2026-10-11）**：本项目 2026-10-11 由 `quick-login` 更名为 `akso-pass`，品牌名 `QuickLogin` → **Akso Pass**。
 > **历史条目里的旧名保留不动** —— "当时叫 QuickLogin"是事实，改写它等于伪造当时的记录。
 
+## 4.2.47（2026-11-06）
+
+### 调试跳转改成「候选矩阵」：数据驱动，加页面只多一格
+
+- **问题**：v4.2.46 的浮层虽然换了统一外观，但三格是**写死在 HTML 里的**
+  （三个 `<button data-go=…>`），新增可跳转页面就得改浮层结构、判据和文案。
+  用户要的是可以持续加页面的候选矩阵，不是固定数量的对话框。
+- **改法**：
+  - `shared/messages.ts`：`DebugLinks.urls` 换成 `targets: DebugTarget[]`，
+    每项自带 `kind / title / subtitle / href / accent / disabledReason`。
+  - `shared/deeplinks.ts`：新增 `buildDebugTargets(origin, object, lifecycle, extra?)`，
+    这是「加一个可跳转页面」的唯一落点；`extra` 供扩展与判据使用。
+  - `content/debug-overlay.ts`：网格改为按 `targets` 循环创建 `.ag-cell`，
+    不再认识任何具体页面；3 列自动换行、超出 `66vh` 滚动（`ACCT_GRID_CSS` 自带）。
+- **顺手加了一格真实入口**：对象接口详情
+  （`/admin/config/object-interface/detail?id=…`，路径同样取自平台 bundle 的链接构造器表），
+  现在默认四格（3 + 1），直观证明「多一条就多一格」。
+- **验证**：`verify-deeplinks.mjs` 新增候选矩阵断言（默认四条、extra 追加、
+  置灰格仍占位并带原因），共 **20/20**；`verify-debugjump.mjs` 断言浮层格子的
+  `data-kind` 与后台 `targets` 顺序一致，**16/16**；静态门禁 **31/31**；
+  全部 **54** 个脚本（静态 31 + 浏览器 23）。
+
 ## 4.2.46（2026-11-06）
 
 ### 调试跳转：视觉统一、跳转不再丢登录；Alt+W 只在实例页出现

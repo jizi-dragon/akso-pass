@@ -10,7 +10,7 @@
  *   同时读的是**页面自己的** `__auth_token__`，不在扩展侧另存一份令牌。
  */
 
-import { lifecycleConfigUrl, objectConfigUrl, workflowListUrl } from '../../shared/deeplinks';
+import { buildDebugTargets } from '../../shared/deeplinks';
 import type { DebugLinks } from '../../shared/messages';
 import { getLogger } from '../../shared/log';
 
@@ -199,11 +199,7 @@ export async function resolveDebugLinks(
       data: {
         object: ctx.object,
         lifecycle,
-        urls: {
-          object: objectConfigUrl(origin, ctx.object.id),
-          lifecycle: lifecycle ? lifecycleConfigUrl(origin, lifecycle.id) : null,
-          workflow: workflowListUrl(origin),
-        },
+        targets: buildDebugTargets(origin, ctx.object, lifecycle),
       },
     };
   } catch (e) {
