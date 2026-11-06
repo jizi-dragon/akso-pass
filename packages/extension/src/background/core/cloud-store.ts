@@ -1250,11 +1250,21 @@ export const cloudStore = {
 };
 
 /**
- * 取**明文**口令（自动填表用）：`GET /api/accounts/{id}/password`。
- * ⚠️ 这是全服务最敏感的端点，调用方**不得缓存落盘**——只在打开账号的当下取一次，用完即弃。
+ * 取**明文**口令（自动填表用）：`POST /api/accounts/{id}/credential`。
+ *
+ * ★ 2026-11-06：云端把「明文口令」与「代登录」拆成两个端点——
+ *   `egmp-token` 只回 JWT（Workbench/agent 用），`credential` 只对
+ *   `X-Akso-Client: akso-pass` 下发口令（浏览器填表用）。本函数就是后者；
+ *   `requestJson` 已经统一带了该头，别在调用方另加。
+ * ⚠️ 这是全服务最敏感的返回值，调用方**不得缓存落盘**——只在打开账号的当下取一次。
  */
 export async function fetchPlaintextPassword(id: string): Promise<string> {
-  const data = asRecord(await cloudRequest<unknown>(`/api/accounts/${encodeURIComponent(id)}/password`));
+  const data = asRecord(
+    await cloudRequest<unknown>(`/api/accounts/${encodeURIComponent(id)}/credential`, {
+      method: 'POST',
+      body: {},
+    }),
+  );
   return str(data.password);
 }
 

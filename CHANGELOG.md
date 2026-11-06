@@ -1,3 +1,19 @@
+## 4.2.54（2026-11-06）
+
+**修复快捷登录不填账密：云端改为「按客户端分端点」，Pass 仍取明文**
+
+- 现象：Alt+Q 打开发账号后停在平台 `/login`，用户名与密码都为空；forensics 里 `staged:"no-creds"`。
+- 根因（跨仓）：akso-cloud `fe32aef`（11-05）把 `GET /api/accounts/:id/password` 换成
+  `POST /api/accounts/:id/egmp-token`（只回 JWT），Pass 仍调旧端点 ⇒ 404；
+  `resolveAccountPlaintext()` 把所有异常 `catch { return null }`，于是静默变成「没有凭证」。
+- 改法：云端新增 `POST /api/accounts/:id/credential`，只对 `X-Akso-Client: akso-pass`
+  下发 `{username,password}`；Workbench/agent 继续走 `egmp-token`，口令不出云端。
+  Pass 的 `fetchPlaintextPassword()` 改调新端点（`requestJson` 已统一带客户端头）。
+- 边界：口令仍是「云端解密、按需下发、用完即弃」，不落 Pass 磁盘；
+  `X-Akso-Client` 是**误用边界**，不是安全边界——agent 的工具层没有这条路径。
+- 验证：akso-cloud `npm test` **37/37**（新增：无客户端头 403 / workbench 403 / pass 200）；
+  Pass typecheck、build 绿；静态 31/31、`verify-load` 1/1。
+- 部署依赖：akso-cloud 部署该提交后，Pass 的自动填表才真正恢复。
 ## 4.2.53（2026-11-06）
 
 **调试跳转：拿不到的可选项直接忽略，不再让整次解析失败**
@@ -3183,6 +3199,7 @@ Monorepo 化 + 本地引擎（NM host / SQLite / spawn 多开实例）与并行�
 ## 2.1.0
 
 单账号免密快速切换稳定版：登出→自动填表登录→标签标题改写为账号名。
+
 
 
 
