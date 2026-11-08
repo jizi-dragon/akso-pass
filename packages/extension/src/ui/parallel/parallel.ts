@@ -61,8 +61,29 @@ const updateDismissBtn = document.getElementById('update-dismiss') as HTMLButton
 /** ★ v4.2.56：显式的「检查更新」按钮（用户要求：能自己查是不是最新版）。 */
 const updateCheckBtn = document.getElementById('update-check') as HTMLButtonElement;
 
+/* ---- 手动检查的对话框（v4.3.0） ----
+ * ★ 用户 2026-11-09 明确要求：点「检查更新」之后要看到**弹窗**，
+ *   不要再往页头刷一条横幅。横幅只保留给启动时的自动提醒
+ *   （那是"被动告知"，弹窗是"我刚问的，给我一个明确答复"）。
+ */
+const updateModalEl = document.getElementById('update-modal') as HTMLDivElement;
+const updateModalTitleEl = document.getElementById('update-modal-title') as HTMLHeadingElement;
+const updateModalStatusEl = document.getElementById('update-modal-status') as HTMLParagraphElement;
+const updateModalVersionsEl = document.getElementById('update-modal-versions') as HTMLParagraphElement;
+const updateModalDetailEl = document.getElementById('update-modal-detail') as HTMLParagraphElement;
+const updateModalOpenBtn = document.getElementById('update-modal-open') as HTMLButtonElement;
+const updateModalCloseBtn = document.getElementById('update-modal-close') as HTMLButtonElement;
+
 let updateState: UpdateState | null = null;
 let updateSnoozed = false;
+
+function updateChipTitle(): void {
+  if (updateState === null) return;
+  const checked = updateState.checkedAt === null
+    ? '尚未检查更新'
+    : `上次检查：${new Date(updateState.checkedAt).toLocaleString('zh-CN')}`;
+  verChip.title = updateState.error === null ? checked : `${checked}；检查失败：${updateState.error}`;
+}
 
 function renderUpdateBanner(): void {
   if (updateState === null) return;
@@ -73,20 +94,74 @@ function renderUpdateBanner(): void {
       `发现新版本 v${updateState.latestVersion}（当前 v${updateState.currentVersion}）。`
       + 'Akso Pass 不会自动更新，请到 GitHub Releases 手动下载。';
   }
-  const checked = updateState.checkedAt === null
-    ? '尚未检查更新'
-    : `上次检查：${new Date(updateState.checkedAt).toLocaleString('zh-CN')}`;
-  verChip.title = updateState.error === null ? checked : `${checked}；检查失败：${updateState.error}`;
+  updateChipTitle();
 }
 
-/** 手动检查命中新版本时强制亮横幅（「忽略过」也亮：用户这次是主动来问的）。 */
-function revealUpdateBanner(): void {
+/** 手动检查改了状态后，只同步「已经显示着」的横幅文案；不主动把横幅亮出来。 */
+function syncBannerText(): void {
   if (updateState === null || updateState.latestVersion === null) return;
-  updateBannerEl.classList.remove('hidden');
+  if (updateBannerEl.classList.contains('hidden')) return;
   updateTextEl.textContent =
     `发现新版本 v${updateState.latestVersion}（当前 v${updateState.currentVersion}）。`
     + 'Akso Pass 不会自动更新，请到 GitHub Releases 手动下载。';
 }
+
+type UpdateDialogKind = 'newer' | 'latest' | 'error';
+
+/** 把后台/网络层的原始错误翻译成用户能据以行动的一句话。 */
+function explainUpdateError(raw: string): string {
+  if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) {
+    return '无法访问 api.github.com（网络或代理拦截）。';
+  }
+  if (/HTTP 403/i.test(raw)) {
+    return 'GitHub 拒绝访问（HTTP 403，可能触发了限流）。';
+  }
+  if (/HTTP 404/i.test(raw)) {
+    return '仓库或 Release 不存在（HTTP 404）。';
+  }
+  if (/HTTP 5\d\d/i.test(raw)) {
+    return `GitHub 暂时不可用（${raw}）。`;
+  }
+  return raw;
+}
+
+function showUpdateDialog(kind: UpdateDialogKind, options: { message?: string } = {}): void {
+  const current = updateState?.currentVersion ?? EXT_VERSION;
+  const latest = updateState?.latestVersion ?? null;
+  updateModalEl.classList.remove('hidden');
+  updateModalTitleEl.textContent = kind === 'error' ? '检查更新失败' : '检查更新';
+  updateModalOpenBtn.classList.toggle('hidden', kind !== 'newer');
+  if (kind === 'newer') {
+    updateModalStatusEl.textContent = `发现新版本 v${latest ?? ''}`;
+    updateModalVersionsEl.textContent = `当前 v${current} · 最新 v${latest ?? ''}`;
+    updateModalDetailEl.textContent = 'Akso Pass 不会自动更新，请到 GitHub Releases 手动下载。';
+    updateModalDetailEl.classList.remove('hidden');
+  } else if (kind === 'latest') {
+    updateModalStatusEl.textContent = '已是最新版本';
+    updateModalVersionsEl.textContent = `当前 v${current} · 最新 v${latest ?? current}`;
+    updateModalDetailEl.classList.add('hidden');
+  } else {
+    const raw = options.message ?? '未知原因';
+    updateModalStatusEl.textContent = explainUpdateError(raw);
+    updateModalVersionsEl.textContent = `当前 v${current}`;
+    updateModalDetailEl.textContent = raw === explainUpdateError(raw) ? '' : raw;
+    updateModalDetailEl.classList.toggle('hidden', updateModalDetailEl.textContent === '');
+  }
+  updateModalCloseBtn.focus();
+}
+
+function closeUpdateDialog(): void {
+  updateModalEl.classList.add('hidden');
+}
+
+updateModalCloseBtn.addEventListener('click', closeUpdateDialog);
+updateModalEl.addEventListener('click', (e) => {
+  // 点遮罩关闭；点卡片内部不关。
+  if (e.target === updateModalEl) closeUpdateDialog();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !updateModalEl.classList.contains('hidden')) closeUpdateDialog();
+});
 
 async function refreshUpdateState(): Promise<void> {
   const res = await sendSafe({ kind: 'update.state' });
@@ -126,25 +201,29 @@ async function runUpdateCheck(from: 'chip' | 'button'): Promise<void> {
   updateCheckBtn.textContent = '检查中…';
   try {
     const res = await sendSafe({ kind: 'update.check' });
-    if (res === null || res.kind !== 'update.check' || !res.result.ok) {
-      flashBanner('检查更新失败：后台没有响应', 'warn');
+    // ★ 三种失败必须分开报：① 根本没有应答（发送超时/无接收端）；
+    //   ② 后台回了 but 执行失败（`result.ok === false`，例如 fetch 被拦）；
+    //   ③ 后台执行成功但平台侧给了 error（HTTP 403/格式不对）。
+    //   旧代码把 ②③ 一起吞成「后台没有响应」，把真正的原因藏掉了（2026-11-09 实测）。
+    if (res === null || res.kind !== 'update.check') {
+      showUpdateDialog('error', { message: '后台没有响应：请重新加载扩展后再试。' });
+      return;
+    }
+    if (!res.result.ok) {
+      showUpdateDialog('error', { message: res.result.error });
       return;
     }
     const data = res.result.data;
     updateState = data;
     updateSnoozed = false;
-    renderUpdateBanner();
+    updateChipTitle();
+    syncBannerText();
     if (data.error !== null) {
-      flashBanner(`检查更新失败：${data.error}`, 'warn');
+      showUpdateDialog('error', { message: data.error });
       return;
     }
     const newer = data.latestVersion !== null && isNewerVersion(data.latestVersion, data.currentVersion);
-    if (newer) {
-      revealUpdateBanner();
-      flashBanner(`发现新版本 v${data.latestVersion}（当前 v${data.currentVersion}）`, 'warn');
-    } else {
-      flashBanner(`已是最新版本 v${data.currentVersion}`, 'ok');
-    }
+    showUpdateDialog(newer ? 'newer' : 'latest');
   } finally {
     updateCheckBtn.disabled = false;
     updateCheckBtn.textContent = idleText;

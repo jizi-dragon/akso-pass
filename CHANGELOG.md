@@ -1,3 +1,13 @@
+## 4.3.0（2026-11-09）
+
+**修复「检查更新」点了没反应：补 GitHub host 权限，结果改为对话框**
+
+- 现象：点侧栏底部或弹窗里的「检查更新」，提示「检查更新失败：后台没有响应」。
+- 根因：扩展 manifest 的 `host_permissions` 为空，后台 `fetch("https://api.github.com/.../releases/latest")` 的跨域请求被拦成 `TypeError: Failed to fetch`；界面又把「后台执行失败」和「后台没应答」合并成同一句话，真实原因被吞掉。
+- 改法：manifest 补 `https://api.github.com/*`（只这一条，其他站点仍走可选授权）；检查结果改成居中对话框——有新版时带「去 GitHub 下载」，已是最新时直接说明，失败时把原因翻译成人话（网络/代理、403 限流、404、5xx），不再一律「后台没有响应」；扩展弹窗里的同一段判断一起修正。
+- 边界不变：只提醒，不自动更新；下载仍由用户到 GitHub Releases 手动完成。后台没有下载/解压/安装代码。
+- 验证：`verify-update-ui.mjs` 扩到 **26/26**；`run-all.mjs --static` **32/32**；`verify-load.mjs` **20/20**；`npm run check`、`npm run build` 绿。
+- 迁移：Chrome 更新后会因为新增 host 权限提示一次「读取 api.github.com 上的数据」，允许后按钮才真正生效。
 ## 4.2.56（2026-11-09）
 
 **手动「检查更新」按钮：随时知道自己是不是最新版**
@@ -3218,8 +3228,4 @@ Monorepo 化 + 本地引擎（NM host / SQLite / spawn 多开实例）与并行�
 ## 2.1.0
 
 单账号免密快速切换稳定版：登出→自动填表登录→标签标题改写为账号名。
-
-
-
-
 

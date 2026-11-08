@@ -100,11 +100,19 @@ popupCheck?.addEventListener('click', async () => {
   if (updateStatus !== null) updateStatus.textContent = '';
   try {
     const res = (await chrome.runtime.sendMessage({ kind: 'update.check' })) as
-      | { kind: 'update.check'; result: { ok: boolean; data?: { currentVersion: string; latestVersion: string | null; releaseUrl: string | null; error: string | null } } }
+      | { kind: 'update.check'; result: { ok: boolean; data?: { currentVersion: string; latestVersion: string | null; releaseUrl: string | null; error: string | null }; error?: string } }
       | undefined;
-    const data = res?.result?.ok ? res.result.data : undefined;
+    if (res === undefined || res.kind !== 'update.check') {
+      if (updateStatus !== null) updateStatus.textContent = '检查失败：后台没有响应';
+      return;
+    }
+    if (!res.result.ok) {
+      if (updateStatus !== null) updateStatus.textContent = `检查失败：${res.result.error ?? '未知原因'}`;
+      return;
+    }
+    const data = res.result.data;
     if (data === undefined) {
-      if (updateStatus !== null) updateStatus.textContent = '检查失败';
+      if (updateStatus !== null) updateStatus.textContent = '检查失败：后台没有返回结果';
       return;
     }
     if (data.error !== null) {

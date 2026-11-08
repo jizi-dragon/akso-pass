@@ -55,6 +55,21 @@
       </div>
       <div id="cloud-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
+      <!-- 手动「检查更新」的结果用**对话框**呈现（v4.3.0）：横幅只留给启动时的自动提醒。
+           用户明确要求：点按钮之后要看弹窗，不要在页头刷一条横幅。 -->
+      <div id="update-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+        <div class="modal-card">
+          <h3 id="update-modal-title">检查更新</h3>
+          <p id="update-modal-status" class="desc"></p>
+          <p id="update-modal-versions" class="desc"></p>
+          <p id="update-modal-detail" class="desc hidden"></p>
+          <div class="modal-actions">
+            <button id="update-modal-open" class="btn-primary hidden" type="button">去 GitHub 下载</button>
+            <button id="update-modal-close" class="btn-ghost" type="button">知道了</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 登录已过期（服务端 401）：数据源**保持**云端，只提示重新登录，绝不静默切回本地 -->
       <!-- ★ v3.19：里面原先有个 `<span id="auth-bar-text">`，而 TS 直接设
            `authBarEl.textContent = …` ⇒ **把那个 span 整个覆盖掉**。

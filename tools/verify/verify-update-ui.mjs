@@ -120,11 +120,34 @@ try {
     }), { status: 200, headers: { 'content-type': 'application/json', etag: '"probe"' } });
   }, '9.9.10');
   await checkBtn.click();
-  await page.waitForFunction(() => document.querySelector('#update-text')?.textContent?.includes('9.9.10'), null, { timeout: 10_000 });
-  check('点击后横幅切到 9.9.10', (await page.locator('#update-text').innerText()).includes('9.9.10'));
+  const modal = page.locator('#update-modal');
+  await modal.waitFor({ state: 'visible', timeout: 10_000 });
+  check('点击后弹出对话框（不是横幅）', await modal.isVisible());
+  const modalStatus = (await page.locator('#update-modal-status').innerText()).trim();
+  check('弹窗写明发现 9.9.10', modalStatus.includes('9.9.10'), modalStatus);
+  check('弹窗给出「去 GitHub 下载」入口', await page.locator('#update-modal-open').isVisible());
   const manualState = await page.evaluate(async () => (await chrome.storage.local.get('ql:updateState'))['ql:updateState']);
   check('后台把最新版本写成 9.9.10', manualState?.latestVersion === '9.9.10', JSON.stringify(manualState?.latestVersion));
   check('按钮检查后恢复可用', await checkBtn.isEnabled());
+  await page.locator('#update-modal-close').click();
+  await modal.waitFor({ state: 'hidden', timeout: 5_000 });
+  check('「知道了」能关掉对话框', !(await modal.isVisible()));
+
+  console.log('\n=== ②c 检查失败时：弹窗说清原因，不糊成「后台没有响应」 ===');
+  await worker.evaluate(() => {
+    globalThis.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+  });
+  await checkBtn.click();
+  await modal.waitFor({ state: 'visible', timeout: 10_000 });
+  const failTitle = (await page.locator('#update-modal-title').innerText()).trim();
+  const failStatus = (await page.locator('#update-modal-status').innerText()).trim();
+  check('失败时弹窗标题为「检查更新失败」', failTitle === '检查更新失败', failTitle);
+  check('失败原因能被用户读懂（不是「后台没有响应」）',
+    failStatus.includes('无法访问') && !failStatus.includes('后台没有响应'), failStatus);
+  await page.locator('#update-modal-close').click();
+  await modal.waitFor({ state: 'hidden', timeout: 5_000 });
 
   console.log('\n=== ③「忽略此版本」：横幅收起且落盘 ===');
   await page.locator('#update-dismiss').click();
