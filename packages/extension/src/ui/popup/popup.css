@@ -177,3 +177,12 @@ body {
 .hidden {
   display: none !important;
 }
+/* 更新提醒（v4.2.55） */
+.update-hint { display: block; margin-top: var(--sp-2); padding: var(--sp-1) var(--sp-2); border-radius: var(--sb-radius-sm); background: #fff7e6; color: #8a5a00; font-size: var(--fs-12); text-align: center; text-decoration: none; }
+/* 手动检查（v4.2.56）：常驻按钮 + 结果文字 */
+.update-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+.popup-check { padding: 2px var(--sp-2); border: 1px solid var(--sb-border); border-radius: var(--sb-radius-sm); background: transparent; color: var(--sb-text-secondary); font-size: var(--fs-11); line-height: 1.4; cursor: pointer; }
+.popup-check:hover:not(:disabled) { color: var(--sb-text); border-color: var(--sb-text-secondary); }
+.popup-check:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.popup-check:disabled { opacity: 0.55; cursor: default; }
+.update-status { font-size: var(--fs-11); color: var(--sb-text-secondary); }

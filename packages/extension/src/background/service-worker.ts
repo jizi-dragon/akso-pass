@@ -5,6 +5,7 @@ import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLA
 //   直接 `console.*` 会绕过强制打码；直接读 ring 会绕过 `drain()` 的游标还原。
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
 import type { LogRecord } from '../shared/log';
+import { checkForUpdate, dismissUpdate, getUpdateState, openReleasePage, registerUpdateCheck } from './update-check';
 
 /**
  * 本模块的 logger。
@@ -204,7 +205,20 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
   //     完整原因与证据见 `shared/log.ts` 里 `setLogLevel()` 的注释（PITFALLS #44）。
   log.debug('dispatch kind=%s', String((req as { kind?: unknown }).kind));
   switch (req.kind) {
-    // ★★ 2026-10-12 删：`site.grants.list` / `site.grant.add` 两个 kind 在这里
+    /* ---- 更新提醒（v4.2.55）----
+     * 只读检查 + 记录「忽略此版本」+ 打开 Releases 页；没有下载/安装动作。 */
+    case 'update.state': {
+      return { kind: 'update.state', result: await tryRun(() => getUpdateState()) };
+    }
+    case 'update.check': {
+      return { kind: 'update.check', result: await tryRun(() => checkForUpdate({ force: true })) };
+    }
+    case 'update.dismiss': {
+      return { kind: 'update.dismiss', result: await tryRun(() => dismissUpdate(req.version)) };
+    }
+    case 'update.openRelease': {
+      return { kind: 'update.openRelease', result: await tryRun(async () => ({ url: await openReleasePage() })) };
+    }    // ★★ 2026-10-12 删：`site.grants.list` / `site.grant.add` 两个 kind 在这里
     //   各有一个**占位实现**（一个恒返回 `[]`、一个恒返回失败），而**全仓零发送方** ⇒
     //   它们不是"兼容旧调用"，只是让人以为存在一条真实通路（`docs/PITFALLS.md` #34）。
     //   删掉后它们会落到 `default` 分支，那里有 `log.error` + 明确的错误响应
@@ -1784,6 +1798,8 @@ async function logCommandBindings(): Promise<void> {
 }
 
 registerParallelHandlers();
+// 更新提醒（v4.2.55）：启动/安装/定时/手动四个触发点
+registerUpdateCheck();
 // 把本机实际生效的快捷键写进诊断包（v3.17.1）：区分「命令没绑」与「注入失败」
 void logCommandBindings();
 

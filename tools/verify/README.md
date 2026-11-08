@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **54 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **56 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -82,7 +82,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-falsify-forensics.mjs`** | **上一条的反证**：`forensics` 不打码 / `diag` 不打码 / 敏感键名单只剩裸 `password` ⇒ 必须变红 | **3/3** | ✘ |
 | **`verify-icons.mjs`** | **图标源与派生产物**：源在且**同时含品牌蓝与强调橘**（占位图不具备该性质）/ 4 档方形且含两色 / 大档覆盖率与源相近 / ★ **小档覆盖率必须与大档不同**（有意手调）/ 假源 `src-icon*` 不存在 / manifest 声明的路径在 **`dist/`** 下存在 | **42/42** | ✘ |
 | **`verify-falsify-icons.mjs`** | **上一条的反证**：换占位源 / Icon16 弄成 16×9 / 抹掉小档手调 / 放回假源 ⇒ 各自变红 | **4/4** | ✘ |
+| **`verify-update-ui.mjs`** | ★ **更新提醒在真实扩展里的闭环**（v4.2.56，真起 Chromium）：往 `chrome.storage.local` 写入「最新版 9.9.9」→ 管理页横幅出现且文案含「不会自动更新」与当前版本 → 工具栏角标为 `1` → 点侧栏「检查更新」按钮，桩掉后台 fetch 返回 9.9.10，横幅切到 9.9.10 且按钮恢复可用（证明手动检查真的走 force、不吃 6h 节流）→ 点「忽略此版本」后横幅收起、`dismissedVersion=9.9.10` 落盘、角标清空 → 弹窗「检查更新」桩 9.9.11，出现「去 GitHub 下载」入口 → 页面里没有下载/安装入口。纯逻辑对了但消息没接上时，只有这一条会红 | **21/21** | ✔ |
 | **`verify-user-docs.mjs`** | **用户可见的功能描述必须与代码一致**：`USER-MANUAL.md` 里"数据在哪 / 备份含什么"不得与代码相反、**真相必须被明说**、`manifest.description` 不声称本地加密、翻译图标的"填充/复制"开关在 UI/内容脚本/手册三处一致、快捷键 `Ctrl+X` 与译文 50 字符限制（含词边界） | **14/14** | ✘ |
+| **`verify-update-logic.mjs`** | **更新提醒的版本比较与状态机**（纯逻辑）：`4.2.10 > 4.2.9`、预发布低于同号正式版、`v` 前缀/构建元数据归一化、忽略此版本后不再提醒、6 小时节流、坏存储不崩；并自证后台模块**没有**下载/安装调用（只提醒、由用户手动更新） | **29/29** | ✘ |
 | **`verify-status-cache.mjs`** | **状态轮盘缓存的纯逻辑**：TTL 命中/过期、按页签失效、容量淘汰、clear；防止"缓存跨账号/永不失效"回归 | **6/6** | ✘ |
 | **`verify-statusfilter.mjs`** | ★ **状态轮盘只呈现「启用」的生命周期状态**（v4.2.42）：用 `esbuild` 把 `instance-status.ts` 就地转成 CJS，喂假接口响应后**真的调** `pageLoadStatuses` —— ① `isEnabled=false` / `isDeleted=true` 被过滤 ② `0` / `"false"` / `enabled:false` 等形态也认 ③ **响应里没有启停字段时一个都不许少**（不能把"未知"当"停用"清空整表）④ 全停用时 `statuses` 为空但 `hiddenCount` 如实 ⑤ 当前状态落在停用项上时 `currentDisabled=true` ⑥ v4.2.46：列表页（只有 bid/mid、无 id）与管理端 `/admin/` 不算实例页，带 `id` 的数据页才算。 | **12/12** | ✘ |
 | **`verify-favorites.mjs`** | ★ **常用页面保存链路的纯逻辑**（v4.2.44）：用 `esbuild` 打包 `favorites.ts` + `chrome.storage.local` 替身，断言 ① 相对路径补前导 `/`、完整 http(s) 原样、名称去空白 ② `javascript:` / `data:` / 协议相对 `//host` / 反斜杠 / 空名称全部忽略并计入 `skipped` ③ 归一化后同路径去重（`/a` 与 `a` 算一条，保留先出现的）④ **空数组不回落默认**（删光不复活）、只有键不存在才回落 ⑤ 超 60 条截断且 `truncated` 如实 ⑥ `resetFavorites` 删键回默认 ⑦ `resolveFavoriteUrl` 拒绝 `javascript:`、相对路径按 base 拼接 ⑧ 超长名称截到 60 字但条目保留。<br>★ 起因：旧版是 textarea +「每行 `名称,路径`」，保存是**静默**的 —— 协议不对/路径重复/超 10 条都被无声丢掉，用户只看到"我加过怎么没了" | **9/9** | ✘ |
@@ -131,7 +133,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 |---|---|---|---|
 | 静态（不需要浏览器） | 31 | ≈66 s | `run-all.mjs --static` |
 | 浏览器（真起 Chromium） | 23 | ≈140 s | `run-all.mjs --browser-only` |
-| 全部 | 54 | ≈206 s | `run-all.mjs --browser` |
+| 全部 | 56 | ≈206 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -149,7 +151,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"54 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"56 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -159,7 +161,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 54
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 56
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

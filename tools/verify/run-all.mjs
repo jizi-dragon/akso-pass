@@ -91,6 +91,7 @@ const BROWSER_SCRIPTS = new Set([
   'verify-translate-focus.mjs',
   'verify-ui-select.mjs',
   'verify-v310.mjs',
+  'verify-update-ui.mjs',
 ]);
 
 // probe-create 是诊断探针（无断言），不列入批量回归

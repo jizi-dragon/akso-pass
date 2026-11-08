@@ -7,6 +7,7 @@ import type {
   UiStatePayload,
 } from '../../shared/messages';
 import { DEFAULT_FAVORITES, EXT_VERSION, FAVORITES_MAX, LOCAL_KEYS } from '../../shared/constants';
+import { isNewerVersion, shouldPrompt, type UpdateState } from '../../shared/update-logic';
 import { getForwardingLogger, setForwarder } from '../../shared/log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
@@ -51,6 +52,112 @@ type BrowserAccount = ParallelAccount & ParallelAccountStatus & { password: bool
 
 const verChip = document.getElementById('ver-chip') as HTMLSpanElement;
 verChip.textContent = `v${EXT_VERSION}`;
+/* ---- 更新提醒（v4.2.55）：只提醒、不自动更新；由用户去 GitHub Releases 下载 ---- */
+const updateBannerEl = document.getElementById('update-banner') as HTMLDivElement;
+const updateTextEl = document.getElementById('update-text') as HTMLSpanElement;
+const updateOpenBtn = document.getElementById('update-open') as HTMLButtonElement;
+const updateLaterBtn = document.getElementById('update-later') as HTMLButtonElement;
+const updateDismissBtn = document.getElementById('update-dismiss') as HTMLButtonElement;
+/** ★ v4.2.56：显式的「检查更新」按钮（用户要求：能自己查是不是最新版）。 */
+const updateCheckBtn = document.getElementById('update-check') as HTMLButtonElement;
+
+let updateState: UpdateState | null = null;
+let updateSnoozed = false;
+
+function renderUpdateBanner(): void {
+  if (updateState === null) return;
+  const pending = shouldPrompt(updateState) && !updateSnoozed;
+  updateBannerEl.classList.toggle('hidden', !pending);
+  if (pending) {
+    updateTextEl.textContent =
+      `发现新版本 v${updateState.latestVersion}（当前 v${updateState.currentVersion}）。`
+      + 'Akso Pass 不会自动更新，请到 GitHub Releases 手动下载。';
+  }
+  const checked = updateState.checkedAt === null
+    ? '尚未检查更新'
+    : `上次检查：${new Date(updateState.checkedAt).toLocaleString('zh-CN')}`;
+  verChip.title = updateState.error === null ? checked : `${checked}；检查失败：${updateState.error}`;
+}
+
+/** 手动检查命中新版本时强制亮横幅（「忽略过」也亮：用户这次是主动来问的）。 */
+function revealUpdateBanner(): void {
+  if (updateState === null || updateState.latestVersion === null) return;
+  updateBannerEl.classList.remove('hidden');
+  updateTextEl.textContent =
+    `发现新版本 v${updateState.latestVersion}（当前 v${updateState.currentVersion}）。`
+    + 'Akso Pass 不会自动更新，请到 GitHub Releases 手动下载。';
+}
+
+async function refreshUpdateState(): Promise<void> {
+  const res = await sendSafe({ kind: 'update.state' });
+  if (res !== null && res.kind === 'update.state' && res.result.ok) {
+    updateState = res.result.data;
+    renderUpdateBanner();
+  }
+}
+
+updateOpenBtn.addEventListener('click', () => {
+  void sendSafe({ kind: 'update.openRelease' });
+});
+updateLaterBtn.addEventListener('click', () => {
+  updateSnoozed = true;
+  renderUpdateBanner();
+});
+updateDismissBtn.addEventListener('click', async () => {
+  const res = await sendSafe({ kind: 'update.dismiss' });
+  if (res !== null && res.kind === 'update.dismiss' && res.result.ok) {
+    updateState = res.result.data;
+    updateSnoozed = false;
+    renderUpdateBanner();
+  }
+});
+/**
+ * 手动检查更新（侧栏「检查更新」按钮 / 版本 chip）。
+ * `update.check` 在后台是 force=true，绕开 6 小时自动检查节流 —— 用户点一次就问一次。
+ * 与自动检查的区别：即使该版本被「忽略过」，手动检查发现新版本也会把横幅重新亮出来。
+ */
+async function runUpdateCheck(from: 'chip' | 'button'): Promise<void> {
+  if (from === 'chip' && updateState !== null && shouldPrompt(updateState)) {
+    void sendSafe({ kind: 'update.openRelease' });
+    return;
+  }
+  const idleText = '检查更新';
+  updateCheckBtn.disabled = true;
+  updateCheckBtn.textContent = '检查中…';
+  try {
+    const res = await sendSafe({ kind: 'update.check' });
+    if (res === null || res.kind !== 'update.check' || !res.result.ok) {
+      flashBanner('检查更新失败：后台没有响应', 'warn');
+      return;
+    }
+    const data = res.result.data;
+    updateState = data;
+    updateSnoozed = false;
+    renderUpdateBanner();
+    if (data.error !== null) {
+      flashBanner(`检查更新失败：${data.error}`, 'warn');
+      return;
+    }
+    const newer = data.latestVersion !== null && isNewerVersion(data.latestVersion, data.currentVersion);
+    if (newer) {
+      revealUpdateBanner();
+      flashBanner(`发现新版本 v${data.latestVersion}（当前 v${data.currentVersion}）`, 'warn');
+    } else {
+      flashBanner(`已是最新版本 v${data.currentVersion}`, 'ok');
+    }
+  } finally {
+    updateCheckBtn.disabled = false;
+    updateCheckBtn.textContent = idleText;
+  }
+}
+
+updateCheckBtn.addEventListener('click', () => {
+  void runUpdateCheck('button');
+});
+verChip.addEventListener('click', () => {
+  void runUpdateCheck('chip');
+});
+void refreshUpdateState();
 
 const browserListEl = document.getElementById('browser-list') as HTMLUListElement;
 const parForm = document.getElementById('par-form') as HTMLFormElement;

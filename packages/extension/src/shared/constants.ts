@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.2.54';
+export const EXT_VERSION = '4.2.56';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -83,6 +83,13 @@ export const LOCAL_KEYS = {
   logPersist: 'ql:log',
   /** 云端账号库会话：{ baseUrl, token, fernetKey, email } | null */
   cloudAuth: 'ql:cloudAuth',
+  /**
+   * 更新提醒状态（v4.2.55）：`UpdateState`。
+   *
+   * ★ 只存**公开信息**（版本号 / Releases 链接 / 上次检查时间 / 用户忽略的版本），
+   *   不含任何账号或令牌。检查只请求 GitHub 公开 API。
+   */
+  updateState: 'ql:updateState',
 } as const;
 
 // ★★ 2026-10-09 清理：这里原有两条**已废除功能**的键注释，而它们对应的实现早就删了 ——

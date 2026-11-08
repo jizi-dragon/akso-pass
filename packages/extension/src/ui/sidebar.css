@@ -147,6 +147,38 @@ body {
   gap: var(--sp-2);
 }
 
+.sb-foot-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* 手动「检查更新」（v4.2.56）：常驻的显式按钮，不只有版本 chip 可点。 */
+.sb-check {
+  font: inherit;
+  font-size: var(--fs-11);
+  line-height: 1.2;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  background: transparent;
+  color: var(--sb-text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.sb-check:hover:not(:disabled) {
+  color: var(--sb-text);
+  border-color: var(--sb-text-secondary);
+}
+.sb-check:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.sb-check:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* ── 内容区：把原来的 .wrap 变成右侧一栏 ── */
 .sb-main {
   flex: 1 1 auto;

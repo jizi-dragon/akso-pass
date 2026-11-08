@@ -1,5 +1,6 @@
 import type { LogRecord } from './log';
 import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
+import type { UpdateState } from './update-logic';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -260,7 +261,14 @@ export type RuntimeRequest =
   /** 在**新页签**打开调试目标；只接受与来源页同源的 http(s) 地址 */
   | { kind: 'debug.open'; url: string }
   /** 列该对象上**启用**的工作流（v4.2.50，浮层第二层） */
-  | { kind: 'debug.workflows'; objectId: string };
+  | { kind: 'debug.workflows'; objectId: string }
+  /* ---- 更新提醒（v4.2.55）----
+   * 只读检查 + 记录「忽略此版本」+ 打开 Releases 页；
+   * **没有**下载/安装动作 —— 用户必须自己去 GitHub 下载。 */
+  | { kind: 'update.state' }
+  | { kind: 'update.check' }
+  | { kind: 'update.dismiss'; version?: string }
+  | { kind: 'update.openRelease' };
 
 /**
  * 备份文件结构（v1）。
@@ -369,7 +377,11 @@ export type RuntimeResponse =
   | { kind: 'favorites.resolve'; result: Result<{ url: string }> }
   | { kind: 'debug.resolve'; result: Result<DebugLinks> }
   | { kind: 'debug.open'; result: Result<null> }
-  | { kind: 'debug.workflows'; result: Result<{ workflows: DebugWorkflowRef[] }> };
+  | { kind: 'debug.workflows'; result: Result<{ workflows: DebugWorkflowRef[] }> }
+  | { kind: 'update.state'; result: Result<UpdateState> }
+  | { kind: 'update.check'; result: Result<UpdateState> }
+  | { kind: 'update.dismiss'; result: Result<UpdateState> }
+  | { kind: 'update.openRelease'; result: Result<{ url: string }> };
 
 /**
  * 实例状态上下文（v3.15）：从**当前活动页签的 URL** 解析出来的可操作对象。

@@ -37,12 +37,22 @@
       </nav>
       <div class="sb-side-foot">
         <span>账号中心</span>
-        <span id="ver-chip" class="status-chip">v—</span>
+        <span class="sb-foot-right">
+          <button id="update-check" class="sb-check" type="button" title="检查是否有新版本">检查更新</button>
+          <span id="ver-chip" class="status-chip">v—</span>
+        </span>
       </div>
     </aside>
 
     <main class="wrap sb-main">
       <!-- 数据源提示条（云端不可用 / 合并结果；无事发生时不占位） -->
+      <!-- 更新提醒（v4.2.55）：只提醒、不自动更新；由用户去 GitHub Releases 下载 -->
+      <div id="update-banner" class="notice warn update-banner hidden" role="status" aria-live="polite">
+        <span id="update-text" class="grow"></span>
+        <button id="update-open" class="btn-ghost btn-sm" type="button">去 GitHub 下载</button>
+        <button id="update-later" class="btn-ghost btn-sm" type="button">稍后</button>
+        <button id="update-dismiss" class="btn-ghost btn-sm" type="button">忽略此版本</button>
+      </div>
       <div id="cloud-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
       <!-- 登录已过期（服务端 401）：数据源**保持**云端，只提示重新登录，绝不静默切回本地 -->

@@ -1,4 +1,5 @@
 import { EXT_VERSION } from '../../shared/constants';
+import { isNewerVersion } from '../../shared/update-logic';
 
 /**
  * 弹窗 = 品牌 + 实时统计 + 唯一主操作（v3.8 起；v4.2.1 第五轮进一步收窄）。
@@ -64,3 +65,66 @@ async function refreshStats(): Promise<void> {
 }
 
 void refreshStats();
+
+/* ---- 更新提醒（v4.2.55）：只给"去下载"，不做任何自动更新 ---- */
+async function refreshUpdateHint(): Promise<void> {
+  const el = document.getElementById('update-hint') as HTMLAnchorElement | null;
+  if (el === null) return;
+  try {
+    const res = (await chrome.runtime.sendMessage({ kind: 'update.state' })) as
+      | { kind: 'update.state'; result: { ok: boolean; data?: { currentVersion: string; latestVersion: string | null; releaseUrl: string | null; dismissedVersion: string | null } } }
+      | undefined;
+    const data = res?.result?.ok ? res.result.data : undefined;
+    if (data === undefined || data.latestVersion === null) return;
+    if (!isNewerVersion(data.latestVersion, data.currentVersion)) return;
+    if (data.dismissedVersion === data.latestVersion) return;
+    el.textContent = `发现新版本 v${data.latestVersion} · 去 GitHub 下载`;
+    if (data.releaseUrl !== null) el.href = data.releaseUrl;
+    el.classList.remove('hidden');
+  } catch {
+    // 更新提醒失败不影响弹窗主体
+  }
+}
+
+void refreshUpdateHint();
+
+/* ---- 手动检查（v4.2.56）：点一下就去问 GitHub，不受 6 小时自动检查节流限制 ---- */
+const popupCheck = document.getElementById('popup-check') as HTMLButtonElement | null;
+const updateStatus = document.getElementById('update-status') as HTMLSpanElement | null;
+const updateHintEl = document.getElementById('update-hint') as HTMLAnchorElement | null;
+
+popupCheck?.addEventListener('click', async () => {
+  const idleText = popupCheck.textContent ?? '检查更新';
+  popupCheck.disabled = true;
+  popupCheck.textContent = '检查中…';
+  if (updateStatus !== null) updateStatus.textContent = '';
+  try {
+    const res = (await chrome.runtime.sendMessage({ kind: 'update.check' })) as
+      | { kind: 'update.check'; result: { ok: boolean; data?: { currentVersion: string; latestVersion: string | null; releaseUrl: string | null; error: string | null } } }
+      | undefined;
+    const data = res?.result?.ok ? res.result.data : undefined;
+    if (data === undefined) {
+      if (updateStatus !== null) updateStatus.textContent = '检查失败';
+      return;
+    }
+    if (data.error !== null) {
+      if (updateStatus !== null) updateStatus.textContent = `检查失败：${data.error}`;
+      return;
+    }
+    if (data.latestVersion !== null && isNewerVersion(data.latestVersion, data.currentVersion)) {
+      if (updateStatus !== null) updateStatus.textContent = `发现 v${data.latestVersion}`;
+      if (updateHintEl !== null) {
+        updateHintEl.textContent = `发现新版本 v${data.latestVersion} · 去 GitHub 下载`;
+        if (data.releaseUrl !== null) updateHintEl.href = data.releaseUrl;
+        updateHintEl.classList.remove('hidden');
+      }
+    } else {
+      if (updateStatus !== null) updateStatus.textContent = `已是最新（v${data.currentVersion}）`;
+    }
+  } catch {
+    if (updateStatus !== null) updateStatus.textContent = '检查失败';
+  } finally {
+    popupCheck.disabled = false;
+    popupCheck.textContent = idleText;
+  }
+});
