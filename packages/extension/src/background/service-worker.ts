@@ -1518,9 +1518,16 @@ async function wheelContextFor(
     for (const s of await parallelStore.listSites(false)) {
       siteHosts.set(s.id, s.host);
     }
-  } catch {
+  } catch (e) {
     // 站点清单拿不到 ⇒ 无法判断关联关系。用户要求"没有关联盒子时用默认盒"，
     // 这里的默认盒是云端权威值（`cloud.default`）。
+    // ★★ 2026-11-09：补留痕 —— 否则"站点清单取不到"与"这台机器确实没有关联
+    //   站点"都会让轮盘停在默认盒，界面上一模一样（规则 29）。
+    log.warn(
+      '取站点清单失败 ⇒ 轮盘按默认盒 %s 定位（与"没有关联盒子"不可分）: %s',
+      cloud.default,
+      e instanceof Error ? e.message : String(e),
+    );
     return { host, preferredBox: cloud.default, matched: false };
   }
 

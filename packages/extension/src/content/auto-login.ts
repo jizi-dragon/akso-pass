@@ -1,5 +1,6 @@
 import { CONTENT_MESSAGE } from '../shared/constants';
-import { getLogger } from '../shared/log';
+import { getForwardingLogger } from '../shared/log';
+import { installLogForwarding } from '../shared/forward-log';
 
 /**
  * Auto-Login：自动填充登录表单并提交。
@@ -18,9 +19,18 @@ let credentials: { username: string; password: string } | null = null;
  * ★ **不要在这里用裸 `console.*`**：本模块手上就有用户的真实口令
  *   （`credentials`），而 `console.debug('...', obj)` 这种**对象直传**
  *   是最容易顺手泄密的形态。`getLogger` 出来的方法在写出前**强制打码**。
- *   判据：`node tools/verify/log-redaction.mjs` 的第 5 节会扫出所有裸 console。
+ *   判据：`node tools/verify/verify-log-redaction.mjs` 的第 5 节会扫出所有裸 console。
+ *
+ * ★★ 2026-11-09：改用**转发** logger 并真的装上转发器。此前是 `getLogger`
+ *   ⇒ 自动填表的全过程（"交付待登录凭证 → 填表 → 被打断 / 校验不过 / 服务端拒绝"）
+ *   只存在于**那个网页自己的** DevTools 里；用户报告"自动登录没生效"时，
+ *   诊断包里只有 `autoLogin` 的结构化事件，没有过程。规则 32 的原话是
+ *   "工具不可用会伪装成没人用" —— 这里正是那个形态。
+ *   ★ 本模块在**页面**上下文（可能是跨域 iframe），转发失败必须静默：
+ *     由 `shared/forward-log.ts` 统一保证。
  */
-const log = getLogger('auto-login');
+const log = getForwardingLogger('auto-login');
+installLogForwarding();
 
 function isTopFrame(): boolean {
   return window === window.top;

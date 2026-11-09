@@ -1,4 +1,5 @@
 import { getForwardingLogger } from '../shared/log';
+import { installLogForwarding } from '../shared/forward-log';
 import type { RuntimeRequest, RuntimeResponse } from '../shared/messages';
 
 /**
@@ -30,6 +31,9 @@ import type { RuntimeRequest, RuntimeResponse } from '../shared/messages';
 const SEND_TIMEOUT_MS = 10_000;
 
 const log = getForwardingLogger('ui.send');
+// ★ 2026-11-09：转发器原先只在 `parallel.ts` 装过 ⇒ 本模块的日志一直只在本页
+//   DevTools 里（`ui.send` 恰恰是"发消息没人接"的那条路，最需要进诊断包）。
+installLogForwarding();
 
 /** 把一个请求合成成"失败响应"，形状与后台 `dispatch` 的失败分支**完全一致**。
  *  ★ 这里**不用** `messages.ts` 的 `Result<T>`：它是那个模块的**私有**类型别名

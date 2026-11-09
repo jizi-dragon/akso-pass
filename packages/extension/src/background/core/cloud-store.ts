@@ -525,8 +525,17 @@ export async function fetchCloudBoxes(force = false): Promise<{ boxes: ParBox[];
   try {
     const { rows, default: def } = await loadBoxes(force);
     return { boxes: rows.filter((b) => Boolean(b.name)), default: def };
-  } catch {
-    return null;   // ★ 不抛：这是"对账用的参考数据"，取不到不该让任何调用点炸
+  } catch (e) {
+    // ★ 不抛：这是"对账用的参考数据"，取不到不该让任何调用点炸。
+    // ★★ 2026-11-09：但**必须留痕**。调用方全都静默降级（`par.boxes` 返回空、
+    //   `preferredBox` 落空、`wheelContextFor` 用默认盒）⇒ 用户看到的是
+    //   "盒子没同步 / 轮盘里少了盒子"，而下一个诊断包里**零痕迹**。
+    //   2026-10-12 的"盒子不同步"就是这么查了很久的（规则 29）。
+    log.warn(
+      '取云端盒子失败 ⇒ 对账跳过（界面可能显示旧盒子列表 / 轮盘少盒子）: %s',
+      e instanceof Error ? e.message : String(e),
+    );
+    return null;
   }
 }
 

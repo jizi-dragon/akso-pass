@@ -150,7 +150,14 @@ async function activeOrigin(): Promise<string> {
     }
     const u = new URL(tab.url);
     return /^https?:$/.test(u.protocol) ? u.origin : '';
-  } catch {
+  } catch (e) {
+    // ★★ 2026-11-09：补留痕。原来这里静默返回 `''`，于是"取不到活动页签"
+    //   与"这个页签本来就不是 http(s)"在 `resolveFavoriteUrl()` 里被**归一**成
+    //   "没有基准" ⇒ 界面最终显示"书签路径无效"，与真因不符（规则 29 的形态）。
+    log.warn(
+      '取活动页签失败 ⇒ 相对路径书签失去基准（界面会报「路径无效」）: %s',
+      e instanceof Error ? e.message : String(e),
+    );
     return '';
   }
 }
@@ -173,11 +180,16 @@ export async function resolveFavoriteUrl(path: string, baseOrigin?: string): Pro
     base = await activeOrigin();
   }
   if (!base) {
+    // ★ 三种因（路径非法 / 无基准 / 基准坏）在这里**归一**成同一个 null，
+    //   而 `content/favorites-overlay.ts` 一律提示"书签路径无效" ⇒ 必须留痕，
+    //   否则用户报"书签打不开"时我们只能看到那句与真因无关的提示。
+    log.warn('相对路径书签没有可用基准（取不到活动页签）⇒ 界面将报「路径无效」: %s', raw);
     return null;
   }
   try {
     base = new URL(base).origin;
   } catch {
+    log.warn('书签基准不是合法 URL ⇒ 界面将报「路径无效」（真因是基准坏）: %s', base);
     return null;
   }
   return base + raw;

@@ -210,8 +210,11 @@ export async function pollDeviceFlow(): Promise<CloudDevicePoll> {
         await setCloudAuth({ baseUrl, token, fernetKey, email, displayName, avatar });
         log.debug('device-poll：补取到邮箱（界面可显示"已登录谁"）');
       } else {
-        // ★ 不失败，但**要留痕**：界面会退化成显示空/占位，而那不是缺陷
-        log.debug('device-poll：补取邮箱失败 ⇒ 界面不显示"已登录谁"（不影响可用性）');
+        // ★ 不失败，但**要留痕**：界面会退化成显示空/占位，而那不是缺陷。
+        // ★★ 2026-11-09：注释写着"要留痕"，实现却是 `debug` —— 默认 `info` 级下
+        //   它既不进内存环、也不进 `ql:log` ⇒ 等于没留。规则 25：失败路径用
+        //   debug 记 = 在生产里不存在。改为 `warn`（每条失败只写一次，不是热路径）。
+        log.warn('device-poll：补取邮箱失败 ⇒ 界面不显示"已登录谁"（不影响可用性）');
       }
     }
     return { status: 'approved', email };

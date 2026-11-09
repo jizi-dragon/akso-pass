@@ -37,6 +37,27 @@ function extensionIdFromKey(keyB64) {
   return [...hash.slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
 }
 
+/**
+ * 读 `ql:updateState`，**轮询到断言的条件成立或超时**。
+ *
+ * ★★ 2026-11-09：这两处原来是"点完立刻读一次"。单独跑 3/3 全绿，但在 `--browser-only`
+ *   的全量批次里偶发读到 `null`（一次批次里两条同时红）—— 因为**写这个键的是后台**，
+ *   而页面先拿到了应答（弹窗已经显示 9.9.10），落盘是随后的事。
+ *   ⇒ 判据要盯的是"最终写成什么"，不是"点完那一瞬间是几"。加**有界轮询**，
+ *   断言本身一个字没放宽（仍然严格要求等于 9.9.10），只是不再和调度赛跑。
+ *   这和 PITFALLS #57 的推广第 2 条是同一件事：**判据与写入之间有一层异步**。
+ */
+async function waitUpdateState(page, pred, timeout = 8_000) {
+  const started = Date.now();
+  let last;
+  for (;;) {
+    last = await page.evaluate(async () => (await chrome.storage.local.get('ql:updateState'))['ql:updateState']);
+    if (pred(last)) return last;
+    if (Date.now() - started > timeout) return last;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 function findPwChromium() {
   const base = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'ms-playwright') : null;
   if (base === null || !existsSync(base)) return null;
@@ -126,7 +147,7 @@ try {
   const modalStatus = (await page.locator('#update-modal-status').innerText()).trim();
   check('弹窗写明发现 9.9.10', modalStatus.includes('9.9.10'), modalStatus);
   check('弹窗给出「去 GitHub 下载」入口', await page.locator('#update-modal-open').isVisible());
-  const manualState = await page.evaluate(async () => (await chrome.storage.local.get('ql:updateState'))['ql:updateState']);
+  const manualState = await waitUpdateState(page, (s) => s?.latestVersion === '9.9.10');
   check('后台把最新版本写成 9.9.10', manualState?.latestVersion === '9.9.10', JSON.stringify(manualState?.latestVersion));
   check('按钮检查后恢复可用', await checkBtn.isEnabled());
   await page.locator('#update-modal-close').click();
@@ -153,7 +174,7 @@ try {
   await page.locator('#update-dismiss').click();
   await banner.waitFor({ state: 'hidden', timeout: 10_000 });
   check('横幅已收起', !(await banner.isVisible()));
-  const stored = await page.evaluate(async () => (await chrome.storage.local.get('ql:updateState'))['ql:updateState']);
+  const stored = await waitUpdateState(page, (s) => s?.dismissedVersion === '9.9.10');
   check('忽略的版本已写入存储', stored?.dismissedVersion === '9.9.10', JSON.stringify(stored?.dismissedVersion));
   const badgeAfter = await worker.evaluate(() => chrome.action.getBadgeText({}));
   check('角标已清空', badgeAfter === '', `badge=${JSON.stringify(badgeAfter)}`);

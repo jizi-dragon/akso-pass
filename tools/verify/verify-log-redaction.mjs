@@ -930,6 +930,85 @@ console.log('\n=== 13. 静默失败必须留痕（"失败与成功长得一样"�
       why: '读翻译设置失败 ⇒ 回落硬编码默认 ⇒ 用户看到"**我的设置被重置了**"，'
         + '而不是"读失败了"。★ 与 `favorites.listFavorites`（上面那条）**逐字同形**',
     },
+    /* ══════════ ★★ 2026-11-09 新增的 8 条：**日志审计的第二轮**（P1-3）
+     *
+     * 起因：用户问"日志系统是否完善"。审计的判据不是"有多少文件有 logger"，
+     * 而是**"失败时用户看到的是否与成功一样"**（规则 29）—— 于是把
+     * "界面/诊断包里分不出来"的站点逐条点名，每条都给出**同形兄弟**。
+     *
+     * ★ 这些站点原先**连 logger 都没有**（`popup.ts` 零 logger、
+     *   `auto-login-cache.ts` 零 logger），或者用了 `debug` 级
+     *   （默认 `info` ⇒ 生产里等于没记，规则 25）。
+     */
+    {
+      file: 'background/core/favorites.ts',
+      fn: 'resolveFavoriteUrl',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '三种因（路径非法 / 取不到活动页签 / 基准不是合法 URL）在这里**归一**成 '
+        + '同一个 null，而调用方一律提示"书签路径无效"⇒ **真因永远打不出来**。'
+        + '★ 与 `site-auth.ts::probeScheme`（上面那条）同形：多因归一',
+    },
+    {
+      file: 'background/core/favorites.ts',
+      fn: 'activeOrigin',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '取活动页签失败 ⇒ 静默返回空基准 ⇒ 上面的 `resolveFavoriteUrl` 误报'
+        + '"路径无效"。★ 与 `favorites.listFavorites`（上面那条）同一个文件、同一种"读失败"',
+    },
+    {
+      file: 'background/core/cloud-store.ts',
+      fn: 'fetchCloudBoxes',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '对账参考数据取不到 ⇒ 返回 null；**所有调用方都静默降级**'
+        + '（`par.boxes` 空、`preferredBox` 落空、轮盘用默认盒）⇒ 用户看到'
+        + '"盒子没同步"，诊断包里零痕迹。2026-10-12 那次就查了很久',
+    },
+    {
+      file: 'background/core/auto-login-cache.ts',
+      fn: 'clearPageLoginState',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '点"退出"后清页签 localStorage 失败 ⇒ **下个账号进同一页签会读到上一个账号的残留**'
+        + '，而界面一切正常。★ 与 `parallel-session.terminateLoginState`（上面那条）同形：'
+        + '"清理本该发生但没发生"',
+    },
+    {
+      file: 'background/core/cloud-device.ts',
+      fn: 'pollDeviceFlow',
+      kind: 'fallback',
+      minLevel: 'warn',
+      why: '登录成功后补取邮箱失败 ⇒ 界面退化成不显示"已登录谁"。'
+        + '函数里**没有 catch**（失败被 `fetchMeEmail` 吞成空串），失败路径是'
+        + '`if (!email)` 的 else 分支 ⇒ 用 `fallback` 形态断言',
+    },
+    {
+      file: 'ui/popup/popup.ts',
+      fn: 'refreshUpdateHint',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '更新提醒查询失败 ⇒ 弹窗**不显示新版本** ⇒ 与"已是最新"长得一样。'
+        + '★ 本文件此前**零 logger**（4 处静默 catch）',
+    },
+    {
+      file: 'content/translate.ts',
+      fn: 'getSettings',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: 'content script 读设置失败 ⇒ 按默认值渲染 ⇒ 网页上的翻译行为"变了"，'
+        + '用户以为设置丢了。★ 与 `ui/translate/translate.ts::init`（上面那条）**逐字同形**；'
+        + '而它原先还是 `debug` 级 ⇒ 默认 `info` 下连本地环都不进（规则 25）',
+    },
+    {
+      file: 'background/service-worker.ts',
+      fn: 'wheelContextFor',
+      kind: 'catch',
+      minLevel: 'warn',
+      why: '站点清单取不到 ⇒ 轮盘按默认盒定位，与"这台机器确实没有关联站点"'
+        + '在界面上**完全一样** ⇒ 用户报"轮盘里少了盒子"时无从下手',
+    },
   ];
 
   /** 取出 `function <name>(...)` **或类方法** `<name>(...) {` 之后配对的花括号体。
@@ -940,19 +1019,68 @@ console.log('\n=== 13. 静默失败必须留痕（"失败与成功长得一样"�
    *    ★ 那一次红是**判据的提取器不够宽**，不是被测代码有问题。
    *    ⇒ 改成"两种形态都认"，并且**保留自证**（取不到就红）：
    *      取不到时红是对的，它逼着下一个人把提取器改宽，而不是悄悄跳过这条。
+   *
+   *  ★★ 2026-11-09：第三次加宽 —— **返回值类型里带花括号**的签名会被截断。
+   *    反例（本轮真实踩到）：
+   *
+   *    ```ts
+   *    export async function fetchCloudBoxes(force = false):
+   *      Promise<{ boxes: ParBox[]; default: string } | null> {
+   *      try { … } catch { … }   // ← 这个 catch 取不到
+   *    }
+   *    ```
+   *
+   *    旧实现从头往后找"第一个 `{`"，撞上 `Promise<{ … }` 的**类型字面量**，
+   *    于是函数体只截到 `{ boxes: ParBox[]; default: string }` ⇒ `catch` 数 0
+   *    ⇒ 判据报"前提不成立"。这与 2026-10-16 那次是**同一形态**：红的是提取器。
+   *    ⇒ 现在：先找到参数表配对的那个 `)`，再从它往后逐个试候选 `{`；
+   *      若某个候选的配对 `}` 后面紧跟 `>`、`|`、`,`、`)`、`;`、`[`，
+   *      说明那是**类型字面量**，跳过继续找。最多试 8 个候选后放弃（返回 null ⇒ 红）。
    */
   const fnBody = (src, name) => {
     const m = new RegExp(`(?:function\\s+|async\\s+|^\\s*)${name}\\s*\\(`, 'm').exec(src);
     if (!m) return null;
-    const open = src.indexOf('{', m.index);
-    if (open < 0) return null;
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-      if (src[i] === '{') depth++;
-      else if (src[i] === '}') {
-        depth--;
-        if (depth === 0) return src.slice(open, i + 1);
+    // ① 先跨过参数表（里面可能有解构、默认值、泛型），拿到配对的 `)`
+    const parenOpen = src.indexOf('(', m.index);
+    if (parenOpen < 0) return null;
+    let pdepth = 0;
+    let afterParams = -1;
+    for (let i = parenOpen; i < src.length; i++) {
+      if (src[i] === '(') pdepth++;
+      else if (src[i] === ')') {
+        pdepth--;
+        if (pdepth === 0) { afterParams = i + 1; break; }
       }
+    }
+    if (afterParams < 0) return null;
+    // ② 从 `)` 往后逐个试候选 `{`，跳掉返回值类型里的字面量
+    const matchBrace = (from) => {
+      const open = src.indexOf('{', from);
+      if (open < 0) return null;
+      let depth = 0;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') {
+          depth--;
+          if (depth === 0) return { open, close: i };
+        }
+      }
+      return null;
+    };
+    let cursor = afterParams;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const hit = matchBrace(cursor);
+      if (hit === null) return null;
+      const next = src.slice(hit.close + 1).replace(/^\s+/, '')[0] ?? '';
+      // 类型字面量的 `}` 后面必然是这些之一 ⇒ 不是函数体，跳过。
+      // ★ 空串（到文件末尾）必须**算作函数体**：否则"文件里最后一个函数"永远取不到
+      //   —— 本轮就踩过（`favorites.resolveFavoriteUrl` / `auto-login-cache.clearPageLoginState`
+      //   都是文件末尾那个函数，`''.includes('')` 恒真把它们当成类型字面量跳掉了）。
+      if (next !== '' && '>|,);['.includes(next)) {
+        cursor = hit.close + 1;
+        continue;
+      }
+      return src.slice(hit.open, hit.close + 1);
     }
     return null;
   };
@@ -1262,8 +1390,42 @@ console.log('\n=== 15. 前端日志必须能到落盘通道（跨环境转发）
 
   // ④ 前端**真的装了**转发器（模块级调用，不是只定义）
   //   ★ 与第 14 节同一个教训：判据要盯**调用**，不是"文件里出现过某个 token"。
-  check('parallel.ts 模块级调了 setForwarder',
-    /^setForwarder\(/m.test(panel));
+  //
+  //   ★★ 2026-11-09 改成**全量扫描**：原来只查 `parallel.ts` 一处，于是
+  //   `ui/translate/translate.ts`、`ui/wheel/wheel.ts`、`ui/send.ts` 三处
+  //   `getForwardingLogger` 全都**没装转发器**（`if (forwarder && …)` 恒假 ⇒
+  //   与 `getLogger` 一模一样，日志只留在那个页面自己的 DevTools 里），
+  //   而判据仍然绿 —— 这就是"判据盯错了对象"（规则 27）。
+  //
+  //   ⇒ 判据改成：**每个用了 `getForwardingLogger` 的文件都必须装上转发**
+  //     （`installLogForwarding()` 或直接 `setForwarder(`）。
+  //     ★ 只扫 `src/ui/**` 与 `src/content/**`：`src/shared/**` 与 `background`
+  //       是定义方 / 接收端（SW 装了等于自说自话）。
+  const walkTs = (dir, out = []) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) { walkTs(full, out); continue; }
+      if (name.endsWith('.ts')) out.push(full);
+    }
+    return out;
+  };
+  const users = [];
+  for (const dir of [join(SRC, 'ui'), join(SRC, 'content')]) {
+    for (const f of walkTs(dir)) {
+      const raw = readFileSync(f, 'utf8');
+      // ★ 用**剥注释后**的文本判定：本仓习惯在注释里引用 API 名（PITFALLS #19），
+      //   否则"解释为什么用转发 logger"的注释会把一个没装转发器的文件算进来。
+      const code = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+      if (!/getForwardingLogger\s*\(/.test(code)) continue;
+      const rel = f.replace(ROOT + '\\', '').replace(ROOT + '/', '');
+      users.push({ rel, installed: /installLogForwarding\s*\(\)/.test(code) || /^setForwarder\s*\(/m.test(code) });
+    }
+  }
+  // ★ 自证（规则 24）：名单为空时上面恒真
+  check('判据前提：扫到了用 getForwardingLogger 的前端文件', users.length > 0, `${users.length} 个`);
+  check('每个用 getForwardingLogger 的文件都装了转发器',
+    users.every((u) => u.installed),
+    users.filter((u) => !u.installed).map((u) => u.rel).join(' | '));
   check('parallel.ts 用的是 getForwardingLogger（不是 getLogger）',
     /getForwardingLogger\(/.test(panel) && !/\bgetLogger\(/.test(panel));
 

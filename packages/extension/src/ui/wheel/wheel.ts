@@ -7,6 +7,7 @@
  */
 import { LOCAL_KEYS } from '../../shared/constants';
 import { getForwardingLogger } from '../../shared/log';
+import { installLogForwarding } from '../../shared/forward-log';
 import {
   DEFAULT_BOX,
   applyPreferredPage,
@@ -17,8 +18,10 @@ import {
 import { buildAccountGrid } from './grid-core';
 
 /* ★ 与 `ui/parallel/parallel.ts` / `ui/translate/translate.ts` 同一形状（转发 logger）：
- * 本页跑在自己的进程里，`getLogger()` 的行**到不了诊断包**。 */
+ * 本页跑在自己的进程里，`getLogger()` 的行**到不了诊断包**。
+ * ★ 2026-11-09：转发器原先没装 ⇒ `getForwardingLogger` 在这里一直是空转的。 */
 const log = getForwardingLogger('wheel');
+installLogForwarding();
 
 const wheelEl = document.getElementById('wheel') as HTMLDivElement;
 const PARALLEL_PAGE = chrome.runtime.getURL('ui/parallel/parallel.html');

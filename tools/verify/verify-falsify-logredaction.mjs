@@ -284,13 +284,16 @@ const CASES = [
           + '  if (sink) for (const r of keep) sink(r);',
   },
   {
-    // ★ 第 15 节（跨环境转发）的反证 —— 拆掉**模块级**的 setForwarder 调用。
+    // ★ 第 15 节（跨环境转发）的反证 —— 拆掉**模块级**的转发器安装。
     //   ⇒ 前端日志又只留在自己的环境里，永远进不了诊断包。
     //   ★ 锚点不带 `\n`（规则 25 的教训）。
-    label: '⑲ 拆掉 parallel.ts 的 setForwarder() 调用 ⇒ 前端日志又出不去',
+    //   ★★ 2026-11-09：锚点从 `setForwarder((rec) => {` 换成 `installLogForwarding();` ——
+    //     转发器的 message 契约被抽进 `shared/forward-log.ts`（7 个前端文件共用），
+    //     这里是 parallel.ts 的那次调用。拆掉它，第 15 节必须红。
+    label: '⑲ 拆掉 parallel.ts 的 installLogForwarding() 调用 ⇒ 前端日志又出不去',
     file: PANEL_TS,
-    anchor: 'setForwarder((rec) => {',
-    broken: 'const _unusedForwarder = ((rec) => {',
+    anchor: 'installLogForwarding();',
+    broken: 'void 0; // 缺陷版：不装转发器',
   },
   {
     // ★ 第 15 节的第二半：SW 收到 ql.log 后**不入环** ⇒ 转发白做。

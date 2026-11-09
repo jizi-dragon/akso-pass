@@ -20,6 +20,9 @@
 //   日志是它的第一个外部依赖 —— 用 `shared/log`（唯一公开面，强制打码）。
 //   ★ 它**不碰 `chrome.*`**，所以对 content script 也是安全的（AGENTS.md 规则 10）。
 import { getLogger } from '../../shared/log';
+// ★ 打码 + 环形缓冲合并写：`ql:diag` 与 `parallel-session.ts` 是同一个键。
+import { redact } from '../../shared/redact';
+import { appendRing } from './ring-write';
 
 const AUTH_BASE = 100_000;
 /** COOKIE 规则 id 区间 */
@@ -59,16 +62,16 @@ const installed = new Map<number, RuleMeta>();
  */
 const log = getLogger('tab-rules');
 
-/** 诊断埋点（与 parallel-session 共用 storage.local['ql:diag'] 环形缓冲） */
+/**
+ * 诊断埋点（与 parallel-session 共用 storage.local['ql:diag'] 环形缓冲）。
+ *
+ * ★★ 2026-11-09：合并写走 `appendRing()`。原来这里与 `parallel-session.ts`
+ *   各有一份 `get → set`，两者**共写同一个键**却都不串行 ⇒ 一边写过、另一边
+ *   立刻用旧数组覆盖（实测并发 20 条只剩 1 条）。理由见 `ring-write.ts`。
+ *   同时补上打码：通道上的纪律不该因为"这行看起来没有秘密"而分叉。
+ */
 async function diag(msg: string): Promise<void> {
-  try {
-    const key = 'ql:diag';
-    const cur = (await chrome.storage.local.get(key))[key] as string[] | undefined;
-    const next = [...(cur ?? []).slice(-59), `${new Date().toISOString().slice(11, 23)} ${msg}`];
-    await chrome.storage.local.set({ [key]: next });
-  } catch {
-    // 埋点失败不影响业务
-  }
+  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));
 }
 
 let nextAuthId = AUTH_BASE;

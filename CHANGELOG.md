@@ -1,3 +1,21 @@
+## 4.3.2（2026-11-09）
+
+**日志系统：环形缓冲改成合并写（并发不再互相覆盖），前端转发器接到全部页面**
+
+- 起因：用户要求"检查日志系统是否完善"。审计结论是**骨架完善、并发与接线不完善** —— 单条流程出事拿得到证据，并发 / 多账号 / 多页签同发拿不到。
+- 最重的一条（实测）：`diag()` 与 `forensics()` 各自"读整个键 → `slice(-N)` → 写回"，**同一 tick 连写 20 条只剩 1 条**（7 ms；串行对照组 20/20，80 ms，可复现）。而登录失败一次就会同时写 3–5 条、多账号并行是本扩展的主场景 ⇒ 诊断包里**恰好只剩最后一条**，看起来像"前面什么都没发生"。`tab-rules.ts` 的加规则失败与流程日志**共写同一个 `ql:diag`**，一次批量加规则就能把前面的证据整段挤没。
+- 改法：新增 `background/core/ring-write.ts` —— `appendRing(key, cap, item)` 同步入队 + 串行链（`chain = chain.then(flush)`），`flush()` 按 key **合并成一次 `set`**；`scheduled` 在 flush 开头放开，flush 期间新追加的能再排一轮；极端 burst 按 `cap * 3` 截断最老的。`diag()` / `forensics()` 各改成一行 `appendRing(...)`，打码仍在入队前做。另导出 `ringIdle()` **只给判据用**。
+- 热路径降级：`reportFailureStatus` 的 401/403 全类型日志改成 **5 s 窗口 + 分桶限流**（`status|type|host`，最多 64 桶），窗口内只累加次数、下一条把「（近 5s 同型又 N 次）」拼进文本；`captureResponseCookies` 里"无页签响应归属唯一绑定账号"从 `diag()` 降为 `log.debug()`（那是成功路径的归属过程，不是失败）。
+- 转发器接线（原来只有管理页装过）：新增 `shared/forward-log.ts` 的 `installLogForwarding()`（幂等，`setForwarder` + `chrome.runtime.sendMessage({kind:'ql.log'})`）。接到 `ui/translate/translate.ts`、`ui/wheel/wheel.ts`、`ui/send.ts`、`ui/popup/popup.ts`（弹窗原先**一个 logger 都没有**）、`content/translate.ts`、`content/auto-login.ts`（后两者从 `getLogger` 换成 `getForwardingLogger`）⇒ 这些页面的日志现在会进诊断包，而不是只留在自己的控制台。
+- 静默失败白名单补 8 个同形站点（规则 29：改了才配进表）：`favorites.resolveFavoriteUrl` / `favorites.activeOrigin`（原来"取不到页签/基准"会被界面报成「路径无效」，与真因不符）、`cloud-store.fetchCloudBoxes`（盒子对账取不到零痕迹）、`auto-login-cache.clearPageLoginState`（点"退出"后页面登录态仍在）、`cloud-device.pollDeviceFlow`（注释写着"要留痕"却用了默认被过滤的 debug）、`popup.refreshUpdateHint`（更新检查失败与"已是最新"长得一样）、`content/translate.getSettings`、`service-worker.wheelContextFor`。
+- 新增 `tools/verify/verify-log-ring.mjs`（**25 条**，静态 0.4 s）：用 esbuild 把 `ring-write.ts` 打成 CJS **在 node 里真跑**，`chrome.storage.local` 桩的 `get`/`set` 各带 2 ms 延迟（同步桩会让竞态窗口消失）。★ 第一条是**对照组**：改造前的写法 50 条并发必须只剩 1 条 —— 桩不能复现竞态，后面所有绿都是假的。反证：把串行链拆掉 ⇒ **14/25、exit 1**。
+- 门禁同步：`verify-log-redaction.mjs` **145 → 170 条**（第 13 节白名单 9 → 18 条、第 15 节从"只查管理页装了转发器"改成"**每个用 `getForwardingLogger` 的文件都必须装**"，实测 7 个文件）；`verify-falsify-logredaction.mjs` **28/28**（⑲ 的锚点跟着实现换成 `installLogForwarding()`）；`verify-forensics-redaction.mjs` **25/25**（判据改成 `await ringIdle()` 之后再读 —— 落盘现在是队列，立刻读会读到上一次的状态）。README 与 `run-all.mjs --list` 计数同步到 **静态 33 / 浏览器 25 / 合计 58**。
+- 文档：`PITFALLS.md` 新增 **#57**（"读-改-写共享异步状态"必须串行化或合并；判据与写入之间的异步边界；静态桩必须带延迟；环长不是容量问题而是证据问题）。
+- 顺手修掉一条**批次里的偶发假红**：`verify-update-ui.mjs` 原来在点完「忽略此版本」后**立刻读一次** `ql:updateState`，单独跑 3/3 全绿，但在 `--browser-only` 全量批次里偶发读到 `null`（那两条判据同时红）。写这个键的是后台，页面先拿到应答、落盘在后面 ⇒ 改成**有界轮询**（8 s，断言仍然要求严格等于 `9.9.10`，只是不再和调度赛跑）。这是 PITFALLS #57 那条推广的第二个实例。
+- 验证：`typecheck` / `build` / `check-deps` 绿；`run-all.mjs --static` **33/33**；`run-all.mjs --browser-only` **16/25** —— 失败的 9 个与本次改动无关且可归因：7 个要先登录云端账号库（无会话时 `par.create` 401）、`verify-duplicate` 的 `recover-reload` 断言在 HEAD 上同样失败、`verify-impgrant` 等不到下载事件；`verify-log-redaction` **170/170**；`verify-log-ring` **25/25**；`verify-forensics-redaction` **25/25**；`verify-falsify-forensics` **3/3**；`verify-falsify-logredaction` **28/28**；`verify-edge` **27/27**。
+- 边界：**没有改** `ql:log`（落盘镜像）的任何行为，也没有把 `ql:log` 加进诊断包（那是另一个决定）；第 7 节注释里"45 个 diag 调用点"已过时（实测 68），本轮**只记录不改注释**，避免与文档预算冲突。
+- 版本：4.3.1 → 4.3.2（patch，未打包 release）。
+
 ## 4.3.1（2026-11-09）
 
 **Edge 兼容性：用户可见地址按浏览器家族给，并新增一条真起 Edge 的回归**

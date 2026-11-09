@@ -1,4 +1,8 @@
 import { SESSION_KEYS } from '../../shared/constants';
+import { getLogger } from '../../shared/log';
+
+/** ★ 本文件此前零日志（唯一的 catch 是"清 localStorage 失败"）。 */
+const log = getLogger('auto-login-cache');
 
 /**
  * 待自动登录凭证的**临时缓存**（`chrome.storage.session`，按 tabId 存，60 秒过期）。
@@ -83,7 +87,14 @@ export async function clearPageLoginState(tabId: number): Promise<void> {
       func: () => window.localStorage.clear(),
       world: 'MAIN',
     });
-  } catch {
-    // 页面尚未加载（新建标签）或不可注入，忽略；登录时会覆盖 localStorage
+  } catch (e) {
+    // 页面尚未加载（新建标签）或不可注入，忽略；登录时会覆盖 localStorage。
+    // ★★ 2026-11-09：补留痕。用户点"退出"后若页面里的 localStorage 还在
+    //   （下一个账号进同一页签时读到别人的残留状态），这里就是唯一线索 ——
+    //   而它原来是完全静默的（规则 29）。
+    log.warn(
+      '清理页签 localStorage 失败 ⇒ 页面上可能残留上一个账号的状态（登录会覆盖）: %s',
+      e instanceof Error ? e.message : String(e),
+    );
   }
 }

@@ -25,7 +25,8 @@ npm run verify    # 逐个跑本目录下所有脚本
 ★ **但有两个脚本不需要浏览器**，可以直接单独跑（**秒级**，适合放进日常动手前的自检）：
 
 ```powershell
-node tools/verify/verify-log-redaction.mjs          # 日志打码验收：145 条
+node tools/verify/verify-log-redaction.mjs          # 日志打码验收：170 条
+node tools/verify/verify-log-ring.mjs               # 环形缓冲合并写：25 条
 node tools/verify/verify-falsify-logredaction.mjs   # 上一条的反证：28/28
 node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要重新构建）：6/6
 ```
@@ -43,7 +44,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **57 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **58 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -75,8 +76,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | `verify-boxmgmt.mjs` | 盒子管理（重命名 / 删除两步确认 / 冷启保持） | — | ✔ |
 | `verify-defbox.mjs` | 默认盒重命名 / 新账号归属 / 冷启 | — | ✔ |
 | ~~`verify-track.mjs`~~ | **已于 2026-10-16 下线**：它验的是 **v3.9 的环形扇区**（`120°` 固定弧 + 节点），而那个形态在 **v4.1 已被网格平铺取代** —— `ui/wheel/*.ts` 里 `arc` / `扇形` / `轨道` 的匹配数是 **0**，所以它**永远不可能通过**（第一条断言就 `TypeError`）。<br>★ 覆盖去哪了：渲染 → `verify-acct-grid.mjs`；盒子增删改 → `verify-boxmgmt.mjs`；默认盒 → `verify-defbox.mjs`。★ **诚实的缺口**：网格版的"切盒 / 页码点"目前**没有任何脚本覆盖**。 | — | ✘ |
-| **`verify-log-redaction.mjs`** | **日志打码通道（16 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **145/145** | ✘ |
-| **`verify-falsify-logredaction.mjs`** | **上一条的反证（28 条）**：拆 `drain` / 拆 `appLogs` / 热路径改回 `diag` / 重复 `OfflineError` / 拆 `dispatch` 的 `default` / 契约加 kind / `log.error` 降级为 `debug` / 裸传凭据 / `${deviceCode}` 插值 / 孤儿 HTML id / 注释掉 `installLogPersist()` / 拆回灌 / `restoreToRing` 喂回 sink / 拆 `setForwarder` / `ql.log` 不入环 / 转发前不打码 / `sendSafe` 又变静默 / **㉓–㉗ 第 13 节新补的 5 个站点** ⇒ 各自变红 | **28/28** | ✘ |
+| **`verify-log-redaction.mjs`** | **日志打码通道（16 节）**：该打掉的 / 不该打掉的 / `log()` 端到端（含**对象直传**与**分隔参数**）/ 结构性扫裸 `console` / 闭环 / 三通道分工 / 离线判定唯一 / SW 入口不静默落空 / 网络平面失败可见 / 凭据不进日志调用 / DOM 双向一致性 / 静默失败白名单 / **SW 侧落盘接线** / **跨环境转发** | **170/170** | ✘ |
+| **`verify-log-ring.mjs`** | ★★ **环形缓冲的合并写**（静态、秒级，v4.3.2 新增）：用 `esbuild` 把 `background/core/ring-write.ts` 打成 CJS **在 node 里真的跑**，靠一个 `get`/`set` 都带 **2 ms 延迟**的 `chrome.storage.local` 桩钉住 —— ① **对照组**：改造前的"裸读改写"写法 50 条并发**只剩 1 条**（证明这个桩真能复现竞态，否则后面的绿都是假的）② 合并写 50 条**一条不丢、顺序不乱** ③ `cap=5` 只留最后 5 条 ④ 跨批次接在后面（`a0,a1,a2,b0,b1,b2`）⑤ 多键同批各写各的（`ql:diag` + `ql:forensics`）⑥ `set` 抛错**不抛异常**、之后仍可继续 ⑦ 2000 条 burst 后只剩 cap 条、末条是最新的 ⑧ 静态：两个文件都不再有 `ql:diag`/`ql:forensics` 的裸 `get → set`。<br>★★ 起因（PITFALLS #57）：`diag()` / `forensics()` 原来是"读整个键 → `slice(-N)` → 写回"，同一 tick 的多条**互相覆盖** —— 实测 **20 条并发只剩 1 条**，而登录流程里一次失败同时写 3–5 条是常态 ⇒ 诊断包里恰好只剩最后一条，**看起来像"前面什么都没发生"**。 | **25/25** | ✘ |
+| **`verify-falsify-logredaction.mjs`** | **上一条的反证（28 条）**：拆 `drain` / 拆 `appLogs` / 热路径改回 `diag` / 重复 `OfflineError` / 拆 `dispatch` 的 `default` / 契约加 kind / `log.error` 降级为 `debug` / 裸传凭据 / `${deviceCode}` 插值 / 孤儿 HTML id / 注释掉 `installLogPersist()` / 拆回灌 / `restoreToRing` 喂回 sink / 拆 `installLogForwarding` / `ql.log` 不入环 / 转发前不打码 / `sendSafe` 又变静默 / **㉓–㉗ 第 13 节新补的 5 个站点** ⇒ 各自变红 | **28/28** | ✘ |
 | **`verify-falsify-loglevel.mjs`** | ★ **第 16 节（级别开关活在产物里）的反证**：级别退回**模块局部变量** / `log()` 不再经 `shouldLog()` 现读 / **删掉 `dist/`** ⇒ 各自变红。<br>★ 它是本仓**唯一"需要重新构建"**的反证（因为第 16 节读的是 `dist/`）⇒ 单独成篇，不拖慢日常那份。★ 它自己踩过一次坑：副本漏拷 `assets/` ⇒ build 失败 ⇒ `dist/` 没生成 ⇒ 所有注入**假通过**；现已**先断言"副本构建成功"**再注入 | **6/6** | ✘ |
 | **`verify-forensics-redaction.mjs`** | **取证 / 诊断通道的打码**（`forensics()` / `diag()` 写入 `chrome.storage.local`，而它们**会进诊断包被一键导出**）—— **真的把模块求值、真的调 `forensics()` 再读回落盘内容** | **25/25** | ✘ |
 | **`verify-falsify-forensics.mjs`** | **上一条的反证**：`forensics` 不打码 / `diag` 不打码 / 敏感键名单只剩裸 `password` ⇒ 必须变红 | **3/3** | ✘ |
@@ -132,9 +134,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 32 | ≈66 s | `run-all.mjs --static` |
+| 静态（不需要浏览器） | 33 | ≈67 s | `run-all.mjs --static` |
 | 浏览器（真起 Chromium / Edge） | 25 | ≈146 s | `run-all.mjs --browser-only` |
-| 全部 | 57 | ≈212 s | `run-all.mjs --browser` |
+| 全部 | 58 | ≈213 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -152,7 +154,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"57 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"58 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -162,7 +164,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 57
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 58
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

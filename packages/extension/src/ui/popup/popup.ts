@@ -1,5 +1,20 @@
 import { EXT_VERSION } from '../../shared/constants';
 import { isNewerVersion } from '../../shared/update-logic';
+import { getForwardingLogger } from '../../shared/log';
+import { installLogForwarding } from '../../shared/forward-log';
+
+/**
+ * 弹窗的 logger。
+ *
+ * ★★ 2026-11-09：本文件此前**一个 logger 都没有**（4 处静默 catch）。
+ *   而弹窗正是用户"第一眼看到系统状态"的地方 —— 统计显示 `—`、
+ *   更新提醒不出现，都由这里决定，且都属于规则 29 的形态：
+ *   **失败与"正常但没有数据"在界面上长得一样**。
+ *   ⇒ 装上转发 logger，把这几处补上 `warn`（弹窗生命周期短，
+ *     SW 已回收时转发失败是正常的，`shared/forward-log.ts` 已吞掉）。
+ */
+const log = getForwardingLogger('popup');
+installLogForwarding();
 
 /**
  * 弹窗 = 品牌 + 实时统计 + 唯一主操作（v3.8 起；v4.2.1 第五轮进一步收窄）。
@@ -45,7 +60,10 @@ async function refreshStats(): Promise<void> {
     const accounts = res?.result?.ok && Array.isArray(res.result.data) ? res.result.data : [];
     setStat('stat-accounts', accounts.length);
     setStat('stat-online', accounts.filter((a) => (a.tabIds?.length ?? 0) > 0).length);
-  } catch {
+  } catch (e) {
+    // ★ 账号/在线两个数字显示 `—`。用户看不出"后台没应答"与"确实一个账号都没有"
+    //   的区别 ⇒ 必须留痕（规则 25/29）。
+    log.warn('读账号统计失败 ⇒ 弹窗显示 —（与"没有账号"不可分）: %s', e instanceof Error ? e.message : String(e));
     setStat('stat-accounts', '—');
     setStat('stat-online', '—');
   }
@@ -59,7 +77,8 @@ async function refreshStats(): Promise<void> {
       }
     }
     setStat('stat-sites', hosts.size);
-  } catch {
+  } catch (e) {
+    log.warn('读授权站点数失败 ⇒ 弹窗显示 —: %s', e instanceof Error ? e.message : String(e));
     setStat('stat-sites', '—');
   }
 }
@@ -81,8 +100,10 @@ async function refreshUpdateHint(): Promise<void> {
     el.textContent = `发现新版本 v${data.latestVersion} · 去 GitHub 下载`;
     if (data.releaseUrl !== null) el.href = data.releaseUrl;
     el.classList.remove('hidden');
-  } catch {
-    // 更新提醒失败不影响弹窗主体
+  } catch (e) {
+    // ★ 更新提醒不出现 = 用户以为"已是最新"。这正是规则 29 里
+    //   "只有'和成功一样'的才进白名单"的反例 —— 它连白名单都不该进，必须留痕。
+    log.warn('更新提醒查询失败 ⇒ 弹窗不显示新版本（看着像"已是最新"）: %s', e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -129,7 +150,8 @@ popupCheck?.addEventListener('click', async () => {
     } else {
       if (updateStatus !== null) updateStatus.textContent = `已是最新（v${data.currentVersion}）`;
     }
-  } catch {
+  } catch (e) {
+    log.warn('手动检查更新失败（弹出层显示「检查失败」）: %s', e instanceof Error ? e.message : String(e));
     if (updateStatus !== null) updateStatus.textContent = '检查失败';
   } finally {
     popupCheck.disabled = false;

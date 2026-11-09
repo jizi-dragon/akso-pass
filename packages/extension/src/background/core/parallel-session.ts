@@ -10,6 +10,8 @@ import { tabRules, parentDomainOf, hostNoPortOf } from './tab-rules';
 import { redact, redactDetail } from '../../shared/redact';
 // ★ 热路径用的内存日志。与 `diag()`/`forensics()` 的分工见 `isEnforceable` 里的表。
 import { getLogger } from '../../shared/log';
+// ★ 环形缓冲的合并写（`diag` / `forensics` 共用）。见该模块头注释的实测数字。
+import { appendRing } from './ring-write';
 
 /**
  * 本模块的 logger。
@@ -124,18 +126,16 @@ const enforcement = new Map<string, boolean>();
 /** MAIN 壳 Cookie 袋的命名空间键名（与 shield-main.ts 的 COOKIE_BAG_KEY 一致） */
 const COOKIE_BAG_KEY = '__ql_cookies__';
 
-/** 诊断埋点：写入 storage.local['ql:diag']（环形 60 条），供 E2E 台架经扩展页读取 */
+/**
+ * 诊断埋点：写入 storage.local['ql:diag']（环形 60 条），供 E2E 台架经扩展页读取。
+ *
+ * ★★ 2026-11-09：**不再自己读改写**。原来这里的 `get → set` 在并发下会互相覆盖
+ *    （实测 20 条并发只剩 1 条）—— 合并写交给 `appendRing()`，理由与实测数字
+ *    见 `ring-write.ts` 的头注释。调用点仍是 `void diag(...)`，行为不变。
+ */
 async function diag(msg: string): Promise<void> {
-  try {
-    const key = 'ql:diag';
-    const cur = (await chrome.storage.local.get(key))[key] as string[] | undefined;
-    // ★ 落盘前强制打码（见 `forensics` 的说明）。
-    const line = redact(`${new Date().toISOString().slice(11, 23)} ${msg}`);
-    const next = [...(cur ?? []).slice(-59), line];
-    await chrome.storage.local.set({ [key]: next });
-  } catch {
-    // 埋点失败不影响业务
-  }
+  // ★ 落盘前强制打码（见 `forensics` 的说明）。
+  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));
 }
 
 /**
@@ -161,19 +161,13 @@ async function diag(msg: string): Promise<void> {
  *   （构造一个含 `password` 的事件，断言落盘的是 `«已打码»`）。
  */
 export async function forensics(ev: string, detail: Record<string, unknown> = {}): Promise<void> {
-  try {
-    const key = LOCAL_KEYS.forensics;
-    const cur = (await chrome.storage.local.get(key))[key] as
-      | { t: number; ev: string; [k: string]: unknown }[]
-      | undefined;
-    const next = [
-      ...(cur ?? []).slice(-119),
-      { t: Date.now(), ev: redact(ev), ...(redactDetail(detail) as Record<string, unknown>) },
-    ];
-    await chrome.storage.local.set({ [key]: next });
-  } catch {
-    // 取证失败不影响业务
-  }
+  // ★★ 2026-11-09：与 `diag()` 同一个修正 —— 合并写走 `appendRing()`，
+  //   否则同一 tick 的多条取证（登录流程里是常态）只剩最后一条。
+  appendRing(LOCAL_KEYS.forensics, 120, {
+    t: Date.now(),
+    ev: redact(ev),
+    ...(redactDetail(detail) as Record<string, unknown>),
+  });
 }
 
 async function readBlockedHosts(): Promise<Set<string>> {
@@ -800,6 +794,13 @@ function parseSetCookie(raw: string): { name: string; value: string; remove: boo
   return { name, value, remove };
 }
 
+/** 请求失败埋点的分桶限流窗口（毫秒） */
+const FAIL_DIAG_WINDOW = 5_000;
+/** 分桶上限：host 再多也不会让这张表一直涨 */
+const FAIL_DIAG_BUCKETS_MAX = 64;
+/** `status|type|host` → 本窗口内已写过 + 被抑制的条数 */
+const failDiagBuckets = new Map<string, { at: number; skipped: number }>();
+
 /** v3.13.2 下载/请求失败取证：绑定页签的 401/403/5xx 响应全量留痕（URL/host/归型/覆盖域），
  *  让「下载失败类」问题在下一次诊断包里直接可读，不再依赖症状猜测。 */
 async function reportFailureStatus(details: {
@@ -827,8 +828,28 @@ async function reportFailureStatus(details: {
   const covered = urlHostname === bindHostname || urlHostname.endsWith(`.${parent}`);
   // 全量记录：401/403 任何类型；其余 4xx/5xx 仅主框架/下载类（避免 favicon 404 噪声）
   if (status === 401 || status === 403 || details.type === 'main_frame' || details.type === 'other') {
+    // ★★ 2026-11-09：这一支是**响应级**的（页面上每个 401/403 都走一次），
+    //   而 `ql:diag` 只有 60 格 —— 一次登录流程就足以把 `addRule 失败`
+    //   那种关键行挤出缓冲（规则 22：diag 是稀缺资源）。
+    //   ⇒ 按 `status|type|host` 分桶限流：**每桶每窗口只写第一条**，
+    //     下一条（窗口过后的）把"期间又被抑制了几次"一并补报。
+    //     ★ 若同类失败此后再没发生，那个数字也就不补报了 —— 那正是"burst 已结束"，
+    //       此时补报一条反而又是噪声。
+    const bucket = `${status}|${details.type ?? '?'}|${urlHostname}`;
+    const now = Date.now();
+    const seen = failDiagBuckets.get(bucket);
+    if (seen !== undefined && now - seen.at < FAIL_DIAG_WINDOW) {
+      seen.skipped += 1;
+      return;
+    }
+    const skipped = seen?.skipped ?? 0;
+    if (failDiagBuckets.size > FAIL_DIAG_BUCKETS_MAX) {
+      failDiagBuckets.clear();
+    }
+    failDiagBuckets.set(bucket, { at: now, skipped: 0 });
+    const more = skipped > 0 ? `（近 ${FAIL_DIAG_WINDOW / 1000}s 同型又 ${skipped} 次）` : '';
     void diag(
-      `⚠ 页签请求失败 status=${status} type=${details.type ?? '?'} covered=${covered} host=${urlHostname} url=${details.url.slice(0, 180)}`,
+      `⚠ 页签请求失败 status=${status} type=${details.type ?? '?'} covered=${covered} host=${urlHostname}${more} url=${details.url.slice(0, 180)}`,
     );
   }
 }
@@ -851,7 +872,16 @@ async function reportFailureStatus(details: {
       const only = [...bindings.values()][0];
       accountId = only.accountId;
       bindHost = only.host;
-      void diag(`captureResponseCookies：无页签响应(${new URL(details.url, 'https://x').host})归属唯一绑定账号 ${accountId}`);
+      // ★★ 2026-11-09：这条从 `diag()` 降到 `log.debug()`。它是**响应级**的
+      //   （页面每发一个无页签请求就可能走一次），且没有"变化门" —— 而它记的是
+      //   **归属过程**（成功路径），不是失败。规则 22：`ql:diag` 的 60 格留给
+      //   "失败 / 降级 / 状态跃迁"，否则真失败会被这类过程行挤掉。
+      //   排障时要看归属过程 ⇒ 控制台把级别调到 debug 即可（规则 25 的反向用法）。
+      log.debug(
+        'captureResponseCookies：无页签响应(%s)归属唯一绑定账号 %s',
+        new URL(details.url, 'https://x').host,
+        accountId,
+      );
     } else {
       return;
     }

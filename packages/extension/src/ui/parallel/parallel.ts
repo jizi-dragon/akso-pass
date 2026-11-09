@@ -8,7 +8,8 @@ import type {
 } from '../../shared/messages';
 import { DEFAULT_FAVORITES, EXT_VERSION, FAVORITES_MAX, LOCAL_KEYS } from '../../shared/constants';
 import { isNewerVersion, shouldPrompt, type UpdateState } from '../../shared/update-logic';
-import { getForwardingLogger, setForwarder } from '../../shared/log';
+import { getForwardingLogger } from '../../shared/log';
+import { installLogForwarding } from '../../shared/forward-log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
 // ★ 提示文案里的扩展管理页按家族给（Edge = `edge://extensions`，见该模块头注释的实测事实）。
@@ -32,21 +33,13 @@ import {
  * ★ 所以先**装转发器**：把每条日志交给 SW（`ql.log` ⇒ `restoreToRing`）。
  *   ★ 用 `getForwardingLogger` 而不是 `getLogger`：前者额外转发，**本环境的
  *     console 行为不变** ⇒ 即使 SW 不可达，DevTools 里照样看得到。
- *   ★ 发送函数用**回调形态**并忽略 `chrome.runtime.lastError` ——
- *     转发日志**绝不能**因为"没有接收端"而抛错或产生未捕获的 Promise 拒绝。
+ *   ★ 转发适配器抽到了 `shared/forward-log.ts`（`installLogForwarding()`）：
+ *     原来每个页面各写一份 `sendMessage` 样板，结果只有本文件装了 ——
+ *     `translate` / `wheel` / `send` 三处 `getForwardingLogger` 全是空转
+ *     （2026-11-09 修，见该 helper 的头注释）。
  */
 const log = getForwardingLogger('parallel');
-setForwarder((rec) => {
-  try {
-    chrome.runtime.sendMessage({ kind: 'ql.log', records: [rec] }, () => {
-      // 读一下 lastError 把它吞掉：SW 冷启/重载期间发消息会报"无接收端"，
-      // 而那是**正常**的（日志丢一条，业务不受影响）。
-      void chrome.runtime.lastError;
-    });
-  } catch {
-    /* 连 sendMessage 都不可用时静默 —— 本环境的 console 已经有这条了 */
-  }
-});
+installLogForwarding();
 
 type BrowserAccount = ParallelAccount & ParallelAccountStatus & { password: boolean };
 

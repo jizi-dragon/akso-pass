@@ -34,19 +34,24 @@ function checkPasses() {
 
 const CASES = [
   {
+    // ★ 2026-11-09：锚点随实现改写过一次。`forensics()` 现在把条目交给 `appendRing()`
+    //   （合并写），打码在**入队前**做 ⇒ 反证要摘的是 `appendRing(...)` 里那两个打码调用，
+    //   而不是原来那条 `chrome.storage.local.set({...})`。
     name: '① forensics 不打码（回到修复前）',
     file: TARGET,
     apply: (s) => s.replace(
-      '      { t: Date.now(), ev: redact(ev), ...(redactDetail(detail) as Record<string, unknown>) },',
-      '      { t: Date.now(), ev, ...detail },',
+      // ★ 用正则而不是多行字面量：本仓源码是 **CRLF**，多行 `\n` 锚点永远匹配不上
+      //   （第一次改这里就踩了：只有 ① 报"锚点没匹配上"，② 单行锚点却是好的）。
+      /appendRing\(LOCAL_KEYS\.forensics, 120, \{[\s\S]*?\}\);/,
+      'appendRing(LOCAL_KEYS.forensics, 120, { t: Date.now(), ev, ...detail });',
     ),
   },
   {
     name: '② diag 不打码',
     file: TARGET,
     apply: (s) => s.replace(
-      '    const line = redact(`${new Date().toISOString().slice(11, 23)} ${msg}`);',
-      '    const line = `${new Date().toISOString().slice(11, 23)} ${msg}`;',
+      "  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));",
+      "  appendRing('ql:diag', 60, `${new Date().toISOString().slice(11, 23)} ${msg}`);",
     ),
   },
   {

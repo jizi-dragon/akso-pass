@@ -25,6 +25,7 @@
  */
 import { EXT_VERSION, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../../shared/constants';
 import { getForwardingLogger } from '../../shared/log';
+import { installLogForwarding } from '../../shared/forward-log';
 import { toSnakeCase } from '../../shared/snake-case';
 
 /* ★ 用 `getForwardingLogger` 而不是 `getLogger`：**与 `ui/parallel/parallel.ts` 同一形状**。
@@ -34,8 +35,13 @@ import { toSnakeCase } from '../../shared/snake-case';
  * 而转发 logger 会把行送回 background ⇒ 排障时在诊断包的 `appLogs` 里看得到。
  *
  * ★ 这一条对"读设置失败"尤其要紧：它是**用户报告"我的设置没了"**时
- *   唯一能证明"其实是读失败"的证据，而诊断包正是用户会导出的东西。 */
+ *   唯一能证明"其实是读失败"的证据，而诊断包正是用户会导出的东西。
+ *
+ * ★★ 2026-11-09：**光用 `getForwardingLogger` 不够** —— 转发器不装的话它
+ *   `if (forwarder && …)` 恒假，与 `getLogger` 一模一样（本文件原先就是这种状态）。
+ *   现在紧跟着一行 `installLogForwarding()`。 */
 const log = getForwardingLogger('translate');
+installLogForwarding();
 import {
   loadTranslationSettings,
   saveTranslationSettings,

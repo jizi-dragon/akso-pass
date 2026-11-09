@@ -57,8 +57,19 @@ const chromeStub = {
 
 // ---------------------------------------------------------------- 求值被测模块
 const esbuild = await import('esbuild');
+// ★★ 2026-11-09：**入口用 stdin 而不是直接指向 parallel-session.ts** —— 因为判据现在还要
+//   拿到 `ring-write.ts` 的 `ringIdle()`。两个模块必须在**同一个 bundle 图**里求值，
+//   否则 `ringIdle` 是另一个模块实例、盯着另一条空队列，`await` 立刻返回 = 假绿。
 const bundle = await esbuild.build({
-  entryPoints: [join(SRC, 'background', 'core', 'parallel-session.ts')],
+  stdin: {
+    contents: [
+      "export * from './parallel-session';",
+      "export { ringIdle } from './ring-write';",
+    ].join('\n'),
+    resolveDir: join(SRC, 'background', 'core'),
+    sourcefile: 'verify-entry.ts',
+    loader: 'ts',
+  },
   bundle: true,
   write: false,
   format: 'iife',
@@ -73,6 +84,11 @@ const code = bundle.outputFiles[0].text;
 //   也不用引 `vm`。iife 的导出挂在 globalName 上，取回来即可。
 const mod = new Function('chrome', `${code}\nreturn __qlPs;`)(chromeStub);
 const { forensics } = mod;
+// ★★ 2026-11-09：落盘改成**合并写**（`ring-write.ts`）⇒ `await forensics()` 返回时
+//   那一条还在待写队列里，**没有进 storage**。判据必须等队列写完再读，
+//   否则读到的永远是上一次的状态（会表现成"打码没生效"的假红）。
+//   `ringIdle()` 就是为此暴露的（生产代码不该 await 它，判据必须）。
+const { ringIdle } = mod;
 
 check('模块能在最小 chrome 桩下求值', typeof forensics === 'function',
   typeof forensics === 'function' ? '' : `拿到的是 ${typeof forensics}`);
@@ -93,6 +109,7 @@ console.log('\n=== 1. 凭据落盘必须被打掉（漏了就是明文进诊断�
     // 值里嵌着凭据的字符串，走另一条规则（值的形状）
     blob: `connect password=${SECRET} ok`,
   });
+  await ringIdle();
 
   const raw = JSON.stringify(store['ql:forensics'] ?? []);
   check('`password` 字段未落盘原文', !raw.includes(SECRET), raw.includes(SECRET) ? '★ 泄露' : '');
@@ -120,6 +137,7 @@ console.log('\n=== 2. 正常字段必须保留（吞掉它们 = 诊断包失去�
 console.log('\n=== 3. 环形缓冲仍然工作（改打码不该改行为）===');
 {
   for (let i = 0; i < 130; i++) await forensics('evt', { i });
+  await ringIdle();
   const arr = store['ql:forensics'];
   check('环形上限 120 生效', arr.length === 120, `实际 ${arr.length}`);
   check('保留的是**最新**的那批（不是最旧的）', arr.at(-1).i === 129, `末条 i=${arr.at(-1)?.i}`);
@@ -213,6 +231,7 @@ console.log('\n=== 5. 打码代码绝不能抛（抛异常会终止 MV3 的 work
     });
   } catch (e) { threw = e; }
   check('循环引用 / BigInt / 函数 / Symbol 都不抛', threw === null, threw ? String(threw) : '');
+  await ringIdle();
   const raw = JSON.stringify(store['ql:forensics'].at(-1));
   check('深层的口令也打掉了', !raw.includes('oops12345'));
   check('循环引用被标注', raw.includes('[circular]'));

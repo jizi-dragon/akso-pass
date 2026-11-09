@@ -24,9 +24,21 @@
  *    ★ 但设置读取会被 3 秒缓存：翻译是高频动作，每次读 storage 是没必要的往返。
  */
 import { TRANSLATE_MESSAGE, TRANSLATE_UI_ID } from '../shared/constants';
-import { getLogger } from '../shared/log';
+import { getForwardingLogger } from '../shared/log';
+import { installLogForwarding } from '../shared/forward-log';
 
-const log = getLogger('translate');
+/* ★★ 2026-11-09：从 `getLogger` 改成**转发** logger，并真的把转发器装上。
+ *
+ * 为什么：content script 跑在**页面**的进程里，`getLogger()` 的行进的是那个
+ * 页面自己的内存环 —— 用户导出诊断包时**永远看不到**自己在网页上按 Ctrl+X 之后
+ * 发生了什么（规则 32 的"工具不可用伪装成没人用"）。
+ *
+ * ★ 这里是**网页**上下文：站点自己的 CSP/扩展重载都可能让 `sendMessage` 失败，
+ *   所以转发适配器必须吞异常（`shared/forward-log.ts` 已保证），
+ *   而本页 DevTools 的 `console` 输出保持不变。
+ */
+const log = getForwardingLogger('translate');
+installLogForwarding();
 
 /** 幂等守卫（Symbol 键：站点看不到、也删不掉） */
 const GUARD = '__ql_translate_installed__';
@@ -274,7 +286,11 @@ async function getSettings(): Promise<CachedSettings> {
       ts: now,
     };
   } catch (e) {
-    log.debug('读设置失败，用默认值: %s', e instanceof Error ? e.message : String(e));
+    // ★★ 2026-11-09：`debug` → `warn`（规则 25）。真因是"读不到设置"，而用户
+    //   观察到的是"我的翻译设置怎么没了"（界面按默认值渲染 = 与成功一模一样）。
+    //   默认 `info` 级下 debug 根本不会落盘 ⇒ 这条诊断在真实报告里是缺失的。
+    //   与 `ui/translate/translate.ts::init` 的同形分支保持同一级别。
+    log.warn('读翻译设置失败 ⇒ 本次按默认值渲染（用户会以为设置丢了）: %s', e instanceof Error ? e.message : String(e));
   }
   settingsCache = out;
   return out;
