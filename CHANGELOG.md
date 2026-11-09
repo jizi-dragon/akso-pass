@@ -1,3 +1,19 @@
+## 4.3.1（2026-11-09）
+
+**Edge 兼容性：用户可见地址按浏览器家族给，并新增一条真起 Edge 的回归**
+
+- 起因：用户要求"增加对 Edge 的兼容性"，而本仓此前**零处 Edge 判据**（USER-MANUAL 里只能写"未经完整验证"）。
+- 先做对照再改：Edge 157.0.4341.42 对 Chromium 151.0.7922.34 逐项实测（装载 / `ql.diag` / 4 个自有页面 / MAIN world 注入 / 5 个命令键位 / DNR 会话规则 / 兜底小窗 / 27 项被隔离层改写的内建属性描述符）——**结果一致**，没有找到"Edge 特有的失效"。
+- 真正的问题在提示文案：`chrome://extensions` 在 Edge 会被**自动改写**成 `edge://extensions`（浏览器兜底），于是"Edge 打不开扩展管理页"这种结论**不做对照就敢说**；而**反向不成立** —— Chrome 打开 `edge://` 只得到空地址的死页签。所以地址必须按家族选。
+- 改法：新增 `src/shared/browser-env.ts`（纯 UA 判定，不碰 `chrome.*`）：`browserFamily/Version/Label/Tag`、`extensionsPageText`、`shortcutsPageUrl/Text`。接入五处 —— 管理页三处提示（版本错配 / 未授权宿主 / 刷新失败）、翻译面板的「改键」链接（文案与 `tabs.create` 的目标）、`ql.diag` 的 `browser` 字段、`shieldPatch` 取证里的 `browser`。
+- 诊断：`ql.diag` 与诊断包现在写明浏览器家族与版本（形如 `browser: edge/157.0.0.0`）⇒ 下次报"Edge 上卡死"时不用再问一句"你用的哪个浏览器"。★ 精度只到主版本：Edge 的 `navigator.userAgent` 把 build 号抹成 `Edg/157.0.0.0`，精确 build 只能靠 `userAgentData`，而它在 http 页面上不存在（隔离层所在的世界拿不到），故刻意用 UA。
+- 新增 `tools/verify/verify-edge.mjs`（**27 条**，真起 Edge，约 7 秒；没装 Edge 的机器只跑静态 3 条并 exit 0）：覆盖静态"UI 层不得再硬编码扩展管理页地址" + 装载 + `browser.family==='edge'` + 四个自有页面无报错 + ★ 端到端"翻译面板的改键链接文案必须正好是 `edge://extensions/shortcuts`" + 命令键位 + MAIN world 注入 + DNR 往返 + 兜底小窗。已登记进 `run-all.mjs` 的 `BROWSER_SCRIPTS`（双向自证会核对）。
+- 反证（规则 17）：把 `shortcutsPageText()` 退回固定 `chrome://` ⇒ 端到端那条红（26/27）；在 UI 里塞一行硬编码 ⇒ 静态红并报出 `文件:行`；`EDGE_PATH` 指向不存在的路径 ⇒ 走 SKIP 且 exit 0。
+- 文档：`USER-MANUAL.md` 的 Edge 段落重写为「已验到的（自动化 27 条）/ 仍未验到的（登录、列表、开页签、盒子、设备流、离线降级，必须人工）/ 卡死报告取证」；`PITFALLS.md` 新增 **#56**（`chrome://` 会被改写 ⇒ "兼容性缺陷"与"浏览器兜底"长得一样），并给 **#38** 追加"假设被证伪"的实测日期（27 项描述符在两浏览器上都存在且 `configurable: true`，唯一差异是 UA-CH brands）。
+- 边界：2026-10-12 那条"Edge 打开账号卡死/闪退"**仍未复现**，本版**不宣称修好它**；这次只是让下次的报告可归因。
+- 验证：`typecheck` / `build` / `check-deps` 绿；`run-all.mjs --static` **32/32**；`verify-load.mjs` **20/20**；`verify-edge.mjs` **27/27**。
+- 环境限制（与本次改动无关，如实记下）：本机 `--browser-only` 的 25 个里 16 个通过 —— 7 个要先登录云端账号库（无会话时 `par.create` 401，脚本在 `acc.id` 上崩：adopt / autologin / defect / dynsnap / fillrhythm / jarhygiene / httpscheme），`verify-duplicate` 的 `recover-reload` 断言**在 HEAD 上 stash 对照同样失败**，`verify-impgrant` 等不到下载事件。
+- 版本：4.3.0 → 4.3.1（patch，未打包 release）。
 ## 4.3.0（2026-11-09）
 
 **修复「检查更新」点了没反应：补 GitHub host 权限，结果改为对话框**

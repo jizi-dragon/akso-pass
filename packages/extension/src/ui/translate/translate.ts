@@ -43,6 +43,8 @@ import {
   type TranslationSettings,
 } from '../../shared/translate-settings';
 import { readStats, dateKeys } from '../../shared/translate-stats';
+// ★ 改键页的地址与文案按家族给（Edge = `edge://`，理由见该模块头注释）。
+import { shortcutsPageText, shortcutsPageUrl } from '../../shared/browser-env';
 import type { EngineId } from '../../shared/engines';
 
 /* ── DOM ── */
@@ -344,10 +346,12 @@ async function onTest(): Promise<void> {
 async function init(): Promise<void> {
   el.verChip.textContent = `v${EXT_VERSION}`;
 
-  // `chrome://` 链接不能在扩展页里直接 href 跳转（会被拦），用 tabs.create 打开。
+  // 改键页按**家族**给地址：Edge 上 `chrome://…` 会被自动改写成 `edge://…`，
+  // 但反过来不行（Chrome 打开 `edge://` 只得到空地址死页签，2026-11-09 实测）。
+  el.shortcutLink.textContent = shortcutsPageText();
   el.shortcutLink.addEventListener('click', (e) => {
     e.preventDefault();
-    void chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+    void chrome.tabs.create({ url: shortcutsPageUrl() });
   });
 
   renderLangOptions();

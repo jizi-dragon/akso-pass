@@ -81,6 +81,9 @@ const BROWSER_SCRIPTS = new Set([
   'verify-dnrscheme.mjs',
   'verify-duplicate.mjs',
   'verify-dynsnap.mjs',
+  // ★ 2026-11-09 加：真起 **Edge**（其余浏览器脚本都只起 playwright 自带的 Chromium）。
+  //   没装 Edge 的机器上它走 SKIP 且 exit 0（静态判据仍会跑、仍会红）。
+  'verify-edge.mjs',
   'verify-favui.mjs',
   'verify-fillrhythm.mjs',
   'verify-httpscheme.mjs',

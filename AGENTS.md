@@ -150,6 +150,14 @@ node tools/verify/verify-falsify-userdocs.mjs        # ↑ 的反证（**5/5**�
 #      "清单 == 源码里的 html 集合"（v4.2.0 加翻译面板时补上的）。
 node tools/verify/verify-load.mjs
 
+# Edge 兼容性：真起 **Edge** + --load-extension（**27 条**，约 7 秒）
+#   ★ 没装 Edge 就只跑静态那 3 条并打印 SKIP、exit 0（$env:EDGE_PATH 可指定可执行文件）。
+#   ★★ 它治的是 PITFALLS #56：`chrome://` 在 Edge 会被**自动改写**成 `edge://` ——
+#      于是"Edge 打不开扩展管理页"这个结论**必须做对照才敢说**（反向不成立：
+#      Chrome 打开 `edge://` 只得到空地址的死页签）。用户可见地址必须按家族取，
+#      判据里的端到端那条就是"翻译面板的快捷键链接文案必须是 edge://extensions/shortcuts"。
+node tools/verify/verify-edge.mjs
+
 # CSS 变量卫生 + 块注释配平：静态、秒级、**不需要浏览器**
 #   ★ 防的是"**引用了却解析不到**"：`var(--x)` 无 fallback 又无人定义 ⇒ **整条声明被丢弃**；
 #     `--x: var(--x)` 自引用 ⇒ 等于未定义。浏览器**都不报错**。
@@ -227,8 +235,8 @@ npm run verify:list       # 列出回归脚本（不跑）
 
 ```powershell
 npm run verify:list                 # ★ 先看有几个、都是谁（数量以它为准，别在文档里写死）
-node tools/verify/run-all.mjs --static         # 25 个静态脚本，≈58 s（日常最常用）
-node tools/verify/run-all.mjs --browser-only   # 13 个真起 Chromium，≈62 s
+node tools/verify/run-all.mjs --static         # 只跑不需要浏览器的（日常最常用）
+node tools/verify/run-all.mjs --browser-only   # 只跑真起浏览器的
 npm run verify -- --only v310       # 只跑名字含 v310 的（最快）
 npm run verify -- --only jarhygiene
 ```

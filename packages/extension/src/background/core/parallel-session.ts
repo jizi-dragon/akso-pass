@@ -1428,7 +1428,7 @@ export const parallelSession = {
     //   ★ 不 `return`：这条不上行回包，MAIN 侧不需要应答。
     if (payload.op === 'patchReport') {
       const p = payload as unknown as {
-        failedCount?: number; failed?: string; all?: string; ua?: string;
+        failedCount?: number; failed?: string; all?: string; ua?: string; browser?: string;
       };
       void forensics('shieldPatch', {
         tabId,
@@ -1436,6 +1436,8 @@ export const parallelSession = {
         failed: (p.failed ?? '').slice(0, 400),
         all: (p.all ?? '').slice(0, 600),
         ua: (p.ua ?? '').slice(0, 160),
+        // ★ 2026-11-09：紧凑家族标签（`edge/157.0.0.0`）—— 见 shield-main 同名字段。
+        browser: (p.browser ?? '').slice(0, 40),
       });
       return undefined;
     }

@@ -18,6 +18,11 @@
  *    是四象限权限串号的直接载体（详见 installIdbShield）。
  */
 
+// ★ 2026-11-09：上报里带上**浏览器家族**。MAIN world 里 `navigator.userAgent` 已经
+//   原样上报了，但诊断包是按 `failedCount` 一栏一栏看的 —— 有个 `edge/157.…` 的
+//   紧凑标签，才能一眼把"Edge 上 patch 没装上"与"这单是 Chrome"分开。
+import { browserTag } from '../shared/browser-env';
+
 (() => {
   const win = window as typeof window & { __QL_SHIELD_INSTALLED__?: boolean };
   if (win.__QL_SHIELD_INSTALLED__) {
@@ -798,6 +803,8 @@
             failed: failed.join(' ') || '(none)',
             failedCount: failed.length,
             ua: navigator.userAgent,
+            // ★ 紧凑家族标签（`edge/157.0.0.0`）：诊断包里按这一栏分诊浏览器。
+            browser: browserTag(),
           },
         },
         '*',

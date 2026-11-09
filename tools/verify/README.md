@@ -43,7 +43,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **56 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **57 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -90,6 +90,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-favorites.mjs`** | ★ **常用页面保存链路的纯逻辑**（v4.2.44）：用 `esbuild` 打包 `favorites.ts` + `chrome.storage.local` 替身，断言 ① 相对路径补前导 `/`、完整 http(s) 原样、名称去空白 ② `javascript:` / `data:` / 协议相对 `//host` / 反斜杠 / 空名称全部忽略并计入 `skipped` ③ 归一化后同路径去重（`/a` 与 `a` 算一条，保留先出现的）④ **空数组不回落默认**（删光不复活）、只有键不存在才回落 ⑤ 超 60 条截断且 `truncated` 如实 ⑥ `resetFavorites` 删键回默认 ⑦ `resolveFavoriteUrl` 拒绝 `javascript:`、相对路径按 base 拼接 ⑧ 超长名称截到 60 字但条目保留。<br>★ 起因：旧版是 textarea +「每行 `名称,路径`」，保存是**静默**的 —— 协议不对/路径重复/超 10 条都被无声丢掉，用户只看到"我加过怎么没了" | **9/9** | ✘ |
 | **`verify-falsify-userdocs.mjs`** | **上一条的反证**：把修复前那**五处原文**逐条注回去 ⇒ 各自变红（缺陷版用真句，不是我编的近似句） | **5/5** | ✘ |
 | **`verify-load.mjs`** | ★ **装载冒烟**（本篇唯一**需要浏览器**的那条）：真起 Chromium + `--load-extension`，验 ① 扩展被装载 ② 产物齐全性（**能取的从页面内 `fetch`、不能取的查磁盘**）③ 三个自有页面能开且无未捕获错误 ④ ★ **SW 真的活着**（能应答 `ql.diag` 且回了 `logs` 数组）⑤ 无致命错误。<br>★ 它**不验**登录 / 列表 / 开页签 / 盒子 / 设备流 / 离线降级 —— 那些要真实云端账号 + 真实内网平台，**必须人工走**（B7 的剩余部分），本脚本**不冒充**那部分覆盖 | **17/17** | ✔ |
+| **`verify-edge.mjs`** | ★★ **Edge 兼容性**（v4.3.1，本篇**唯一真起 Edge** 的那条）：`findEdge()` 先认 `EDGE_PATH`（给了就只认它），否则依次试三个常见安装路径；**没装 Edge 就只跑静态那三条并打印 SKIP、`exit 0`**（静态红了仍 `exit 1`）。27 条判据：① 静态三条 —— `src/ui/**` 不得再硬编码 `chrome://extensions`、`parallel.ts` 三处必须走 `extensionsPageText()`、`translate.ts` 必须用 `shortcutsPageUrl/Text()` ② 真起 Edge 装载扩展 ③ `ql.diag` 应答且 `browser.family === 'edge'`（`version` 形如 `157.x`、`tag` 以 `edge/` 开头、`ua` 含 `Edg/`）④ 四个自有页面能开、零 pageerror（`OWN_PAGES` 与 `src/ui/**/*.html` 反向核对）⑤ ★ **端到端**：`translate.html` 的 `#shortcut-link` 文案必须正好是 `edge://extensions/shortcuts` ⑥ `manifest.commands` 的 5 个 key 都被 `getAll()` 报出、4 个带键位 ⑦ MAIN world 注入（`window.__QL_SHIELD_INSTALLED__ === true`）⑧ DNR 会话规则加/撤往返 ⑨ SW 里 `windows.create({type:'popup'})` 真开出轮盘页 ⑩ 全程无未捕获错误。<br>★ 起因（PITFALLS #56）：`chrome://` 在 Edge 会被**自动改写**成 `edge://` —— 于是"Edge 打不开扩展管理页"这个结论**必须做对照才敢说**；而反向不成立：Chrome 打开 `edge://` 只得到空地址的死页签，所以地址必须按家族选。<br>★ 两次实测修正：`commands.getAll()` 会多报 `_execute_action`（共 6 条）⇒ 判据改用 manifest 的 key 集合、不数总条数；headless Edge 把 popup 宽度压到 800（headed 是 1180）⇒ 不判宽度、改判"窗里装的是轮盘页"。<br>★ 三次反证：`shortcutsPageText()` 退回固定 `chrome://` ⇒ ⑤ 红（26/27）；UI 里塞一行硬编码 ⇒ 静态红并报出 `文件:行`；`EDGE_PATH` 指向不存在的路径 ⇒ 走 SKIP 且 `exit 0` | **27/27** | ✔ |
 | **`verify-css-vars.mjs`** | ★ **CSS 变量卫生**（静态、秒级，**两个方向都查**）：逐页面按**真实 CSS 依赖链**（`<link rel=stylesheet>` + 递归 `@import`）解析，断言 ① 无「`var()` 无 fallback 又解析不到」（那会让**整条声明被丢弃**）② ★ **反方向**：定义的变量都有人用 ③ 无**自引用** `--x: var(--x)`（等于未定义）④ ★ **样式链无环、无重复引用**（`@import` 成环时浏览器行为是实现相关的，而去重会把环**静默吞掉**）。<br>★★ 起因：`wheel.css` 里品牌蓝 `#1e6fff` 散在 **12 处**（8 处 fallback + 4 处裸硬编码），而 `theme.css` 定义了一次 ⇒ **同一个颜色 13 处，改一处必漂**；我整理时又用全局替换把 `:root` 里**那一行自己的值**也换掉，造出 `--acc: var(--acc)`。<br>★ 而"截图逐字节相同"**没能发现它**（轮盘需有账号才渲染）⇒ **这类缺陷只能静态查，不能靠截图**。<br>★★ **② 的"使用者"范围必须按全目录算**：我第一版探针**把 `theme.css` 排除在"使用者"之外** ⇒ 把 `--sb-brand-hover` / `--sb-bg`（**只在 theme.css 自己的第 36/48/56 行被用**）报成死变量 —— **两个假缺陷**。 | **22/22** | ✘ |
 | **`verify-brand.mjs`** | ★ **品牌色一致性 + 不新增硬编码**（静态、秒级）：① **三处独立定义逐字等价**（`tokens.css` 的 `--sb-brand` / `wheel.css` 的 `--acc` 兜底 / `constants.ts` 的 `SESSION_COLORS[0]`）② ★ TS/JS 里品牌色的硬编码处数 **≤ 冻结基线（只减不增）** ③ 白名单每条写明"为什么它不能用 var"。<br>★★ 起因：CSS 侧我把品牌色收敛到 1 处之后**才去查 TS 侧** —— 发现 **24 处硬编码**（跨 6 个文件）。`typecheck` 不管颜色、`verify-css-vars` 只看 CSS ⇒ **跨语言的那一份从来没人看**。<br>★ 本轮消掉 `ring-wheel-style.ts` 的 **13 处**（10 处 `var(--acc,#1e6fff)` 的兜底**永远不会被用到** —— `ring-wheel.ts` 在每个扇区的 style 里都显式定义了 `--acc`）⇒ 基线 **24 → 15**，判据是轮盘截图**逐字节不变** | **10/10** | ✘ |
 | **`verify-type-scale.mjs`** | ★★ **字号刻度**（静态、秒级，**v4.2.12 新增**）：① 7 档名字与值**逐字等于 `akso-cloud` 的约定**（跨仓逐字比；那个仓不在同级目录就 SKIP）② `font-size` **不许有裸 px 字面量** ③ 每一处只许引用那 7 档 ④ ≥13px 的档之间相差 ≥2px ⑤ ★★ **注入宿主页 Shadow DOM 的那份必须带兜底值**（`var(--fs-13, 13px)`）。<br>★★ 起因：本仓**一个字号令牌都没有**，实测 **99 处字面量、18 种取值**（相邻两档只差 0.5px）。而 `akso-cloud` 早就有 7 档并被 `test_type_scale.py` 钉着 ⇒ 用户 2026-10-13 要求"两端页面美学与设计令牌统一"，这条就是那个要求的可执行形式。<br>★★ **⑤ 是本条最贵的一条**：`ACCT_GRID_CSS` 有**两个消费者** —— 小窗用 `<link>`（`:root` 拿得到），而**三个页内浮层把它内联进宿主页的 Shadow DOM**（拿不到、且 `:host{all:initial}` 会重置）。没有兜底就**整条声明被丢弃**、字号静默退回继承值 —— 而 `verify-css-vars.mjs` **抓不到**（它按**页面**的解析链算，而 `wheel.html` 那条链是通的）。<br>★ 反证 `verify-falsify-typescale.mjs`：**9/9**（注入裸 px / 自造档 / 无兜底 / 兜底值不符 ⇒ 各自如期变红） | **14/14** | ✘ |
@@ -131,9 +132,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 31 | ≈66 s | `run-all.mjs --static` |
-| 浏览器（真起 Chromium） | 23 | ≈140 s | `run-all.mjs --browser-only` |
-| 全部 | 56 | ≈206 s | `run-all.mjs --browser` |
+| 静态（不需要浏览器） | 32 | ≈66 s | `run-all.mjs --static` |
+| 浏览器（真起 Chromium / Edge） | 25 | ≈146 s | `run-all.mjs --browser-only` |
+| 全部 | 57 | ≈212 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -151,7 +152,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"56 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"57 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -161,7 +162,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 56
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 57
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

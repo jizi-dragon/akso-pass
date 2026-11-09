@@ -1928,6 +1928,27 @@ node -e "const s=require('fs').readFileSync('dist/background.js','utf8'); consol
 它现在只是"可被看见"，不是"被解决了"。要真解决得先知道 Edge 上哪个描述符不同，
 而那需要真账号 + 真目标站点的运行态证据。
 
+**2026-11-09 追加（假设被证伪，状态仍【未修】）**：上面那句"Edge 与 Chrome 的内建属性
+描述符**可能存在差异**"已经**实测过了，不成立**。探针（`tmp/edge-desc-probe.mjs`，
+Edge 157.0.4341.42 vs Chromium 151.0.7922.34）逐项比对 **27 个**被 shield 改写的属性：
+
+| 组 | 项数 | 结果 |
+|---|---|---|
+| `Document.prototype.cookie` | 1 | 两边都存在且 `configurable: true` |
+| `Storage.prototype`（getItem/setItem/removeItem/clear/key/length） | 6 | 同上 |
+| `ServiceWorkerContainer.prototype.register` | 1 | 同上 |
+| `CacheStorage.prototype`（open/keys/has/delete/match） | 5 | 同上 |
+| `IDBFactory.prototype`（open/deleteDatabase/**databases**） | 3 | 同上 |
+| `XMLHttpRequest.prototype` | 3 | 同上 |
+| `window.BroadcastChannel` / `caches` / `fetch` / `indexedDB`、`Window.prototype.caches` | 5 | 同上 |
+
+唯一差异是 UA-CH 的 `navigator.userAgentData.brands`（`Microsoft Edge/157` vs `Chromium/151`），
+与补丁无关。⇒ **#38 不是 Edge 特有的失效，也不是那条卡死报告的线索。**
+`patchLedger` 仍然值得留着（它防的是**将来**某个浏览器把某个属性变成不可配置），
+但**不要再拿"Edge 描述符不同"当假设去排查**。
+★ 顺带：`forensics('shieldPatch', …)` 自 2026-11-09 起多一栏 `browser`
+（`edge/157.0.0.0` 这种紧凑标签），让这份账本能自证是在哪个浏览器里采的。
+
 ---
 
 ## #39 【已修】「试次」在**调度**点击时就记账 ⇒ 中止的轮次白吃机会，且观察窗期间无人重填
@@ -2745,6 +2766,60 @@ state（空）重渲染了一次，DOM 里那个值已经不在了，只看 DOM 
 - ★★ **回读要读平台的账**（可见的校验反馈、提交后的服务端响应），不要只读 DOM ——
   我们自己的回读与自己的写入天然一致，它证明不了平台收到过。
 - ★ 幂等要靠"动作幂等"（重复派发事件无害），不要靠"跳过动作"。
+
+---
+
+## #56 【已修·判据教训】`chrome://` 在 Edge 会被**自动改写**成 `edge://` —— 于是"兼容性缺陷"与"浏览器在帮你兜底"长得一模一样
+
+**症状**：代码里（UI 文案 / `tabs.create`）写着 `chrome://extensions`、
+`chrome://extensions/shortcuts`。在 Edge 里**它其实是能用的** —— 地址栏/`tabs.create`
+会把 `chrome://…` 自动改写成 `edge://…`，页面照常打开，**没有任何报错**。
+⇒ 两个方向都会踩：
+
+1. **误判为缺陷**：看到代码里硬编码 `chrome://`，就当成"Edge 兼容性问题"去改，
+   甚至改成"两个都试一遍"（那会平白多出一个必然失败的调用）。
+2. **真的缺陷被掩盖**：反过来**不成立** —— Chrome 打开 `edge://extensions` 只会得到
+   **一个地址为空的死页签**；所以"按家族选协议"这件事仍然必须做，只是**不能靠试**。
+   另外**文案**才是用户真正会撞上的那半：在 Edge 里让用户去"chrome://extensions 点重新加载"，
+   他会以为自己装错了东西。
+
+**根因**：把"浏览器帮我们兜底的行为"当成了"我们的代码没问题"，同时把"界面上的产品名"
+当成了无关紧要的字符串。两层叠在一起，就得到"**看起来兼容、实际在骗用户**"。
+
+**判据**（可执行）：`node tools/verify/verify-edge.mjs`（27 项，真起 Edge，6.4 s）。
+
+- **静态那半**（不需要 Edge）：`src/ui/**` 的**渲染字符串**里 0 处 `chrome://extensions`
+  （注释不算 —— 判据按"行首是注释标记"跳过，方向是宁红不绿）；`parallel.ts` 三处提示
+  必须走 `extensionsPageText()`，`translate.ts` 的改键链接必须走
+  `shortcutsPageUrl()` / `shortcutsPageText()`。
+- **动态那半**（真起 Edge）：`translate.html` 渲染出来的 `#shortcut-link` 文案必须**正好等于**
+  `edge://extensions/shortcuts` —— 这条是端到端的，它同时证明"家族判对了"与"接线接上了"。
+- **反证做过三次**（本仓规则 17）：① 把 `shortcutsPageText()` 退回固定返回 `chrome://…`
+  ⇒ 动态那条红；② 在 `ui/popup/popup.ts` 里塞一行 `'chrome://extensions'` ⇒ 静态那条红
+  （报 `popup.ts:139`）；③ `$env:EDGE_PATH` 指到不存在的路径 ⇒ 走 SKIP、exit 0，
+  而静态判据**照样会红**（"没有 Edge"放过的是动态部分，不是全部判据）。
+- 没装 Edge 的机器：打印 SKIP、exit 0（否则所有人都会开始忽略这条门禁）。
+
+**处置**：新增 `packages/extension/src/shared/browser-env.ts`（纯 UA，不碰 `chrome.*`，
+因为 MAIN world 要能跑在**纯 http** 的目标站上，那里没有 `navigator.userAgentData`）：
+`browserFamily()` / `browserVersion()` / `browserLabel()` / `browserTag()` /
+`extensionsPageText()` / `shortcutsPageUrl()` / `shortcutsPageText()`。
+接入五处：`ui/parallel/parallel.ts` 三处提示文案、`ui/translate/translate.ts` 的链接与
+`tabs.create`、`ui/translate/translate.html` 的中性占位（脚本没跑时也不显示错协议）。
+另加 `ql.diag` 的 `browser` + `ua`、`patchReport` 的 `browser`（见 #38），让下次
+"Edge 上…"的报告**自带浏览器家族**，不必先问一遍。
+
+**推广**：
+
+- ★★ **"自动改写"是浏览器兜底，不是兼容性证明**：兜底让缺陷不可见，也让"兼容"这件事
+  无法靠"点一下能用"来确认。判据要落在**渲染出来的字符串与真实 API 调用**上。
+- ★★ **反向不成立的方向才是最贵的**：`chrome://` → `edge://` 能自动改写，
+  `edge://` → `chrome://` 不能。凡是"某方向被兜底"的行为，都要单独验**反方向**。
+- ★ **UA 里的版本令牌可能是缩减版**：同一台机器的 Edge 是 `157.0.4341.42`，
+  而 `navigator.userAgent` 写的是 `Edg/157.0.0.0`。⇒ 诊断里给**主版本级**标签，
+  别把 `Edg/` 后面那串当真实 build 号（我第一次就把它写进了文档）。
+- ★ **"在哪个浏览器里"应当进诊断包**：否则一份"Edge 上打不开"的报告到了手上，
+  第一句话还得问用户用的是什么浏览器（本轮已加进 `ql.diag`）。
 
 ---
 

@@ -117,7 +117,10 @@
 
         <p class="hint">
           快捷键改键去
-          <a id="shortcut-link" href="#">chrome://extensions/shortcuts</a>
+          <!-- ★ 文案由 `init()` 按浏览器家族填（Chrome `chrome://extensions/shortcuts` /
+               Edge `edge://extensions/shortcuts`）。这里放中性字样，免得脚本没跑时
+               给 Edge 用户显示一个他地址栏里不会出现的协议。 -->
+          <a id="shortcut-link" href="#">扩展快捷键页</a>
           —— 当前生效键位：<b id="hotkey-display" data-hotkey>Ctrl+X</b>。
           若显示「未设置」，说明被别的扩展占用了，请到该页面重新指定。
         </p>

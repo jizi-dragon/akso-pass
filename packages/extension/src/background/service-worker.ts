@@ -6,6 +6,8 @@ import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLA
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
 import type { LogRecord } from '../shared/log';
 import { checkForUpdate, dismissUpdate, getUpdateState, openReleasePage, registerUpdateCheck } from './update-check';
+// ★ 浏览器家族（Edge / Chrome）—— 诊断里要能回答"这是在哪个浏览器里跑的"。
+import { browserFamily, browserLabel, browserTag, browserVersion } from '../shared/browser-env';
 
 /**
  * 本模块的 logger。
@@ -232,6 +234,17 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
       // SW 上下文原地诊断（台架取证用）：storage.local 读写 / DNR 安装 / 模块内部状态
       const r = await tryRun(async (): Promise<Record<string, unknown>> => {
         const out: Record<string, unknown> = {};
+        // ★ 2026-11-09：「在哪个浏览器里」是任何 "Edge 上…" 类报告的第一分诊问题，
+        //   而在此之前诊断包里**没有任何一个字段**能回答它（只有各处 forensics 里
+        //   截断过的 `ua` 片段）。⇒ 家族 / 版本 / 标签放在最前面。
+        //   `browserTag()` 形如 `edge/157.0.0.0` / `chrome/151.0.7922.34`。
+        out.ua = navigator.userAgent;
+        out.browser = {
+          family: browserFamily(),
+          version: browserVersion(),
+          label: browserLabel(),
+          tag: browserTag(),
+        };
         try {
           await chrome.storage.local.set({ __qt: Date.now() });
           const v = await chrome.storage.local.get('__qt');

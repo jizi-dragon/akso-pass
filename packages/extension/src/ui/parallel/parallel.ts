@@ -11,6 +11,8 @@ import { isNewerVersion, shouldPrompt, type UpdateState } from '../../shared/upd
 import { getForwardingLogger, setForwarder } from '../../shared/log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
+// ★ 提示文案里的扩展管理页按家族给（Edge = `edge://extensions`，见该模块头注释的实测事实）。
+import { extensionsPageText } from '../../shared/browser-env';
 import {
   buildExcelTemplate,
   EXCEL_TEMPLATE_FILENAME,
@@ -1075,7 +1077,7 @@ async function reconcileBoxesWithCloud(): Promise<void> {
   if (truth && !cloudBoxes) {
     log.warn('par.boxes 的载荷里没有 boxes 数组 —— 多半是「页面已更新、扩展没重新加载」'
       + '造成的版本错配。本轮按"没拿到"处理（盒子保持本地那份）；'
-      + '请在 chrome://extensions 点「重新加载」把两半对齐。');
+      + `请在 ${extensionsPageText()} 点「重新加载」把两半对齐。`);
   }
 
   // ★★ 对账的**规则**在 `shared/box-reconcile.ts`（纯函数）—— 这里只负责
@@ -2491,7 +2493,8 @@ async function openAccount(id: string, forceNewTab: boolean): Promise<void> {
           + '这种情况下**仍然可以打开**这个账号，但：\n'
           + '· 不会隔离它的登录态（可能与其它账号串号）\n'
           + '· 不会自动填充账密\n\n'
-          + '要现在打开吗？（也可以在 chrome://extensions 的「网站访问权限」里改成「在所有网站上」）',
+          + '要现在打开吗？（也可以在 ' + extensionsPageText()
+          + ' 的「网站访问权限」里改成「在所有网站上」）',
       )
     ) {
       return;
@@ -3740,7 +3743,7 @@ function renderCloudBanner(): void {
   if (lastRefreshFailures.length) {
     cloudBannerEl.textContent =
       `有 ${lastRefreshFailures.length} 项没能刷新（${lastRefreshFailures.join('、')}），其余部分照常。`
-      + '若反复出现，请在 chrome://extensions 重新加载扩展（改了扩展代码后必须重载，'
+      + `若反复出现，请在 ${extensionsPageText()} 重新加载扩展（改了扩展代码后必须重载，`
       + '否则页面与后台可能跑着两个版本）。';
     cloudBannerEl.className = 'notice warn';
     return;
