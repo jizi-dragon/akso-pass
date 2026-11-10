@@ -35,7 +35,7 @@ npm run typecheck  # tsc --noEmit
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md) | **用户手册**：功能点清单 + 使用说明 |
+| [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md) | **用户手册**：安装、功能入口与操作说明（含截图） |
 | [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md) | **现状快照**：隔离平面总表（历史对照）、版本里程碑、安全边界 |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | **安全模型**：资产、信任边界、控制矩阵、残余风险与验证入口（v4.2.32） |
 | [`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md) | 代码库导读：架构、关键模块、数据流、约定、风险 |
