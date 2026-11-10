@@ -147,10 +147,16 @@ body {
   gap: var(--sp-2);
 }
 
+.sb-side-foot > span:first-child,
+.sb-check {
+  white-space: nowrap;
+}
+
 .sb-foot-right {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  flex: 0 0 auto;
 }
 
 /* 手动「检查更新」（v4.2.56）：常驻的显式按钮，不只有版本 chip 可点。 */

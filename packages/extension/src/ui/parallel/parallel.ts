@@ -1161,6 +1161,8 @@ function isBoxDisabled(name: string): boolean {
 }
 
 function renderBoxChips(): void {
+  // 顶部「盒子」数用芯片同一份口径：默认盒 + 云端盒子 + 账号实际所在的盒子。
+  setStat('stat-boxes', new Set([...boxes, defaultBox, ...browserAccounts.map((a) => boxOf(a))]).size);
   const key = JSON.stringify([
     boxes,
     currentBox,
