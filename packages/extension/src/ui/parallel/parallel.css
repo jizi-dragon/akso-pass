@@ -565,6 +565,26 @@
   white-space: nowrap;
 }
 
+/* 删除是危险操作，单独占一行，和改名/禁用/关联站点分开，避免误点。 */
+.site-list .site-card-danger {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-2);
+  border-top: 1px dashed var(--sb-border);
+}
+
+.site-list .site-card-delete-check {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.site-list .site-card-danger .btn-danger {
+  margin-left: auto;
+}
+
 /* 窄屏：数量与操作换到第二行，名称与域名占满一行 */
 @media (max-width: 720px) {
   .site-list .site-card {
@@ -573,6 +593,9 @@
       'name   actions'
       'domain actions'
       'count  actions';
+  }
+  .site-list .site-card-danger {
+    flex-wrap: wrap;
   }
 }
 
@@ -1097,6 +1120,14 @@
   gap: var(--sp-2);
   flex-wrap: wrap;
   margin-top: var(--sp-2);
+}
+.fav-actions .btn-primary:disabled {
+  background: var(--sb-surface-2);
+  color: var(--sb-text-secondary);
+  box-shadow: none;
+  transform: none;
+  cursor: default;
+  opacity: 0.8;
 }
 .fav-spacer {
   flex: 1 1 auto;

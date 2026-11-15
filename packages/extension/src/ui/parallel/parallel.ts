@@ -379,6 +379,8 @@ let browserAccounts: BrowserAccount[] = [];
  */
 /** 盒子清单（默认盒子恒在 + storage 记忆 + 账号实际归属） */
 let boxes: string[] = [DEFAULT_BOX_FALLBACK];
+/** 盒子管理里「删除盒子时同时删除盒内账号」的勾选状态（按盒名，渲染后仍保留） */
+const deleteBoxAccounts = new Set<string>();
 /** 当前盒子筛选：'全部' 或盒子名 */
 let currentBox: string = '全部';
 /** 批量模式与选中集 */
@@ -1374,8 +1376,9 @@ function renderBoxLedger(): void {
 
     const count = document.createElement('div');
     count.className = 'site-card-count';
+    const accountCount = d ? d.count : browserAccounts.filter((a) => boxOf(a) === name).length;
     const n = document.createElement('b');
-    n.textContent = String(d ? d.count : browserAccounts.filter((a) => boxOf(a) === name).length);
+    n.textContent = String(accountCount);
     const unit = document.createElement('span');
     unit.textContent = '个账号';
     count.append(n, unit);
@@ -1427,17 +1430,40 @@ function renderBoxLedger(): void {
           actions.append(un);
         }
       }
-      if (d.deletable) {
-        const btn = document.createElement('button');
-        btn.className = 'btn-danger btn-sm';
-        btn.type = 'button';
-        btn.textContent = '删除';
-        btn.addEventListener('click', () => void removeBoxFlow(name));
-        actions.append(btn);
-      }
     }
 
     li.append(head, domain, count, actions);
+
+    if (d?.deletable) {
+      const danger = document.createElement('div');
+      danger.className = 'site-card-danger';
+      if (accountCount > 0) {
+        const label = document.createElement('label');
+        label.className = 'check-row site-card-delete-check';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = deleteBoxAccounts.has(name);
+        cb.addEventListener('change', () => {
+          if (cb.checked) {
+            deleteBoxAccounts.add(name);
+          } else {
+            deleteBoxAccounts.delete(name);
+          }
+        });
+        const text = document.createElement('span');
+        text.textContent = `同时删除盒内 ${accountCount} 个账号`;
+        label.append(cb, text);
+        danger.append(label);
+      }
+      const del = document.createElement('button');
+      del.className = 'btn-danger btn-sm';
+      del.type = 'button';
+      del.textContent = '删除盒子';
+      del.addEventListener('click', () => void removeBoxFlow(name));
+      danger.append(del);
+      li.append(danger);
+    }
+
     boxListEl.append(li);
   }
 }
@@ -1597,23 +1623,25 @@ async function renameBoxFlow(from: string): Promise<void> {
 }
 
 /**
- * 删除盒子：两步确认——
- * 1) 确认删除盒子本身；
- * 2) 盒内有账号时选择处置：[确定]=连同账号一并删除（含关闭页签），[取消]=账号归入默认盒子。
+ * 删除盒子：只弹一次确认。
+ * 盒内账号是否一并删除，由卡片底部的勾选框决定：
+ * - 勾选：先删账号，再删盒子；
+ * - 不勾选：直接删盒子，云端会把盒内账号移入默认盒子。
  */
 async function removeBoxFlow(name: string): Promise<void> {
   if (name === defaultBox) {
     return;
   }
-  if (!confirm(`删除盒子「${name}」？`)) {
-    return;
-  }
   const victims = browserAccounts.filter((a) => boxOf(a) === name);
-  let deleteAccounts = false;
-  if (victims.length) {
-    deleteAccounts = confirm(
-      `盒子「${name}」中有 ${victims.length} 个账号。\n\n「确定」= 连同账号一并删除（关闭其页签）\n「取消」= 保留账号，移入「${defaultBox}」`,
-    );
+  const deleteAccounts = victims.length > 0 && deleteBoxAccounts.has(name);
+  const consequence =
+    victims.length === 0
+      ? '盒内没有账号。'
+      : deleteAccounts
+        ? `将同时删除盒内 ${victims.length} 个账号（关闭其页签）。`
+        : `盒内 ${victims.length} 个账号将移入「${defaultBox}」。`;
+  if (!confirm(`删除盒子「${name}」？\n\n${consequence}\n\n此操作不可撤销。`)) {
+    return;
   }
   if (deleteAccounts) {
     let failed = 0;
@@ -1627,13 +1655,14 @@ async function removeBoxFlow(name: string): Promise<void> {
       alert(`有 ${failed} 个账号删除失败，盒子已保留，请重试。`);
       return;
     }
-  } else {
-    const res = await send({ kind: 'par.deleteBox', name });
-    if (!(res.kind === 'par.deleteBox' && res.result.ok)) {
-      alert(`删除失败：${res.kind === 'par.deleteBox' && !res.result.ok ? res.result.error : '无响应'}`);
-      return;
-    }
   }
+  const res = await send({ kind: 'par.deleteBox', name });
+  if (!(res.kind === 'par.deleteBox' && res.result.ok)) {
+    alert(`删除盒子失败：${res.kind === 'par.deleteBox' && !res.result.ok ? res.result.error : '无响应'}`);
+    await refreshAll();
+    return;
+  }
+  deleteBoxAccounts.delete(name);
   boxes = boxes.filter((b) => b !== name);
   disabledBoxes = disabledBoxes.filter((b) => b !== name);
   await saveBoxes();
@@ -1932,7 +1961,11 @@ document.addEventListener('keydown', (e) => {
 /* ==================== 批量导入 ==================== */
 
 importToggle.addEventListener('click', () => {
-  importPanel.classList.toggle('hidden');
+  const opening = importPanel.classList.contains('hidden');
+  importPanel.classList.toggle('hidden', !opening);
+  if (opening) {
+    excelPanel.classList.add('hidden');
+  }
 });
 
 importCancel.addEventListener('click', () => {
@@ -2321,16 +2354,17 @@ async function runExcelImport(): Promise<void> {
   await finishExcelImport(created, failed);
 }
 
-function openExcelImportPicker(): void {
+function openExcelPanel(): void {
   /* 顶部栏的按钮可能从任意页签点进来；Excel 预览面板在「添加账号」页里，
-   * 所以先切过去再打开文件选择器。`showTab` 是函数声明，可安全在此调用。 */
+   * 所以先切过去再展开提示/模板区。不要在这里调 excelFile.click()：用户
+   * 第一次使用时还没下载模板，直接弹文件选择器会让人不知道怎么继续。 */
   showTab('add');
   excelPanel.classList.remove('hidden');
-  excelFile.click();
+  importPanel.classList.add('hidden');
 }
 
-excelToggle.addEventListener('click', () => openExcelImportPicker());
-dataImportExcelBtn.addEventListener('click', () => openExcelImportPicker());
+excelToggle.addEventListener('click', () => openExcelPanel());
+dataImportExcelBtn.addEventListener('click', () => openExcelPanel());
 excelPick.addEventListener('click', () => excelFile.click());
 excelCancel.addEventListener('click', () => excelPanel.classList.add('hidden'));
 excelTemplate.addEventListener('click', () => {
@@ -4345,6 +4379,8 @@ let favDraft: FavDraft[] = [];
 /** 已保存内容的快照（JSON）：只用来判断「有未保存的修改」 */
 let favSnapshot = '[]';
 let favDragFrom = -1;
+/** 保存请求期间锁住按钮，避免重复提交；输入仍可继续编辑。 */
+let favSaving = false;
 
 const FAILED_FAV_LOAD = DEFAULT_FAVORITES.map((d) => ({ ...d }));
 
@@ -4374,7 +4410,11 @@ function favPathLooksValid(raw: string): boolean {
 }
 
 function favUpdateMeta(): void {
-  favDirty.hidden = !favIsDirty();
+  const dirty = favIsDirty();
+  favDirty.hidden = !dirty;
+  favSave.disabled = favSaving || !dirty;
+  favSave.textContent = favSaving ? '保存中…' : dirty ? '保存修改' : '已保存';
+  favSave.title = dirty ? '保存当前修改' : '当前没有未保存的修改';
   const over = favDraft.length > FAVORITES_MAX ? `（上限 ${FAVORITES_MAX}，多出的保存时会被截掉）` : '';
   favCount.textContent = `共 ${favDraft.length} 条${over}`;
 }
@@ -4529,21 +4569,35 @@ favAdd.addEventListener('click', () => {
 
 favSave.addEventListener('click', () => {
   void (async () => {
+    if (favSaving) {
+      return;
+    }
+    if (!favIsDirty()) {
+      flashFavTip('没有需要保存的修改');
+      return;
+    }
+    favSaving = true;
+    favUpdateMeta();
     const res = await sendSafe({
       kind: 'favorites.save',
       items: favDraft.map((x) => ({ name: x.name, path: x.path })),
     });
     if (!res || res.kind !== 'favorites.save') {
+      favSaving = false;
+      favUpdateMeta();
       flashFavTip('保存失败：后台没有响应', true);
       return;
     }
     if (!res.result.ok) {
+      favSaving = false;
+      favUpdateMeta();
       flashFavTip(`保存失败：${res.result.error}`, true);
       return;
     }
     const r = res.result.data;
     favDraft = r.items.map((x) => ({ name: x.name, path: x.path }));
     favSnapshot = favDraftKey(favDraft);
+    favSaving = false;
     favRender();
     const parts = [`已保存 ${r.items.length} 条`];
     if (r.skipped) {

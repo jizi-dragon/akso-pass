@@ -243,14 +243,15 @@
           <input id="excel-import-file" type="file" accept=".xlsx,.xls,.csv" class="hidden" />
           <div id="excel-panel" class="import-panel hidden">
             <p class="desc">
+              <strong>第一次使用请先下载模板。</strong>
               Excel 表头固定为五项，且都必填：<code>站点名称</code> /
               <code>站点地址</code> / <code>用户名</code> / <code>密码</code> /
               <code>页签名</code>。盒子不填：每个站点会自动创建同名盒子并关联站点，
               该站点下所有账号都放进这个盒子。有问题的行会标红并写明原因。
             </p>
             <div class="btn-group">
-              <button id="excel-pick" class="btn-ghost" type="button">选择文件</button>
-              <button id="excel-template" class="btn-ghost" type="button">下载模板</button>
+              <button id="excel-template" class="btn-primary" type="button">下载模板</button>
+              <button id="excel-pick" class="btn-ghost" type="button">选择已填好的文件</button>
               <button id="excel-run" class="btn-primary" type="button" disabled>导入有效行</button>
               <button id="excel-cancel" class="btn-ghost" type="button">收起</button>
             </div>
@@ -346,7 +347,7 @@
         <div class="fav-actions">
           <button id="fav-add" class="btn-ghost" type="button">＋ 添加一条</button>
           <span class="fav-spacer"></span>
-          <button id="fav-save" class="btn-primary" type="button">保存</button>
+          <button id="fav-save" class="btn-primary" type="button" disabled>已保存</button>
           <button id="fav-reset" class="btn-ghost" type="button">恢复默认</button>
           <span id="fav-tip" class="save-tip"></span>
         </div>

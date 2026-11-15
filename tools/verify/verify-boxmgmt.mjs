@@ -158,6 +158,11 @@ if (built.includes('bindSitePicker') && !built.includes('输入序号')) {
 } else {
   fail('构建产物里仍找不到 bindSitePicker，或还残留「输入序号」文案');
 }
+if (built.includes('site-card-danger') && built.includes('deleteBoxAccounts')) {
+  ok('删除按钮在卡片底部危险操作行，带「同时删除盒内账号」勾选');
+} else {
+  fail('构建产物缺底部删除行 / 级联删除勾选');
+}
 
 /* ==================== 结构段 ⑤ 切页关闭瞬时弹层 ==================== */
 console.log('\n=== 结构段 ⑤ 切页（hidden）关闭瞬时弹层 ===');
@@ -230,7 +235,7 @@ if (!LIVE) {
   const clickRow = (name, label) => page.evaluate(({ n, l }) => {
     const row = [...document.querySelectorAll('#box-list li')]
       .find((r) => r.querySelector('.site-card-name')?.textContent === n);
-    [...(row?.querySelectorAll('.site-actions button') ?? [])].find((b) => b.textContent === l)?.click();
+    [...(row?.querySelectorAll('button') ?? [])].find((b) => b.textContent === l)?.click();
   }, { n: name, l: label });
 
   // ① 建盒（表单提交 → par.createBox → POST /api/boxes）
@@ -278,9 +283,9 @@ if (!LIVE) {
     if (rows.some((r) => r.name === renamed)) ok(`改名成功：「${stamp}」→「${renamed}」`);
     else fail(`改名后台账里没有「${renamed}」`);
 
-    // ⑤ 删除（空盒 ⇒ 只有一次 confirm）
+    // ⑤ 删除（空盒 ⇒ 没有勾选框，只有一次 confirm）
     page.once('dialog', (d) => d.accept());
-    await clickRow(renamed, '删除');
+    await clickRow(renamed, '删除盒子');
     await page.waitForTimeout(1700);
     rows = await ledger();
     if (!rows.some((r) => r.name === renamed || r.name === stamp)) ok('删除成功（台账里已消失）');

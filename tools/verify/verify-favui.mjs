@@ -121,6 +121,12 @@ try {
   } else {
     fail(`默认名称不对：${JSON.stringify(names0)}`);
   }
+  const saveText0 = ((await page.textContent('#fav-save')) ?? '').trim();
+  if ((await page.isDisabled('#fav-save')) && saveText0 === '已保存') {
+    ok('未修改时保存按钮禁用，显示「已保存」');
+  } else {
+    fail(`未修改时保存按钮状态不对：disabled=${await page.isDisabled('#fav-save')} text=${saveText0}`);
+  }
 
   // ② 添加一行并聚焦
   await page.click('#fav-add');
@@ -142,6 +148,12 @@ try {
     ok('编辑后出现「有未保存的修改」');
   } else {
     fail('编辑后没有脏状态提示');
+  }
+  const saveText1 = ((await page.textContent('#fav-save')) ?? '').trim();
+  if (!(await page.isDisabled('#fav-save')) && saveText1 === '保存修改') {
+    ok('编辑后保存按钮启用，显示「保存修改」');
+  } else {
+    fail(`编辑后保存按钮状态不对：disabled=${await page.isDisabled('#fav-save')} text=${saveText1}`);
   }
 
   // ④ 保存 → 后台归一化并写盘
@@ -168,6 +180,12 @@ try {
     ok('保存后脏状态消失');
   } else {
     fail('保存后仍显示未保存');
+  }
+  const saveText2 = ((await page.textContent('#fav-save')) ?? '').trim();
+  if ((await page.isDisabled('#fav-save')) && saveText2 === '已保存') {
+    ok('保存后按钮回到禁用「已保存」');
+  } else {
+    fail(`保存后按钮状态不对：disabled=${await page.isDisabled('#fav-save')} text=${saveText2}`);
   }
 
   // ⑤ 重新打开：仍在（真的落盘，不是内存态）

@@ -142,6 +142,30 @@ if (!/par\.createBox/.test(ui) || !/par\.bindBoxSite/.test(ui) || !/kind: 'par\.
   fail('导入没有建盒/关联/建账号的完整链路');
 } else ok('导入走建盒 → 关联站点 → 建账号');
 
+/* 2026-11-16 用户要求：点「Excel 导入」先看提示/模板，不直接弹文件选择器；
+ * Excel 面板和批量面板不能同时显示。 */
+const openExcel = ui.match(/function openExcelPanel\(\): void \{([\s\S]*?)\n\}/);
+if (!openExcel) {
+  fail('parallel.ts 缺少 openExcelPanel()');
+} else {
+  if (/excelFile\.click\(\);/.test(openExcel[1])) fail('打开 Excel 面板时不应直接弹出文件选择器');
+  else ok('打开 Excel 面板不直接选文件');
+  if (!/importPanel\.classList\.add\('hidden'\)/.test(openExcel[1])) fail('打开 Excel 面板时没有收起批量面板');
+  else ok('打开 Excel 面板时收起批量面板');
+}
+const importToggle = ui.match(/importToggle\.addEventListener\('click', \(\) => \{([\s\S]*?)\n\}\);/);
+if (!importToggle) {
+  fail('找不到批量导入 toggle');
+} else if (!/excelPanel\.classList\.add\('hidden'\)/.test(importToggle[1])) {
+  fail('打开批量面板时没有收起 Excel 面板');
+} else {
+  ok('打开批量面板时收起 Excel 面板');
+}
+if (!/dataImportExcelBtn\.addEventListener\('click', \(\) => openExcelPanel\(\)\)/.test(ui)) {
+  fail('顶部「Excel 导入」没有接到 openExcelPanel');
+} else ok('顶部「Excel 导入」只打开提示面板');
+
+
 fs.rmSync(OUT, { force: true });
 console.log(bad === 0 ? '\nRESULT: OK' : `\nRESULT: ${bad} 处不符`);
 process.exit(bad === 0 ? 0 : 1);
