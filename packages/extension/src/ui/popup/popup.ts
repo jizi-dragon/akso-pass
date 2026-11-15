@@ -1,5 +1,5 @@
 import { EXT_VERSION } from '../../shared/constants';
-import { isNewerVersion } from '../../shared/update-logic';
+import { isNewerMinorVersion } from '../../shared/update-logic';
 import { getForwardingLogger } from '../../shared/log';
 import { installLogForwarding } from '../../shared/forward-log';
 
@@ -95,7 +95,7 @@ async function refreshUpdateHint(): Promise<void> {
       | undefined;
     const data = res?.result?.ok ? res.result.data : undefined;
     if (data === undefined || data.latestVersion === null) return;
-    if (!isNewerVersion(data.latestVersion, data.currentVersion)) return;
+    if (!isNewerMinorVersion(data.latestVersion, data.currentVersion)) return;
     if (data.dismissedVersion === data.latestVersion) return;
     el.textContent = `发现新版本 v${data.latestVersion} · 去 GitHub 下载`;
     if (data.releaseUrl !== null) el.href = data.releaseUrl;
@@ -140,7 +140,7 @@ popupCheck?.addEventListener('click', async () => {
       if (updateStatus !== null) updateStatus.textContent = `检查失败：${data.error}`;
       return;
     }
-    if (data.latestVersion !== null && isNewerVersion(data.latestVersion, data.currentVersion)) {
+    if (data.latestVersion !== null && isNewerMinorVersion(data.latestVersion, data.currentVersion)) {
       if (updateStatus !== null) updateStatus.textContent = `发现 v${data.latestVersion}`;
       if (updateHintEl !== null) {
         updateHintEl.textContent = `发现新版本 v${data.latestVersion} · 去 GitHub 下载`;

@@ -11,7 +11,7 @@
  *
  * 做法：装载 `dist/`，往 `chrome.storage.local` 写一份"最新版 9.9.9"的状态，
  * 重开管理页，断言横幅/角标；再点「忽略此版本」，断言横幅消失、状态落盘。
- * ★ 不触网：状态是直接写入的，GitHub API 不参与本判据。
+ * ★ 不触网：状态是直接写入的，latest.json 不参与本判据。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
@@ -107,7 +107,6 @@ try {
     checkedAt: Date.now(),
     error: null,
     dismissedVersion: null,
-    etag: null,
   });
 
   await page.reload();
@@ -130,15 +129,16 @@ try {
   const checkBtn = page.locator('#update-check');
   check('侧栏有常驻「检查更新」按钮', await checkBtn.isVisible());
   check('按钮文案为「检查更新」', (await checkBtn.innerText()).trim() === '检查更新', (await checkBtn.innerText()).trim());
-  // 把后台这一次的 GitHub 响应换成 9.9.10：只桩 fetch，不改存储，模拟"服务器上出了更新版"
+  // 把后台这一次的 latest.json 响应换成 9.9.10：只桩 fetch，不改存储，模拟"服务器上出了更新版"
   await worker.evaluate((ver) => {
     globalThis.fetch = async () => new Response(JSON.stringify({
-      tag_name: `v${ver}`,
+      format: 'akso-pass-latest',
+      version: ver,
+      tag: `v${ver}`,
       name: `v${ver}`,
-      html_url: `https://github.com/jizi-dragon/akso-pass/releases/tag/v${ver}`,
-      published_at: '2026-11-09T00:00:00Z',
-      body: '',
-    }), { status: 200, headers: { 'content-type': 'application/json', etag: '"probe"' } });
+      releaseUrl: `https://github.com/jizi-dragon/akso-pass/releases/tag/v${ver}`,
+      publishedAt: '2026-11-09T00:00:00Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
   }, '9.9.10');
   await checkBtn.click();
   const modal = page.locator('#update-modal');
@@ -166,7 +166,7 @@ try {
   const failStatus = (await page.locator('#update-modal-status').innerText()).trim();
   check('失败时弹窗标题为「检查更新失败」', failTitle === '检查更新失败', failTitle);
   check('失败原因能被用户读懂（不是「后台没有响应」）',
-    failStatus.includes('无法访问') && !failStatus.includes('后台没有响应'), failStatus);
+    failStatus.includes('更新服务器') && !failStatus.includes('后台没有响应'), failStatus);
   await page.locator('#update-modal-close').click();
   await modal.waitFor({ state: 'hidden', timeout: 5_000 });
 
@@ -191,12 +191,13 @@ try {
   check('弹窗有「检查更新」按钮', await popupBtn.isVisible());
   await worker.evaluate((ver) => {
     globalThis.fetch = async () => new Response(JSON.stringify({
-      tag_name: `v${ver}`,
+      format: 'akso-pass-latest',
+      version: ver,
+      tag: `v${ver}`,
       name: `v${ver}`,
-      html_url: `https://github.com/jizi-dragon/akso-pass/releases/tag/v${ver}`,
-      published_at: '2026-11-09T00:00:00Z',
-      body: '',
-    }), { status: 200, headers: { 'content-type': 'application/json', etag: '"probe"' } });
+      releaseUrl: `https://github.com/jizi-dragon/akso-pass/releases/tag/v${ver}`,
+      publishedAt: '2026-11-09T00:00:00Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
   }, '9.9.11');
   await popupBtn.click();
   await popup.waitForFunction(() => document.querySelector('#update-status')?.textContent?.includes('9.9.11'), null, { timeout: 10_000 });

@@ -1,3 +1,14 @@
+## 4.5.0（2026-11-16）
+
+**更新检查改走 akso-cloud 的 `latest.json`，且只提醒 minor 新版本**
+
+- 起因：4.4.0 及以前直接请求 GitHub `releases/latest`。GitHub 对未认证 API 按出口 IP 限 60 次/小时，触发后用户看到「GitHub 拒绝访问（HTTP 403）」，无法检查更新。
+- 改法：更新源改为 `https://www.dragonrain.top/downloads/akso-pass/latest.json`（由 akso-cloud 托管、由 `tools/write-akso-pass-latest.mjs` 生成）；`parseReleasePayload` 兼容新清单与旧 GitHub 载荷；删除 ETag/If-None-Match 缓存分支；manifest 的 host 权限改为 `https://www.dragonrain.top/downloads/*`；错误文案改为「更新服务器」。
+- 提醒口径：只比较 `major.minor`。`4.5.x → 4.4.x` 会提醒；`4.4.9 → 4.4.10` 这类补丁位不提醒。补丁版是内部优化/修复，不作为用户侧更新提示。
+- 服务端：`/downloads/akso-pass/latest.json` 纳入只读白名单；ZIP 仍由 GitHub Releases 托管，`latest.json` 只提供版本、下载地址、大小与 SHA-256。
+- 验证：`verify-update-logic` 38/38、`verify-update-ui` 26/26；`typecheck` / `build` 绿。
+- 版本：4.4.0 → 4.5.0（minor，打包 release）。
+
 ## 4.4.0（2026-11-16）
 
 **正式版：Excel 导入、盒子删除与常用页保存**

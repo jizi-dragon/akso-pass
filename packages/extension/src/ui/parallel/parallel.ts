@@ -7,7 +7,7 @@ import type {
   UiStatePayload,
 } from '../../shared/messages';
 import { DEFAULT_FAVORITES, EXT_VERSION, FAVORITES_MAX, LOCAL_KEYS } from '../../shared/constants';
-import { isNewerVersion, shouldPrompt, type UpdateState } from '../../shared/update-logic';
+import { isNewerMinorVersion, shouldPrompt, type UpdateState } from '../../shared/update-logic';
 import { getForwardingLogger } from '../../shared/log';
 import { installLogForwarding } from '../../shared/forward-log';
 import { send } from '../send';
@@ -106,16 +106,16 @@ type UpdateDialogKind = 'newer' | 'latest' | 'error';
 /** 把后台/网络层的原始错误翻译成用户能据以行动的一句话。 */
 function explainUpdateError(raw: string): string {
   if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) {
-    return '无法访问 api.github.com（网络或代理拦截）。';
+    return '无法访问更新服务器 www.dragonrain.top（网络或代理拦截）。';
   }
   if (/HTTP 403/i.test(raw)) {
-    return 'GitHub 拒绝访问（HTTP 403，可能触发了限流）。';
+    return '更新服务器拒绝访问（HTTP 403）。';
   }
   if (/HTTP 404/i.test(raw)) {
-    return '仓库或 Release 不存在（HTTP 404）。';
+    return '更新信息不存在（latest.json 返回 404）。';
   }
   if (/HTTP 5\d\d/i.test(raw)) {
-    return `GitHub 暂时不可用（${raw}）。`;
+    return `更新服务器暂时不可用（${raw}）。`;
   }
   return raw;
 }
@@ -217,7 +217,7 @@ async function runUpdateCheck(from: 'chip' | 'button'): Promise<void> {
       showUpdateDialog('error', { message: data.error });
       return;
     }
-    const newer = data.latestVersion !== null && isNewerVersion(data.latestVersion, data.currentVersion);
+    const newer = data.latestVersion !== null && isNewerMinorVersion(data.latestVersion, data.currentVersion);
     showUpdateDialog(newer ? 'newer' : 'latest');
   } finally {
     updateCheckBtn.disabled = false;

@@ -16,11 +16,13 @@ import {
   applyUpdateDefaults,
   compareVersions,
   emptyUpdateState,
+  isNewerMinorVersion,
   isNewerVersion,
   parseReleasePayload,
   shouldAutoCheck,
   shouldPrompt,
   UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_FEED_URL,
 } from '../../packages/extension/src/shared/update-logic.ts';
 
 let passed = 0;
@@ -39,30 +41,46 @@ ok('4.2.55-beta < 4.2.55', compareVersions('4.2.55-beta', '4.2.55') < 0);
 ok('4.2.55+build == 4.2.55（构建元数据不参与比较）', compareVersions('4.2.55+build', '4.2.55') === 0);
 
 console.log('\n=== 2. 是否"有更新" ===');
-ok('4.2.55 比 4.2.54 新', isNewerVersion('4.2.55', '4.2.54') === true);
+ok('4.2.55 比 4.2.54 新（完整版本）', isNewerVersion('4.2.55', '4.2.54') === true);
 ok('同版本不算更新', isNewerVersion('4.2.54', '4.2.54') === false);
 ok('旧版本不算更新', isNewerVersion('4.2.53', '4.2.54') === false);
 ok('null / 空串不算更新', isNewerVersion(null, '4.2.54') === false && isNewerVersion('', '4.2.54') === false);
 ok('不合法的 tag 不算更新', isNewerVersion('latest', '4.2.54') === false);
 
-console.log('\n=== 3. GitHub 响应解析 ===');
+console.log('\n=== 2b. 更新提醒只看到 major.minor ===');
+ok('4.2.55 → 4.2.54：补丁位不算更新', isNewerMinorVersion('4.2.55', '4.2.54') === false);
+ok('4.2.99 → 4.2.54：补丁位不提醒', isNewerMinorVersion('4.2.99', '4.2.54') === false);
+ok('4.3.0 → 4.2.99：跨 minor 提醒', isNewerMinorVersion('4.3.0', '4.2.99') === true);
+ok('4.4.0 → 4.5.0：跨 minor 提醒', isNewerMinorVersion('4.5.0', '4.4.0') === true);
+ok('5.0.0 → 4.9.9：跨 major 提醒', isNewerMinorVersion('5.0.0', '4.9.9') === true);
+ok('4.3.0-beta → 4.3.0：同 minor 不提醒', isNewerMinorVersion('4.3.0-beta', '4.3.0') === false);
+
+console.log('\n=== 3. latest.json 响应解析 ===');
+ok('更新源指向 akso-cloud 的 latest.json', UPDATE_FEED_URL === 'https://www.dragonrain.top/downloads/akso-pass/latest.json');
 const good = parseReleasePayload({
-  tag_name: 'v4.2.60',
-  html_url: 'https://github.com/jizi-dragon/akso-pass/releases/tag/v4.2.60',
+  format: 'akso-pass-latest',
+  version: '4.2.60',
+  tag: 'v4.2.60',
+  releaseUrl: 'https://github.com/jizi-dragon/akso-pass/releases/tag/v4.2.60',
   name: 'v4.2.60 更新提醒',
-  published_at: '2026-11-09T00:00:00Z',
+  publishedAt: '2026-11-09T00:00:00Z',
 });
-ok('合法响应 → 版本号去掉 v', good !== null && good.version === '4.2.60');
-ok('合法响应 → 保留 html_url', good !== null && good.url.endsWith('/v4.2.60'));
-ok('缺 tag_name → null', parseReleasePayload({ html_url: 'x' }) === null);
-ok('tag 不是 semver → null', parseReleasePayload({ tag_name: 'nightly' }) === null);
+ok('合法 latest.json → 版本号 4.2.60', good !== null && good.version === '4.2.60');
+ok('合法 latest.json → 保留 releaseUrl', good !== null && good.url.endsWith('/v4.2.60'));
+ok('缺 version/tag → null', parseReleasePayload({ releaseUrl: 'x' }) === null);
+ok('version 不是 semver → null', parseReleasePayload({ version: 'nightly' }) === null);
 ok('非对象 → null', parseReleasePayload(null) === null);
+ok('兼容旧 GitHub 载荷（tag_name/html_url）', parseReleasePayload({
+  tag_name: 'v4.2.61',
+  html_url: 'https://github.com/jizi-dragon/akso-pass/releases/tag/v4.2.61',
+})?.version === '4.2.61');
 
 console.log('\n=== 4. 提醒判定（忽略此版本后不再打扰） ===');
-const base = { ...emptyUpdateState('4.2.54'), latestVersion: '4.2.55', releaseUrl: 'https://github.com/jizi-dragon/akso-pass/releases/latest' };
-ok('有新版本且未忽略 → 提醒', shouldPrompt(base) === true);
-ok('忽略当前最新版 → 不提醒', shouldPrompt({ ...base, dismissedVersion: '4.2.55' }) === false);
-ok('忽略旧版、又出了新版 → 仍提醒', shouldPrompt({ ...base, latestVersion: '4.2.56', dismissedVersion: '4.2.55' }) === true);
+const base = { ...emptyUpdateState('4.2.54'), latestVersion: '4.3.0', releaseUrl: 'https://github.com/jizi-dragon/akso-pass/releases/latest' };
+ok('跨 minor 且未忽略 → 提醒', shouldPrompt(base) === true);
+ok('忽略当前最新版 → 不提醒', shouldPrompt({ ...base, dismissedVersion: '4.3.0' }) === false);
+ok('忽略旧版、又出了新 minor → 仍提醒', shouldPrompt({ ...base, latestVersion: '4.4.0', dismissedVersion: '4.3.0' }) === true);
+ok('同 minor 的补丁版 → 不提醒', shouldPrompt({ ...base, latestVersion: '4.2.99' }) === false);
 ok('没有新版本 → 不提醒', shouldPrompt({ ...base, latestVersion: '4.2.54' }) === false);
 
 console.log('\n=== 5. 自动检查节流（6 小时） ===');

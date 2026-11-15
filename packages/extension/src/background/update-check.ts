@@ -12,8 +12,8 @@
  *   · `chrome.alarms` 每 6 小时（SW 会被回收，不能靠 setTimeout）；
  *   · 用户点"检查更新"（`update.check`）。
  *
- * 网络：GitHub 公开 API，带 ETag（304 省配额）。失败**绝不影响任何业务功能**，
- * 只把原因记进 `UpdateState.error`，UI 里可显示"上次检查失败"。
+ * 网络：akso-cloud 自托管的 `latest.json`（不再直连 GitHub API，避免匿名配额）。
+ * 失败**绝不影响任何业务功能**，只把原因记进 `UpdateState.error`，UI 里可显示"上次检查失败"。
  */
 import { EXT_VERSION, LOCAL_KEYS } from '../shared/constants';
 import {
@@ -22,7 +22,7 @@ import {
   parseReleasePayload,
   shouldAutoCheck,
   shouldPrompt,
-  UPDATE_API_URL,
+  UPDATE_FEED_URL,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_RELEASES_URL,
   type UpdateState,
@@ -93,46 +93,47 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
-    if (state.etag !== null) headers['If-None-Match'] = state.etag;
-    const response = await fetch(UPDATE_API_URL, {
-      headers,
+    const response = await fetch(UPDATE_FEED_URL, {
+      headers: { Accept: 'application/json' },
       signal: controller.signal,
       cache: 'no-store',
     });
-    state.checkedAt = now;
-    if (response.status === 304) {
-      state.error = null;
-      await writeState(state);
-      applyUpdateBadge(state);
-      return state;
-    }
+    /*
+     * fetch 期间用户/其它页面可能已经改过 state（忽略版本、手动检查、
+     * 或测试直接写入）。写入前重新读一次，避免把旧快照覆盖回去。
+     */
+    const next = await readState();
+    next.currentVersion = EXT_VERSION;
+    next.checkedAt = now;
     if (!response.ok) {
-      state.error = `HTTP ${response.status}`;
-      await writeState(state);
-      return state;
+      next.error = `HTTP ${response.status}`;
+      await writeState(next);
+      applyUpdateBadge(next);
+      return next;
     }
-    const etag = response.headers.get('etag');
-    if (etag !== null && etag !== '') state.etag = etag;
     const release = parseReleasePayload(await response.json());
     if (release === null) {
-      state.error = '发布信息格式不正确';
-      await writeState(state);
-      return state;
+      next.error = '发布信息格式不正确';
+      await writeState(next);
+      applyUpdateBadge(next);
+      return next;
     }
-    state.latestVersion = release.version;
-    state.releaseUrl = release.url !== '' ? release.url : UPDATE_RELEASES_URL;
-    state.releaseName = release.name;
-    state.publishedAt = release.publishedAt;
-    state.error = null;
-    await writeState(state);
-    applyUpdateBadge(state);
-    return state;
+    next.latestVersion = release.version;
+    next.releaseUrl = release.url !== '' ? release.url : UPDATE_RELEASES_URL;
+    next.releaseName = release.name;
+    next.publishedAt = release.publishedAt;
+    next.error = null;
+    await writeState(next);
+    applyUpdateBadge(next);
+    return next;
   } catch (error) {
-    state.checkedAt = now;
-    state.error = error instanceof Error ? error.message : String(error);
-    await writeState(state);
-    return state;
+    const next = await readState();
+    next.currentVersion = EXT_VERSION;
+    next.checkedAt = now;
+    next.error = error instanceof Error ? error.message : String(error);
+    await writeState(next);
+    applyUpdateBadge(next);
+    return next;
   } finally {
     clearTimeout(timer);
   }
