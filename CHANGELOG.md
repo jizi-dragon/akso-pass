@@ -1,3 +1,13 @@
+## 4.4.0（2026-11-16）
+
+**正式版：Excel 导入、盒子删除与常用页保存**
+
+- Excel 导入：点「Excel 导入」只展开面板，不再直接弹出文件选择；第一次使用先看到「下载模板」提示；批量导入与 Excel 导入互斥，打开一个会收起另一个。
+- 盒子删除：删除按钮移到卡片底部危险操作行；新增「同时删除盒内 N 个账号」勾选项，只确认一次。勾选时先删账号，再调用 `par.deleteBox`，修掉旧逻辑里“勾选删账号后云端盒子残留”的问题；不勾选则账号回到默认盒。
+- 常用页面：保存按钮改为「已保存 / 保存修改 / 保存中…」状态机；没有修改时禁用，保存成功后回到「已保存」，失败恢复可点。
+- 验证：`typecheck` / `build` / `check-deps` 绿；静态回归 33/33；`verify-favui`、`verify-boxmgmt`、`verify-excel-import`、`verify-load` 通过。全量浏览器回归受本机云端未登录影响 7 项（`adopt`/`autologin`/`defect`/`dynsnap`/`fillrhythm`/`jarhygiene`/`httpscheme`），另有 `acct-grid` 的既有 CRLF 假红、`dnrscheme` C 组、`duplicate` recover-reload、`impgrant` 下载事件失败，均与本次改动无关。
+- 版本：4.3.4 → 4.4.0（minor，打包 release）。
+
 ## 4.3.4（2026-11-15）
 
 **快捷键切页后自动收起原页浮层与管理页弹窗**
