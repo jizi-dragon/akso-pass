@@ -118,10 +118,21 @@ async function mount(): Promise<void> {
     closed = true;
     window.clearInterval(refreshTimer);
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     document.documentElement.style.removeProperty('overflow');
     host.classList.remove('show');
     WIN.__QL_WHEEL_ACTIVE__ = false;
     window.setTimeout(() => host.remove(), 220);
+  }
+
+  /**
+   * ★ 快捷键切走原页时，账号轮盘不应在后台继续占着 DOM 和页面滚动锁。
+   * `pick()` 已经先 close；这里兜的是"打开轮盘后没选账号、直接切页"的路径。
+   */
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') {
+      close();
+    }
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -190,6 +201,7 @@ async function mount(): Promise<void> {
 
   /* ---------- 挂载 & 入场 ---------- */
   document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   document.documentElement.style.setProperty('overflow', 'hidden');
   document.documentElement.append(host);
   WIN.__QL_WHEEL_ACTIVE__ = true;

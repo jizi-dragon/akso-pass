@@ -113,6 +113,7 @@ async function mount(): Promise<void> {
     }
     closed = true;
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     document.documentElement.style.removeProperty('overflow');
     host.classList.remove('show');
     WIN.__QL_FAV_ACTIVE__ = false;
@@ -120,6 +121,16 @@ async function mount(): Promise<void> {
     window.setTimeout(() => host.remove(), 220);
   }
   WIN.__QL_FAV_CLEANUP__ = close;
+
+  /**
+   * ★ 快捷键切走原页时关闭；常用页面浮层同样是瞬时的，
+   * 打开新页签的路径已有 close()，这里兜"没点书签就切页"。
+   */
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') {
+      close();
+    }
+  }
 
   /**
    * ★★★ 2026-10-20（用户要求变更）：
@@ -348,6 +359,7 @@ async function mount(): Promise<void> {
   }
 
   document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   host.addEventListener('click', (e) => {
     if (e.target === host) {
       close();

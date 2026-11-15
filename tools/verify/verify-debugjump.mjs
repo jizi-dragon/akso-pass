@@ -329,6 +329,14 @@ try {
   const popup = await newPage;
   check('G 点击工作流打开新页签', !!popup, popup?.url() ?? '');
   check('G 编辑器地址用 config id', /\/admin\/config\/workflow\/edit\?__edit=2&id=cfg-1/.test(popup?.url() ?? ''), popup?.url() ?? '');
+  /* 真实点击时新页签会被激活，原页进入 hidden；测试里显式 bringToFront 复现这一步，
+     否则 Playwright 可能只创建了后台页签，原页仍是 visible。 */
+  await popup?.bringToFront().catch(() => undefined);
+  await p1.waitForTimeout(300);
+  check(
+    'G 原页切到 hidden 后调试浮层自动关闭（不留在原页）',
+    await p1.evaluate(() => !document.getElementById('ql-debug-overlay-host')),
+  );
   await popup?.close().catch(() => {});
 
   await p1.bringToFront();

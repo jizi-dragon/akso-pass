@@ -159,6 +159,58 @@ if (built.includes('bindSitePicker') && !built.includes('输入序号')) {
   fail('构建产物里仍找不到 bindSitePicker，或还残留「输入序号」文案');
 }
 
+/* ==================== 结构段 ⑤ 切页关闭瞬时弹层 ==================== */
+console.log('\n=== 结构段 ⑤ 切页（hidden）关闭瞬时弹层 ===');
+const dismissed = await page.evaluate(() => {
+  const box = document.getElementById('box-modal');
+  const site = document.getElementById('site-modal');
+  box?.classList.remove('hidden');
+  site?.classList.remove('hidden');
+  const descriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => 'hidden',
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+  const hidden = {
+    box: box?.classList.contains('hidden') ?? false,
+    site: site?.classList.contains('hidden') ?? false,
+  };
+  if (descriptor) {
+    Object.defineProperty(document, 'visibilityState', descriptor);
+  } else {
+    delete document.visibilityState;
+  }
+  return hidden;
+}, null);
+if (dismissed.box && dismissed.site) {
+  ok('box/site 弹层在 visibilitychange(hidden) 后关闭');
+} else {
+  fail(`切页后弹层未关闭：${JSON.stringify(dismissed)}`);
+}
+
+/*
+ * 账号编辑弹窗是动态 DOM，离线时没有账号可点 ⇒ 这里做**形状判据**：
+ * 平行管理页必须保留「登记 closer + hidden 时统一关」的接线；
+ * 四个内容浮层必须各自挂 visibilitychange。行为判据在上面 box/site 那一条。
+ */
+const parallelBuilt = fs.readFileSync(path.join(DIST, 'ui', 'parallel', 'parallel.js'), 'utf8');
+if (parallelBuilt.includes('accountEditorClosers') && parallelBuilt.includes('dismissTransientSurfaces')) {
+  ok('平行管理页保留了账号编辑弹窗的切页 closer 接线');
+} else {
+  fail('平行管理页缺少 accountEditorClosers / dismissTransientSurfaces');
+}
+const overlayFiles = ['status-overlay.ts', 'debug-overlay.ts', 'wheel-overlay.ts', 'favorites-overlay.ts'];
+const missingOverlayHooks = overlayFiles.filter((f) => {
+  const src = fs.readFileSync(path.join(ROOT, 'packages', 'extension', 'src', 'content', f), 'utf8');
+  return !src.includes('visibilitychange') || !src.includes('onVisibilityChange');
+});
+if (missingOverlayHooks.length === 0) {
+  ok('四个内容浮层都挂了 visibilitychange 关闭');
+} else {
+  fail(`缺少 visibilitychange 关闭：${missingOverlayHooks.join(', ')}`);
+}
+
 /* ==================== 流程段（要显式开启 + 有会话） ==================== */
 console.log('\n=== 流程段：建盒 / 禁用 / 改名 / 删除（走真实云端） ===');
 const state = await page.evaluate(() => chrome.runtime.sendMessage({ kind: 'cloud.state' }).catch(() => null));

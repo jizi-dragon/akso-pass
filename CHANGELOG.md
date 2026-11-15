@@ -1,3 +1,12 @@
+## 4.3.4（2026-11-15）
+
+**快捷键切页后自动收起原页浮层与管理页弹窗**
+
+- 起因：Alt+Q 切到别的账号页后，原页的状态轮盘、调试浮层或管理页编辑弹窗不会消失；切回原页时仍停在弹窗上。
+- 改法：四个 content overlay（wheel/status/favorites/debug）监听 `visibilitychange`，页面进入 `hidden` 时 `close()`；调试浮层在 `debug.open` 成功后还会显式 `close()`，不再只依赖标签页可见性；并行管理页在非可见时调用 `dismissTransientSurfaces()`，收起账号编辑、盒子、站点、更新、云端菜单和帮助面板。设备登录等待面板刻意保留，因为切到另一标签页/手机批准是流程的一部分。
+- 验证：`npm run typecheck` / `npm run build` 绿；`verify-debugjump` 42/42、`verify-boxmgmt`、`verify-load` 通过。
+- 版本：4.3.3 → 4.3.4（patch，未打包 release）。
+
 ## 4.3.3（2026-11-10）
 
 **用户手册重写为图文版；顺手修掉两个界面小问题**

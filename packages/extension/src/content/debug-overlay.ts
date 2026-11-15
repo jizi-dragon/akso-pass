@@ -130,12 +130,23 @@ async function mount(): Promise<void> {
     }
     closing = true;
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     document.documentElement.style.overflow = prevOverflow;
     host.remove();
     WIN.__QL_DEBUG_ACTIVE__ = false;
     WIN.__QL_DEBUG_CLEANUP__ = undefined;
   };
   WIN.__QL_DEBUG_CLEANUP__ = close;
+
+  /**
+   * ★ 快捷键切走（Alt+Q 打开别的账号页、或 debug.open 开新页签）时，
+   * 本页会进入 hidden；调试浮层是瞬时面板，不能留在原页等用户切回来。
+   */
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') {
+      close();
+    }
+  }
 
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -162,6 +173,7 @@ async function mount(): Promise<void> {
     close();
   }
   document.addEventListener('keydown', onKey, true);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   // 与三个轮盘一致：点遮罩空白处关闭，点面板内部不关。
   // ★ 不能写 `e.target === host`：面板在 shadow root 里，真实点击冒泡到 host 时
@@ -184,6 +196,10 @@ async function mount(): Promise<void> {
       const r = res?.result;
       if (!r?.ok) {
         setMsg(r?.error ?? '打开失败', 'bad');
+      } else {
+        // 跳转成功后立刻收起：新页签可能没被激活（浏览器后台打开），不能只指望
+        // visibilitychange；原页切回来时也不该还停在调试浮层上。
+        close();
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e), 'bad');

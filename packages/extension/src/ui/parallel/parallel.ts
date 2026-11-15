@@ -768,6 +768,9 @@ function renderBrowserAccounts(): void {
  * ★ 站点下拉的数据源是 `cloudSites`（站点管理那一份）—— 与云端控制台的
  *   `sites` 数组同源。**不要**另取一份：那会让"站点管理里有的、下拉里没有"重现。
  */
+/** 当前打开的「编辑账号」弹窗；切页时统一关闭（见 `dismissTransientSurfaces`）。 */
+const accountEditorClosers = new Set<() => void>();
+
 function openAccountEditor(a: BrowserAccount): void {
   const card = document.createElement('div');
   card.className = 'modal-card';
@@ -877,9 +880,14 @@ function openAccountEditor(a: BrowserAccount): void {
   accountModalRoot.append(overlay);
 
   const close = (): void => {
+    if (!overlay.isConnected) {
+      return;
+    }
     overlay.remove();
     document.removeEventListener('keydown', onKey);
+    accountEditorClosers.delete(close);
   };
+  accountEditorClosers.add(close);
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') {
       close();
@@ -4607,8 +4615,29 @@ setInterval(() => void refreshAll(), 3000);
  * 判断"数据没变就不重建 DOM"。切回前台时这几个 key 可能仍是上一轮的值，
  * 于是**即使数据已经变了也不会重画** ⇒ 清了它们，下一轮必定真重画一次。
  */
+/**
+ * ★ 切页（document 进入 hidden）时关闭「瞬时弹层」。
+ *
+ * 为什么做在 `refreshOnForeground`：本页已有 visibilitychange / focus 监听，
+ * 原来只处理"回到前台刷新"；现在先处理"离开前台收尾"。
+ *
+ * 排除项：`#device-modal`（设备登录等待）**刻意不关** —— 用户可能正准备
+ * 到另一个标签页/手机批准登录，切走是流程的一部分，不是放弃。
+ */
+function dismissTransientSurfaces(): void {
+  closeUpdateDialog();
+  hideBoxModal();
+  hideSiteModal();
+  closeCloudMenu();
+  setHelpOpen(false);
+  for (const close of [...accountEditorClosers]) {
+    close();
+  }
+}
+
 function refreshOnForeground(): void {
   if (document.visibilityState !== 'visible') {
+    dismissTransientSurfaces();
     return;
   }
   lastListKey = '';

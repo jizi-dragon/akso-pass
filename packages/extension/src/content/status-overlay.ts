@@ -131,11 +131,23 @@ async function mount(): Promise<void> {
     }
     closed = true;
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     document.documentElement.style.removeProperty('overflow');
     host.classList.remove('show');
     WIN.__QL_STATUS_ACTIVE__ = false;
     WIN.__QL_STATUS_CLEANUP__ = undefined;
     window.setTimeout(() => host.remove(), 220);
+  }
+
+  /**
+   * ★ 快捷键切到另一个账号/页面后，本页会进入 hidden。
+   * 状态轮盘是**瞬时浮层**，不是跨页面的工作面板；留在原页会让用户切回来时
+   * 还停在一个已经失去上下文的轮盘上。设备登录等待面板不在此列。
+   */
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') {
+      close();
+    }
   }
   // 让「再次按快捷键」注入的新实例能立刻把本实例的监听器摘掉
   WIN.__QL_STATUS_CLEANUP__ = close;
@@ -207,6 +219,7 @@ async function mount(): Promise<void> {
   }
 
   document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   host.addEventListener('click', (e) => {
     if (e.target === host) {
       close();
