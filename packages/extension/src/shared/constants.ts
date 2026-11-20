@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.5.0';
+export const EXT_VERSION = '4.5.1';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -198,6 +198,57 @@ export const SHIELD_COOKIE_BAG_KEY = '__ql_cookies__';
 export function shieldNsPrefix(accountId: string): string {
   return `__ql_ns_${accountId}__`;
 }
+
+/* ============================================================================
+ * 自动截图（v4.5.1）
+ *
+ * 一句话：手动开始/停止录制，期间把「每次点击 / 每次输入」变成一张带标注的
+ * 关键帧截图，按时间线排成一份图文操作手册，可导出 Word / Markdown。
+ *
+ * ★ 与并行账号的关系：只对「站点管理里配置过的站点」录制，账号信息只是给
+ *   时间线加一个归属标签（`accountId`），截图链路本身不碰任何凭据。
+ * ========================================================================== */
+
+/**
+ * 截图链路的消息（content ⇄ background）。
+ *
+ * ★ 与 `CONTENT_MESSAGE` 分开：那组是「账号隔离/自动登录」的通路，
+ *   这组是「录制」的通路，混在一起会让后续读代码的人误以为录制也走桥协议。
+ */
+export const SHOT_MESSAGE = {
+  /** background → content：开始录制（带 sessionId） */
+  start: 'ql:shotStart',
+  /** background → content：停止录制 */
+  stop: 'ql:shotStop',
+  /** content → background：一次点击/输入事件（payload 见 ShotEventPayload） */
+  event: 'ql:shotEvent',
+  /** background → 扩展页：新增了一帧（payload 见 ShotProgressPayload） */
+  progress: 'ql:shotProgress',
+  /** background → 扩展页：录制被后台单方面收尾（步数上限 / 页签被关） */
+  stopped: 'ql:shotStopped',
+} as const;
+
+/** 录制中状态存 `chrome.storage.session` 的键（SW 随时可能被回收，必须落盘） */
+export const SHOT_ACTIVE_KEY = 'ql:shotActive';
+
+/**
+ * 截图存**独立 IDB**，不动 `sessionbox-reborn`。
+ *
+ * ★ 为什么不开第 2 个 store 混进主库：`storage/db.ts` 的 `onupgradeneeded` 里
+ *   有 `if (from < 3) { 删除 accounts }` 的迁移分支，而主库版本号是 2 ——
+ *   把版本升到 3 会**真的把 accounts 缓存删掉**（那正是离线副本）。
+ *   ⇒ 截图数据量大、生命周期完全不同，单独一个库最省事也最安全。
+ */
+export const SHOT_DB_NAME = 'akso-pass-shots';
+export const SHOT_DB_VERSION = 1;
+export const SHOT_STORE_SESSIONS = 'sessions';
+export const SHOT_STORE_STEPS = 'steps';
+
+/** 单次录制最多保留多少帧。达到上限**自动停止**并通知 UI（不静默丢帧） */
+export const SHOT_MAX_STEPS = 300;
+
+/** 截图最长边（px）。截图是 2× DPR 的，原样存会让一份手册几十 MB */
+export const SHOT_MAX_EDGE = 1600;
 
 /** 新会话默认配色（蓝白主题内的强调色轮换） */
 export const SESSION_COLORS = [

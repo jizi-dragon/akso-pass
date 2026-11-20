@@ -262,3 +262,115 @@ export type BridgeDownPayload =
   | { op: 'journalRollback' }
   /** 清扫本账号命名空间的 IDB / CacheStorage 共享缓存（叛逃页签写入的他人数据） */
   | { op: 'nsWipeShared' };
+
+/* ============================================================================
+ * 自动截图（v4.5.1）
+ * ========================================================================== */
+
+/** 一次录制里「一步」的动作类型 */
+export type ShotKind = 'click' | 'input';
+
+/**
+ * 时间线上的一帧（不含图片字节）。
+ *
+ * ★ 坐标一律是**视口 CSS 像素**，不是文档坐标：
+ *   ① 截图是视口截图，两者同一坐标系，标注不需要减去 scrollY；
+ *   ② 文档坐标在长页面里会超出截图范围，标出来必然错位。
+ */
+export interface ShotStepMeta {
+  id: string;
+  sessionId: string;
+  /** 1 起，仅用于展示与导出排序 */
+  seq: number;
+  kind: ShotKind;
+  at: number;
+  url: string;
+  title: string;
+  /** 事件发生时的视口尺寸（CSS px）与设备像素比 —— 标注换算的唯一依据 */
+  vw: number;
+  vh: number;
+  dpr: number;
+  /** 目标元素在视口内的矩形（CSS px，左上角 + 宽高） */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 元素的可读名（aria-label / 文本 / placeholder / tag 兜底） */
+  label: string;
+  /** 稳定选择器（id 优先，其次 tag + nth-of-type 链），写进手册便于定位 */
+  selector: string;
+  /** 输入值；`type=password` 等敏感框已打码，最多 120 字 */
+  value?: string;
+  /** 截图是否拿到（页签不在前台时拿不到，UI 必须明说而不是留白） */
+  hasImage: boolean;
+  /** 标注后图片的像素尺寸（导出 Word 时按比例排版） */
+  imageW?: number;
+  imageH?: number;
+  /** 用户可编辑的说明 */
+  caption: string;
+  /** 导出时是否包含 */
+  include: boolean;
+}
+
+/** IDB 里的一帧（含图片 blob） */
+export interface ShotStepRecord extends ShotStepMeta {
+  image?: Blob;
+}
+
+/** 一次录制（会话） */
+export interface ShotSessionMeta {
+  id: string;
+  name: string;
+  startedAt: number;
+  endedAt?: number;
+  tabId: number;
+  host: string;
+  accountId?: string;
+  stepCount: number;
+}
+
+/** 录制中状态（chrome.storage.session 持久化，SW 回收后能恢复） */
+export interface ShotRunningState {
+  sessionId: string;
+  tabId: number;
+  host: string;
+  startedAt: number;
+  stepCount: number;
+}
+
+/** 「开始录制」的目标页签（只列已配置站点上的并行账号页签） */
+export interface ShotTargetTab {
+  tabId: number;
+  title: string;
+  url: string;
+  /** 带端口的 host（用于构造授权 pattern） */
+  host: string;
+  accountId?: string;
+  accountName?: string;
+}
+
+/** content → background 的单步事件载荷 */
+export interface ShotEventPayload {
+  sessionId: string;
+  kind: ShotKind;
+  at: number;
+  url: string;
+  title: string;
+  vw: number;
+  vh: number;
+  dpr: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  selector: string;
+  value?: string;
+}
+
+/** background → 扩展页的进度推送 */
+export interface ShotProgressPayload {
+  sessionId: string;
+  stepCount: number;
+  step: ShotStepMeta;
+}

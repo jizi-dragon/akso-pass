@@ -1,0 +1,212 @@
+/* 自动截图 —— 只写这一页独有的排版；外壳、按钮、卡片全部复用 theme/sidebar/panel。
+   ★ 尺寸一律走 tokens（--sp-* / --fs-* / --sb-radius*），否则 verify-spacing / verify-radius 会报。 */
+
+.shot-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.shot-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.shot-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-top: var(--sp-3);
+}
+
+.shot-rec {
+  color: var(--sb-danger);
+  border-color: var(--sb-danger);
+}
+
+.shot-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: var(--sp-4);
+  margin-top: var(--sp-3);
+}
+
+.shot-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 420px;
+  overflow: auto;
+}
+
+.shot-session {
+  border: var(--sp-hair) solid var(--sb-border);
+  border-radius: var(--sb-radius-sm);
+  background: var(--sb-surface);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+.shot-session:hover {
+  border-color: var(--sb-border-strong);
+}
+
+.shot-session.is-active {
+  border-color: var(--sb-brand);
+  box-shadow: inset 2px 0 0 var(--sb-brand);
+}
+
+.shot-session-name {
+  display: block;
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.shot-session-meta {
+  display: block;
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+  margin-top: var(--sp-hair);
+}
+
+.shot-detail {
+  min-width: 0;
+}
+
+.shot-detail-head {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.shot-name {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  border: var(--sp-hair) solid transparent;
+  border-radius: var(--sb-radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  background: transparent;
+  color: inherit;
+  min-width: 240px;
+}
+
+.shot-name:hover,
+.shot-name:focus {
+  border-color: var(--sb-border);
+  background: var(--sb-surface);
+  outline: none;
+}
+
+.shot-export {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.shot-danger {
+  color: var(--sb-danger);
+}
+
+.shot-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.shot-step {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: var(--sp-3);
+  align-items: start;
+  border: var(--sp-hair) solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  padding: var(--sp-2);
+  background: var(--sb-surface);
+}
+
+.shot-thumb {
+  width: 84px;
+  height: 52px;
+  border-radius: var(--sb-radius-sm);
+  background: var(--sb-bg);
+  border: var(--sp-hair) solid var(--sb-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: zoom-in;
+  padding: 0;
+}
+
+.shot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.shot-thumb-empty {
+  font-size: var(--fs-11);
+  color: var(--sb-text-secondary);
+}
+
+.shot-step-body {
+  min-width: 0;
+}
+
+.shot-step-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  margin: 0 0 var(--sp-1);
+}
+
+.shot-step-meta {
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+  margin: 0 0 var(--sp-1);
+  overflow-wrap: anywhere;
+}
+
+.shot-caption {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--fs-13);
+  border: var(--sp-hair) solid var(--sb-border);
+  border-radius: var(--sb-radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--sb-surface);
+  color: inherit;
+}
+
+.shot-caption:focus {
+  outline: none;
+  border-color: var(--sb-brand);
+}
+
+.shot-step-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: flex-end;
+  font-size: var(--fs-12);
+  color: var(--sb-text-secondary);
+}
+
+@media (max-width: 860px) {
+  .shot-layout {
+    grid-template-columns: 1fr;
+  }
+}

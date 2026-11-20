@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>自动截图 · Akso Pass</title>
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="../sidebar.css" />
+    <link rel="stylesheet" href="../panel.css" />
+    <link rel="stylesheet" href="shot.css" />
+  </head>
+  <body>
+    <!-- 多页外壳：类名合约与 parallel.html / translate.html 一致（ui/sidebar.css 是唯一样式来源） -->
+    <aside class="sb-side">
+      <div class="sb-brand">
+        <img class="sb-brand-logo" src="../../assets/Icon48.png" alt="" aria-hidden="true" />
+        <div class="sb-brand-text">
+          <h1>Akso Pass</h1>
+          <p>多账号并行工作台</p>
+        </div>
+      </div>
+      <nav class="sb-nav" aria-label="主导航">
+        <a class="sb-nav-item" href="../parallel/parallel.html">
+          <span class="sb-nav-icon" aria-hidden="true">▦</span>
+          <span>账号中心</span>
+        </a>
+        <a class="sb-nav-item" href="../translate/translate.html">
+          <span class="sb-nav-icon" aria-hidden="true">文</span>
+          <span>翻译面板</span>
+        </a>
+        <a class="sb-nav-item is-active" href="shot.html" aria-current="page">
+          <span class="sb-nav-icon" aria-hidden="true">◉</span>
+          <span>自动截图</span>
+        </a>
+      </nav>
+      <div class="sb-side-foot">
+        <span>自动截图</span>
+        <span class="sb-foot-right">
+          <span id="ver-chip" class="status-chip">v—</span>
+        </span>
+      </div>
+    </aside>
+
+    <main class="wrap sb-main">
+      <div class="t-shell">
+        <div class="head">
+          <div class="brand-text">
+            <h2>自动截图</h2>
+            <p class="desc">
+              在「站点管理」里配置过的站点中手动开录，每次点击 / 输入自动截一张带标注的图，最后导出成操作手册（Word / Markdown）。
+            </p>
+          </div>
+        </div>
+
+        <section class="card block">
+          <div class="block-head row">
+            <h3>录制</h3>
+            <span id="rec-chip" class="status-chip shot-rec hidden">● REC</span>
+          </div>
+
+          <div class="field">
+            <span>录制页签</span>
+            <div class="shot-row">
+              <select id="target" aria-label="选择要录制的页签"></select>
+              <button id="target-refresh" class="btn-ghost btn-sm" type="button">刷新页签</button>
+            </div>
+          </div>
+
+          <div class="shot-actions">
+            <button id="start" class="btn-primary" type="button">开始录制</button>
+            <button id="stop" class="btn-ghost hidden" type="button">停止录制</button>
+            <span id="rec-stat" class="stat"></span>
+          </div>
+
+          <p id="rec-notice" class="notice warn hidden" role="status" aria-live="polite"></p>
+          <p class="desc">
+            录制期间请让这个页签保持在前台 —— Chrome 只能截当前可见的页签；后台页签的那几步会记文字、不配图。
+          </p>
+        </section>
+
+        <section class="card block">
+          <div class="block-head row">
+            <h3>录制记录</h3>
+            <button id="sessions-refresh" class="btn-ghost btn-sm" type="button">刷新记录</button>
+          </div>
+
+          <div class="shot-layout">
+            <ul id="sessions" class="shot-sessions"></ul>
+
+            <div class="shot-detail">
+              <p id="detail-empty" class="desc">左边选一次录制，这里会列出它的时间线。</p>
+              <div id="detail" class="hidden">
+                <div class="shot-detail-head">
+                  <input id="session-name" class="shot-name" aria-label="录制名称" />
+                  <span id="session-meta" class="desc"></span>
+                </div>
+
+                <div class="shot-export">
+                  <button id="export-docx" class="btn-primary btn-sm" type="button">导出 Word</button>
+                  <button id="export-md" class="btn-ghost btn-sm" type="button">导出 Markdown</button>
+                  <button id="export-images" class="btn-ghost btn-sm" type="button">导出图片包</button>
+                  <button id="delete-session" class="btn-ghost btn-sm shot-danger" type="button">删除这次录制</button>
+                </div>
+
+                <p id="export-notice" class="notice warn hidden" role="status" aria-live="polite"></p>
+                <ol id="steps" class="shot-steps"></ol>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="shot.js"></script>
+  </body>
+</html>

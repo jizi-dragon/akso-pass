@@ -144,11 +144,16 @@ const extensionOptions = {
     'content/debug-hotkey': path.join(extDir, 'src', 'content', 'debug-hotkey.ts'),
     // v4.2.0：翻译（合并 Akso Instant Translate）—— 浮动图标 + Alt+T
     'content/translate': path.join(extDir, 'src', 'content', 'translate.ts'),
+    // v4.5.1：自动截图的事件采集器（**不在 manifest content_scripts 里**，
+    //   只在开始录制时由 background 用 chrome.scripting.executeScript 注入）
+    'content/shot-recorder': path.join(extDir, 'src', 'content', 'shot-recorder.ts'),
     'ui/popup/popup': path.join(extDir, 'src', 'ui', 'popup', 'popup.ts'),
     'ui/parallel/parallel': path.join(extDir, 'src', 'ui', 'parallel', 'parallel.ts'),
     // v4.2.0：翻译面板（侧栏导航的第二个页面）
     'ui/translate/translate': path.join(extDir, 'src', 'ui', 'translate', 'translate.ts'),
     'ui/wheel/wheel': path.join(extDir, 'src', 'ui', 'wheel', 'wheel.ts'),
+    // v4.5.1：自动截图控制台（侧栏导航的第三个页面）
+    'ui/shot/shot': path.join(extDir, 'src', 'ui', 'shot', 'shot.ts'),
   },
 };
 

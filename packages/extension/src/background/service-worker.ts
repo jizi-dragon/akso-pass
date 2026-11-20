@@ -1,6 +1,6 @@
 import type { RuntimeRequest, RuntimeResponse, Result, StatusContext, StatusList } from '../shared/messages';
-import type { BridgeUpPayload } from '../shared/types';
-import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../shared/constants';
+import type { BridgeUpPayload, ShotEventPayload } from '../shared/types';
+import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, SHOT_MESSAGE, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../shared/constants';
 // ★ 日志的**唯一公开面**（AGENTS.md 规则 3）：取 logger 与读缓冲都从这里。
 //   直接 `console.*` 会绕过强制打码；直接读 ring 会绕过 `drain()` 的游标还原。
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
@@ -158,6 +158,19 @@ import {
 } from './core/instance-status';
 import { StatusCache } from './core/status-cache';
 import { hostNoPortOf, tabRules } from './core/tab-rules';
+import {
+  deleteShotSession,
+  deleteShotStep,
+  getRunningShot,
+  handleShotEvent,
+  listShotSessions,
+  listShotSteps,
+  listShotTargets,
+  renameShotSession,
+  startShot,
+  stopShot,
+  updateShotStep,
+} from './core/shot-capture';
 
 function ok<T>(data: T): Result<T> {
   return { ok: true, data };
@@ -229,6 +242,42 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
       // 授权增撤后由 UI 通知：刷新授权健康缓存（下轮 par.list 生效）
       invalidateEnforcementCache();
       return { kind: 'par.grantChanged', result: ok(true) };
+    }
+    /* ---- 自动截图（v4.5.1）----
+     * 录制本身由内容脚本驱动（事件经 `onMessage` 前置分流直接进 `handleShotEvent`），
+     * 这里只处理「扩展页发来的增删改查」。 */
+    case 'shot.targets': {
+      return { kind: 'shot.targets', result: await tryRun(() => listShotTargets()) };
+    }
+    case 'shot.start': {
+      return { kind: 'shot.start', result: await tryRun(() => startShot(req.tabId)) };
+    }
+    case 'shot.stop': {
+      return { kind: 'shot.stop', result: await tryRun(() => stopShot(req.sessionId)) };
+    }
+    case 'shot.running': {
+      return { kind: 'shot.running', result: await tryRun(() => getRunningShot()) };
+    }
+    case 'shot.sessions': {
+      return { kind: 'shot.sessions', result: await tryRun(() => listShotSessions()) };
+    }
+    case 'shot.steps': {
+      return { kind: 'shot.steps', result: await tryRun(() => listShotSteps(req.sessionId)) };
+    }
+    case 'shot.updateStep': {
+      return {
+        kind: 'shot.updateStep',
+        result: await tryRun(() => updateShotStep(req.id, { caption: req.caption, include: req.include })),
+      };
+    }
+    case 'shot.deleteStep': {
+      return { kind: 'shot.deleteStep', result: await tryRun(() => deleteShotStep(req.id)) };
+    }
+    case 'shot.deleteSession': {
+      return { kind: 'shot.deleteSession', result: await tryRun(() => deleteShotSession(req.id)) };
+    }
+    case 'shot.rename': {
+      return { kind: 'shot.rename', result: await tryRun(() => renameShotSession(req.id, req.name)) };
     }
     case 'ql.diag': {
       // SW 上下文原地诊断（台架取证用）：storage.local 读写 / DNR 安装 / 模块内部状态
@@ -1217,6 +1266,19 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   ) {
     const text = (req as { text?: unknown }).text;
     void handleTranslateRequest(typeof text === 'string' ? text : '').then(sendResponse);
+    return true;
+  }
+
+  // 1.6 自动截图（v4.5.1）：内容脚本报来的一次点击/输入。
+  //     ★ 必须在前置分流里就地处理：这一条的目的就是「在事件发生的那一瞬间截图」，
+  //       绕进 dispatch 的排队只会让图变成页面跳转之后的样子。
+  if (req && typeof req === 'object' && (req as { type?: string }).type === SHOT_MESSAGE.event) {
+    const payload = (req as { payload?: ShotEventPayload }).payload;
+    if (!payload || typeof payload.sessionId !== 'string') {
+      sendResponse({ ok: false, error: '事件载荷不完整' });
+      return true;
+    }
+    void handleShotEvent(payload, sender).then(sendResponse);
     return true;
   }
 

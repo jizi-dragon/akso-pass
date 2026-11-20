@@ -63,7 +63,7 @@ ServiceWorker），同 origin 多账号天然互相污染。本项目逐层把�
 - **运行时**：Chrome / Edge MV3 扩展（`minimum_chrome_version: 110`）；
   Node 24 + npm 11（构建与工具链）
 - **构建**：npm workspaces（`packages/*`）+ **esbuild 0.24**，`scripts/build.mjs` 单文件流水线，
-  产物 `dist/`（`iife`、10 个入口，静态 html/css/图标直接复制）
+  产物 `dist/`（`iife`、17 个入口，静态 html/css/图标直接复制）
 - **测试 / 校验**：`tsc --noEmit`（类型）+ `npm run build`（打包）+ 浏览器装载实测。
   **无单元测试框架、无 lint、无 CI**（`.github/`、eslint/prettier 配置均不存在）
 - **数据存储**：扩展侧 IndexedDB（`sessionbox-reborn` v2）；`chrome.storage.session`（绑定表、
@@ -137,6 +137,11 @@ ServiceWorker），同 origin 多账号天然互相污染。本项目逐层把�
 | `.../content/auto-login.ts` | 自动填表：React 受控组件原生 setter + input/change、提交前回读、MutationObserver 即时填充、用户接管让位、失败感知；全流程逐事件入 `ql:forensics`（密码绝不入日志） |
 | `.../ui/parallel/parallel.ts` | 管理主页：账号 CRUD、盒子（重命名/启停/删除/移入）、批量模式、文本批量导入、站点授权管理、备份导入导出、诊断包导出、3s 轮询 |
 | `.../ui/wheel/wheel-core.ts` | 轮盘视觉契约（SVG 环形几何）被小窗与页内浮层共用 |
+| `.../background/core/shot-capture.ts` | 自动截图后台：录制态（`ql:shotActive`）、`captureVisibleTab` → `OffscreenCanvas` 烘焙标注 → 落独立 IDB；站点授权与账号归属校验；步数上限收尾 |
+| `.../content/shot-recorder.ts` | 自动截图录制器：**不常驻 manifest**，开录时 `executeScript` 注入；捕获阶段监听 `pointerdown`/`change`，上报元素矩形与文案，密码类脱敏 |
+| `.../ui/shot/shot.ts` | 自动截图控制台：选目标页签、开始/停止、时间线编辑、导出 Word/Markdown/图片 zip |
+| `.../storage/shot-db.ts` | 截图独立 IDB（`akso-pass-shots`）。**必须独立**：主库 `storage/db.ts` 的 `onupgradeneeded` 在 `from < 3` 时会清空 `accounts` |
+| `.../shared/{zip,docx,markdown}.ts` | 导出用零依赖实现：store-only ZIP、最小 DOCX（图片关系 + 直接格式）、Markdown + 图片 zip 旁挂 |
 
 ## Data & control flow
 
@@ -176,26 +181,30 @@ COOKIE 规则首次或值变时重建；AUTH 规则 token 变化时换新 id（�
 否则经 `sessionStorage.__ql_boot_guard` 守卫 **reload 一次**再激活。
 收到 `hold`（亲子继承候选）保持等待、不置 `settled`；收到 `unbound` 则永久直通。
 
+**6. 自动截图录制（`shot.*`）**
+`ui/shot/shot.ts` 在点击里**第一个 await** 就 `chrome.permissions.request({origins:[*://host/*]})`（手势一旦被前置 await 打断就静默失败）→ `shot.start{tabId}` → `shot-capture.startShot()` 校验站点授权与账号归属 → 建 session + `saveActive` + `executeScript('content/shot-recorder.js')` → 录制器每次 `pointerdown`/`change` 发 `ql:shotEvent` → 后台 600ms 节流 `captureVisibleTab`（**只截前台页签**，否则会截到别的页）→ `OffscreenCanvas` 压暗 + 玫红光框 → `putStep` 落库 → 广播 `ql:shotProgress` 给界面。达到 `SHOT_MAX_STEPS` 或页签关闭时后台自行收尾并广播 `ql:shotStopped`。
+
 ## Entry points
 
 - **扩展清单**：`packages/extension/manifest.json` — MV3；`background.js`；
   `permissions: tabs, scripting, cookies, storage, webRequest, declarativeNetRequestWithHostAccess, webNavigation`；
   `host_permissions: []` + `optional_host_permissions: ["*://*/*"]`（按站点动态授权）；
   4 个静态 content script（`shield-bridge` ISOLATED / `shield-main` MAIN，均 `document_start` `all_frames`；
-  `title-hook` / `auto-login` 于 `document_idle`）；**3 个 command**（`quick-wheel`=Alt+Q、`quick-status`=Alt+W、`quick-favorites`=Alt+1）。
-- **注意**：`content/wheel-overlay.js`、`content/status-overlay.js` 与 `content/favorites-overlay.js` **不在 manifest 中**，
-  由 SW 在快捷键触发时 `chrome.scripting.executeScript` 按需注入（`service-worker.ts:431`、`:504`）。
+  `title-hook` / `auto-login` 于 `document_idle`）；**5 个 command**（`quick-wheel`=Alt+Q、`quick-status`=Alt+W、`quick-favorites`=Alt+1、`quick-debug`、`translate-input`=Ctrl+X）。
+- **注意**：`content/wheel-overlay.js`、`content/status-overlay.js`、`content/favorites-overlay.js` 与
+  `content/shot-recorder.js` **不在 manifest 中**，由 SW 在快捷键触发/开始录制时 `chrome.scripting.executeScript`
+  按需注入（`service-worker.ts:431`、`:504`、`background/core/shot-capture.ts` 的 `injectRecorder`）。
 - **后台入口**：`src/background/service-worker.ts`（`restore()` 冷启自举）。
 - **界面入口**：`ui/popup/popup.html`（`action.default_popup`）、`ui/parallel/parallel.html`、
-  `ui/wheel/wheel.html`（独立小窗）。
-- **构建入口**：`scripts/build.mjs`（10 个 esbuild 入口 → `dist/`）。
+  `ui/translate/translate.html`、`ui/shot/shot.html`、`ui/wheel/wheel.html`（独立小窗）。
+- **构建入口**：`scripts/build.mjs`（17 个 esbuild 入口 → `dist/`）。
 
 ## Build, run, and test
 
 ```bash
 npm install            # 无原生依赖；首次
 npm run typecheck      # tsc --noEmit（已实测通过，exit 0）
-npm run build          # esbuild → dist/（已实测通过，10 个入口）
+npm run build          # esbuild → dist/（已实测通过，17 个入口）
 npm run watch          # esbuild context watch
 node tools/e2e/probe-page.mjs   # 页面结构探针（见下方「工具链缺口」）
 ```

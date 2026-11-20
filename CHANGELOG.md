@@ -1,3 +1,16 @@
+## 4.5.1（2026-11-20）
+
+**新增「自动截图」：把一次操作录成带标注的图文手册**
+
+- 入口：管理页左侧第三项「自动截图」（`ui/shot/shot.html`），与「账号中心」「翻译面板」并列。
+- 录制：先选一个「站点管理」里已配置的页签 → 开始录制 → 每次点击、每次输入框离开都会在**事件瞬间** `captureVisibleTab`，后台用 `OffscreenCanvas` 烘焙「压暗 + 聚光灯 + 玫红描边」，按时间线排成步骤。
+- 后台：截图链路在 `background/core/shot-capture.ts`；`content/shot-recorder.ts` 不常驻 manifest，开始录制时用 `chrome.scripting.executeScript` 注入；`startShot` 先校验站点授权（`chrome.permissions.contains`）与账号归属（`boundAccountOf` 或站点列表）。
+- 时间线：场次列表 + 步骤详情，可改说明、取消单步导出、删除步骤/场次、改场次名。
+- 导出：Word（自写 DOCX，零依赖）、Markdown（`.md` + 图片 zip）、仅图片 zip；ZIP 用自写 store-only 实现，不引三方库。
+- 边界：只录已配置站点；只截前台页签；单次 300 步上限（到顶自动停止并通知界面，不静默丢帧）；截图存独立 IDB `akso-pass-shots`，不碰主库 `sessionbox-reborn`；密码类输入写成 `••••••`。
+- 验证：`typecheck` / `build` / `check-deps` 绿；`run-all --static` 33/33；`verify-load` 通过（`ui/shot/shot.html` 无未捕获错误）。全量浏览器回归 14/25，失败 11 项与本次无关（本机云端未登录导致 `par.create` 失败、`#update-banner` 不可见、下载事件超时等；4.4.0 条目已记录同类环境性失败）。
+- 版本：4.5.0 → 4.5.1（patch，未打包 release）。
+
 ## 4.5.0（2026-11-16）
 
 **更新检查改走 akso-cloud 的 `latest.json`，且只提醒 minor 新版本**

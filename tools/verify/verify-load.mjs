@@ -180,6 +180,8 @@ try {
     'ui/parallel/parallel.html',
     'ui/translate/translate.html',
     'ui/wheel/wheel.html',
+    // v4.5.1：自动截图控制台
+    'ui/shot/shot.html',
   ];
   // 反向核对：源码里有多少个 html，清单里就该有多少条（漏登记 = 永远不试装）
   const htmlOnDisk = readdirSync(path.join(root, 'packages', 'extension', 'src', 'ui'), { recursive: true })

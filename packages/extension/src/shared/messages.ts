@@ -1,5 +1,6 @@
 import type { LogRecord } from './log';
 import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
+import type { ShotRunningState, ShotSessionMeta, ShotStepMeta, ShotTargetTab } from './types';
 import type { UpdateState } from './update-logic';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -177,6 +178,22 @@ export type RuntimeRequest =
   | { kind: 'par.delete'; id: string }
   | { kind: 'par.open'; id: string; forceNewTab?: boolean }
   | { kind: 'par.grantChanged' }
+  /* ---- 自动截图（v4.5.1）----
+   * 录制由 UI 手动开始/停止，开启后背景在每次点击/输入瞬间截一张带标注的图。
+   * 图片字节不走消息（体积大且 UI 与后台同源），只传元数据，UI 直接读 IDB。
+   * ★ 注释里不许出现「中文分号＋换行」：上方的抽取判据会被提前收尾（见文件头警告） */
+  | { kind: 'shot.targets' }
+  /** 开始录制。调用方（UI）必须**先**在用户手势里拿到该站点 origin 授权 */
+  | { kind: 'shot.start'; tabId: number }
+  | { kind: 'shot.stop'; sessionId: string }
+  /** 当前是否在录制（UI 刷新/重开时恢复按钮状态） */
+  | { kind: 'shot.running' }
+  | { kind: 'shot.sessions' }
+  | { kind: 'shot.steps'; sessionId: string }
+  | { kind: 'shot.updateStep'; id: string; caption?: string; include?: boolean }
+  | { kind: 'shot.deleteStep'; id: string }
+  | { kind: 'shot.deleteSession'; id: string }
+  | { kind: 'shot.rename'; id: string; name: string }
   | { kind: 'ql.diag' }
   /**
    * ★★ 前端把日志转给 SW（v3.19）。
@@ -352,6 +369,17 @@ export type RuntimeResponse =
   | { kind: 'par.delete'; result: Result<void> }
   | { kind: 'par.open'; result: Result<{ tabId: number; reused: boolean }> }
   | { kind: 'par.grantChanged'; result: Result<boolean> }
+  /* ---- 自动截图（v4.5.1）---- */
+  | { kind: 'shot.targets'; result: Result<ShotTargetTab[]> }
+  | { kind: 'shot.start'; result: Result<ShotRunningState> }
+  | { kind: 'shot.stop'; result: Result<{ stepCount: number }> }
+  | { kind: 'shot.running'; result: Result<ShotRunningState | null> }
+  | { kind: 'shot.sessions'; result: Result<ShotSessionMeta[]> }
+  | { kind: 'shot.steps'; result: Result<ShotStepMeta[]> }
+  | { kind: 'shot.updateStep'; result: Result<ShotStepMeta> }
+  | { kind: 'shot.deleteStep'; result: Result<void> }
+  | { kind: 'shot.deleteSession'; result: Result<void> }
+  | { kind: 'shot.rename'; result: Result<ShotSessionMeta> }
   | { kind: 'ql.diag'; result: Result<Record<string, unknown>> }
   /** ★ 前端日志转发（v3.19）。SW **不回传内容**（避免日志变成往返流量）。 */
   | { kind: 'ql.log'; result: Result<{ accepted: number }> }
