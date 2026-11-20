@@ -26,7 +26,6 @@ import type {
   ShotSessionMeta,
   ShotStepMeta,
   ShotStepRecord,
-  ShotTargetTab,
 } from '../../shared/types';
 import { getLogger } from '../../shared/log';
 import { shotDb } from '../../storage/shot-db';
@@ -108,34 +107,6 @@ async function clearBadge(tabId: number): Promise<void> {
 
 /* ============================== 对外查询 ============================== */
 
-/** 可录制的页签：只列**并行账号已打开**的页签（它们一定属于「站点管理」里的站点） */
-export async function listShotTargets(): Promise<ShotTargetTab[]> {
-  const accounts = await parallelStore.list();
-  const out: ShotTargetTab[] = [];
-  for (const account of accounts) {
-    const { tabIds } = parallelSession.statusOf(account);
-    for (const tabId of tabIds) {
-      const tab = await chrome.tabs.get(tabId).catch(() => null);
-      if (!tab || !tab.url || !/^https?:/i.test(tab.url)) continue;
-      let host = '';
-      try {
-        host = new URL(tab.url).host;
-      } catch {
-        continue;
-      }
-      out.push({
-        tabId,
-        title: tab.title || account.tabName,
-        url: tab.url,
-        host,
-        accountId: account.id,
-        accountName: account.tabName,
-      });
-    }
-  }
-  return out.sort((a, b) => (a.accountName ?? '').localeCompare(b.accountName ?? '') || a.tabId - b.tabId);
-}
-
 export async function getRunningShot(): Promise<ShotRunningState | null> {
   return await loadActive();
 }
@@ -176,10 +147,13 @@ export async function startShot(tabId: number): Promise<ShotRunningState> {
   const host = new URL(tab.url).host;
   const hostBare = hostNoPortOf(host);
 
-  // 授权：调用方应在用户手势里先 request 过；这里再实查一次，避免「看起来在录、其实截不到」
+  // 站点授权：录制只覆盖「站点管理」里配置过的站点（用户明确要求的范围）。
+  // ★ 它**不是**截图权限 —— `captureVisibleTab` 要的是 `activeTab` 或 `<all_urls>`，
+  //   而 `activeTab` 由「用户在目标页签上点扩展图标」那一刻授予（见 ui/popup/popup.ts），
+  //   这里查不出来也补不上，只能在开录时机上保证。
   const pattern = `*://${host}/*`;
   const granted = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
-  if (!granted) throw new Error(`缺少「${hostBare}」的站点授权：请在本页点「授权并开始」`);
+  if (!granted) throw new Error(`缺少「${hostBare}」的站点授权：请到「账号中心 → 站点管理」重新授权后再录`);
 
   // 只对「站点管理」里配置过的站点录制（用户明确要求的范围）
   const accountId = parallelSession.boundAccountOf(tabId);

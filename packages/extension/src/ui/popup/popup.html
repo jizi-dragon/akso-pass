@@ -52,6 +52,19 @@
         </div>
       </section>
 
+      <!-- ★ v4.5.2：录制入口放在这里是有原因的 —— `captureVisibleTab` 只认
+           `<all_urls>` 或 `activeTab`，而 `activeTab` **只在用户点扩展图标/快捷键的
+           那一刻**临时授予当前页签。从管理页点「开始」拿不到它（实测报
+           "Either the '<all_urls>' or 'activeTab' permission is required."），
+           所以开录必须是"在要录的页签上点图标"这个动作本身。 -->
+      <div class="shot-row">
+        <button id="shot-btn" class="shot-btn" type="button" title="录制当前页签的操作过程">
+          <span class="shot-dot" aria-hidden="true">◉</span>
+          <span id="shot-btn-text">录制本页</span>
+        </button>
+      </div>
+      <p id="shot-status" class="shot-status" role="status" aria-live="polite">录制后在本页正常操作，点击与输入自动记一步。</p>
+
       <button id="open-parallel" class="launch" type="button">
         <span class="launch-ico" aria-hidden="true">
           <svg viewBox="0 0 16 16" width="15" height="15">

@@ -1,3 +1,15 @@
+## 4.5.2（2026-11-20）
+
+**修「自动截图」一张图都截不到：开录入口改到扩展弹窗（`activeTab`）**
+
+- 起因：4.5.1 是在「自动截图」页选页签、点「开始录制」。但 `chrome.tabs.captureVisibleTab` 只认 `<all_urls>` 或 `activeTab` —— 按站点授予的 host 权限**不算**。实测（带 `http://127.0.0.1/*` host 权限的临时副本）返回 `Either the '<all_urls>' or 'activeTab' permission is required.`，而截图失败在 4.5.1 里是**静默降级**（这一步照记、只是没图），所以看起来"录上了"。
+- 改法：manifest 只加 `activeTab`（**不加** `<all_urls>`，保持按站点授权）；开录入口移到弹窗「录制本页」—— 点扩展图标那一刻 Chrome 才把临时截图权限授予当前页签；「自动截图」页只保留停止、时间线与导出。
+- 清理：删掉已无意义的 `shot.targets` 链路（`shared/messages.ts` / `shared/types.ts` 的 `ShotTargetTab` / SW dispatch / `listShotTargets`）。
+- 已知边界：录制中途跨站跳转会让临时权限失效，之后的步骤只记文字不配图（手册 10.3 已写明）。
+- 细节：弹窗里的失败原因不再被状态重画覆盖 —— 在受限页（`chrome://`、扩展页）或未授权站点点「录制本页」时，能看到具体原因而不是回到默认提示。
+- 验证：`typecheck` / `build` / `check-deps` 绿；`run-all --static` 33/33；`verify-load` 通过（含 `ui/shot/shot.html` 无未捕获错误）。
+- 版本：4.5.1 → 4.5.2（patch，未打包 release）。
+
 ## 4.5.1（2026-11-20）
 
 **新增「自动截图」：把一次操作录成带标注的图文手册**

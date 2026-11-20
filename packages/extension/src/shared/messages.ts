@@ -1,6 +1,6 @@
 import type { LogRecord } from './log';
 import type { CloudDeleteSiteResult, CloudSiteSummary, CloudUiState, ParallelAccount, ParallelAccountStatus, ParBox } from './types';
-import type { ShotRunningState, ShotSessionMeta, ShotStepMeta, ShotTargetTab } from './types';
+import type { ShotRunningState, ShotSessionMeta, ShotStepMeta } from './types';
 import type { UpdateState } from './update-logic';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -182,7 +182,6 @@ export type RuntimeRequest =
    * 录制由 UI 手动开始/停止，开启后背景在每次点击/输入瞬间截一张带标注的图。
    * 图片字节不走消息（体积大且 UI 与后台同源），只传元数据，UI 直接读 IDB。
    * ★ 注释里不许出现「中文分号＋换行」：上方的抽取判据会被提前收尾（见文件头警告） */
-  | { kind: 'shot.targets' }
   /** 开始录制。调用方（UI）必须**先**在用户手势里拿到该站点 origin 授权 */
   | { kind: 'shot.start'; tabId: number }
   | { kind: 'shot.stop'; sessionId: string }
@@ -370,7 +369,6 @@ export type RuntimeResponse =
   | { kind: 'par.open'; result: Result<{ tabId: number; reused: boolean }> }
   | { kind: 'par.grantChanged'; result: Result<boolean> }
   /* ---- 自动截图（v4.5.1）---- */
-  | { kind: 'shot.targets'; result: Result<ShotTargetTab[]> }
   | { kind: 'shot.start'; result: Result<ShotRunningState> }
   | { kind: 'shot.stop'; result: Result<{ stepCount: number }> }
   | { kind: 'shot.running'; result: Result<ShotRunningState | null> }

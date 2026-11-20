@@ -186,3 +186,26 @@ body {
 .popup-check:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .popup-check:disabled { opacity: 0.55; cursor: default; }
 .update-status { font-size: var(--fs-11); color: var(--sb-text-secondary); }
+
+/* 录制本页（v4.5.2）：唯一需要 activeTab 的入口，见 popup.html 的注释 */
+.shot-row { display: flex; margin-top: var(--sp-2); }
+.shot-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius-lg);
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.shot-btn:hover:not(:disabled) { border-color: var(--sb-brand); color: var(--sb-brand); }
+.shot-btn.is-rec { border-color: var(--sb-danger); color: var(--sb-danger); }
+.shot-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.shot-btn:disabled { opacity: 0.55; cursor: default; }
+.shot-dot { font-size: var(--fs-11); line-height: 1; }
+.shot-status { margin: var(--sp-1) 0 0; font-size: var(--fs-11); color: var(--sb-text-secondary); text-align: center; }

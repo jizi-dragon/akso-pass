@@ -338,17 +338,6 @@ export interface ShotRunningState {
   stepCount: number;
 }
 
-/** 「开始录制」的目标页签（只列已配置站点上的并行账号页签） */
-export interface ShotTargetTab {
-  tabId: number;
-  title: string;
-  url: string;
-  /** 带端口的 host（用于构造授权 pattern） */
-  host: string;
-  accountId?: string;
-  accountName?: string;
-}
-
 /** content → background 的单步事件载荷 */
 export interface ShotEventPayload {
   sessionId: string;

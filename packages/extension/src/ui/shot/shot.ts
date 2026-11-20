@@ -3,7 +3,8 @@
  *
  * 职责边界（★ 很重要）：
  *   · 后台负责「发生即截」——事件监听在内容脚本、截图与标注在 SW；
- *   · 这一页只负责「人看的部分」：选页签、开停录制、审时间线、导出。
+ *   · 这一页只负责「人看的部分」：停录制、审时间线、导出（**开录在弹窗里** ——
+ *     截图要 `activeTab`，只有点扩展图标那一刻才拿得到，详见 `ui/popup/popup.ts` 的注释）。
  *   · 图片字节**不经过消息**：后台写进 `akso-pass-shots` IDB，这一页直接读同源库。
  *     否则每步几十 KB 的 base64 会把 runtime 通道与 UI 一起拖慢。
  */
@@ -15,7 +16,6 @@ import type {
   ShotRunningState,
   ShotSessionMeta,
   ShotStepMeta,
-  ShotTargetTab,
 } from '../../shared/types';
 import { shotDb } from '../../storage/shot-db';
 import { send } from '../send';
@@ -26,8 +26,6 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const targetEl = el<HTMLSelectElement>('target');
-const startEl = el<HTMLButtonElement>('start');
 const stopEl = el<HTMLButtonElement>('stop');
 const recChipEl = el('rec-chip');
 const recStatEl = el('rec-stat');
@@ -40,7 +38,6 @@ const sessionMetaEl = el('session-meta');
 const stepsEl = el<HTMLOListElement>('steps');
 const exportNoticeEl = el<HTMLParagraphElement>('export-notice');
 
-let targets: ShotTargetTab[] = [];
 let running: ShotRunningState | null = null;
 let sessions: ShotSessionMeta[] = [];
 let current: ShotSessionMeta | null = null;
@@ -87,77 +84,14 @@ function clearImages(): void {
 function renderRecording(): void {
   const active = running !== null;
   recChipEl.classList.toggle('hidden', !active);
-  startEl.classList.toggle('hidden', active);
   stopEl.classList.toggle('hidden', !active);
-  targetEl.disabled = active;
   recStatEl.textContent = active && running ? `已记录 ${running.stepCount} 步 · ${running.host}` : '';
 }
 
 async function refreshRunning(): Promise<void> {
   const res = await send({ kind: 'shot.running' });
   running = res.kind === 'shot.running' && res.result.ok ? res.result.data : null;
-  if (running) {
-    const match = targets.find((t) => t.tabId === running?.tabId);
-    if (match) targetEl.value = String(match.tabId);
-  }
   renderRecording();
-}
-
-async function refreshTargets(): Promise<void> {
-  const res = await send({ kind: 'shot.targets' });
-  if (res.kind !== 'shot.targets' || !res.result.ok) {
-    const why = res.kind === 'shot.targets' && !res.result.ok ? res.result.error : '后台无响应';
-    showNotice(recNoticeEl, why);
-    return;
-  }
-  targets = res.result.data;
-  const previous = targetEl.value;
-  targetEl.replaceChildren();
-  if (targets.length === 0) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = '没有可录制的页签（先在「账号中心」打开已配置站点的账号页）';
-    targetEl.appendChild(option);
-    startEl.disabled = true;
-    return;
-  }
-  startEl.disabled = false;
-  for (const t of targets) {
-    const option = document.createElement('option');
-    option.value = String(t.tabId);
-    const who = t.accountName ? `${t.accountName} · ` : '';
-    option.textContent = `${who}${t.title || t.host}`;
-    targetEl.appendChild(option);
-  }
-  if (targets.some((t) => String(t.tabId) === previous)) targetEl.value = previous;
-}
-
-async function startRecording(): Promise<void> {
-  hideNotice(recNoticeEl);
-  const tabId = Number(targetEl.value);
-  const target = targets.find((t) => t.tabId === tabId);
-  if (!target) {
-    showNotice(recNoticeEl, '先在上面选一个页签。');
-    return;
-  }
-  // ★ 站点权限必须在这次点击里**第一个** await：前面若有一次 await，手势就没了
-  //   （与 ui/parallel/parallel.ts 的云授权同一教训）。
-  const granted = await chrome.permissions
-    .request({ origins: [`*://${target.host}/*`] })
-    .catch(() => false);
-  if (!granted) {
-    showNotice(recNoticeEl, `没有拿到 ${target.host} 的站点权限 —— 录制需要它才能在事件瞬间截图。请再点一次并在弹窗里允许。`);
-    return;
-  }
-
-  const res = await send({ kind: 'shot.start', tabId });
-  if (res.kind !== 'shot.start' || !res.result.ok) {
-    showNotice(recNoticeEl, res.kind === 'shot.start' && !res.result.ok ? res.result.error : '后台无响应');
-    return;
-  }
-  running = res.result.data;
-  renderRecording();
-  await refreshSessions(true);
 }
 
 async function stopRecording(): Promise<void> {
@@ -447,14 +381,8 @@ async function exportImages(): Promise<void> {
 
 /* ------------------------------------------------------------------ 事件绑定 */
 
-el('target-refresh').addEventListener('click', () => {
-  void refreshTargets().then(() => refreshRunning());
-});
 el('sessions-refresh').addEventListener('click', () => {
   void refreshSessions(false);
-});
-startEl.addEventListener('click', () => {
-  void startRecording();
 });
 stopEl.addEventListener('click', () => {
   void stopRecording();
@@ -533,7 +461,6 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
 
 el('ver-chip').textContent = `v${EXT_VERSION}`;
 void (async () => {
-  await refreshTargets();
   await refreshSessions(false);
   await refreshRunning();
   if (running) await refreshSessions(false);

@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.5.1';
+export const EXT_VERSION = '4.5.2';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -200,7 +200,7 @@ export function shieldNsPrefix(accountId: string): string {
 }
 
 /* ============================================================================
- * 自动截图（v4.5.1）
+ * 自动截图（v4.5.2）
  *
  * 一句话：手动开始/停止录制，期间把「每次点击 / 每次输入」变成一张带标注的
  * 关键帧截图，按时间线排成一份图文操作手册，可导出 Word / Markdown。

@@ -1,17 +1,6 @@
 /* 自动截图 —— 只写这一页独有的排版；外壳、按钮、卡片全部复用 theme/sidebar/panel。
    ★ 尺寸一律走 tokens（--sp-* / --fs-* / --sb-radius*），否则 verify-spacing / verify-radius 会报。 */
 
-.shot-row {
-  display: flex;
-  gap: var(--sp-2);
-  align-items: center;
-}
-
-.shot-row select {
-  flex: 1;
-  min-width: 0;
-}
-
 .shot-actions {
   display: flex;
   gap: var(--sp-2);

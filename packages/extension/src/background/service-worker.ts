@@ -165,7 +165,6 @@ import {
   handleShotEvent,
   listShotSessions,
   listShotSteps,
-  listShotTargets,
   renameShotSession,
   startShot,
   stopShot,
@@ -246,9 +245,6 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
     /* ---- 自动截图（v4.5.1）----
      * 录制本身由内容脚本驱动（事件经 `onMessage` 前置分流直接进 `handleShotEvent`），
      * 这里只处理「扩展页发来的增删改查」。 */
-    case 'shot.targets': {
-      return { kind: 'shot.targets', result: await tryRun(() => listShotTargets()) };
-    }
     case 'shot.start': {
       return { kind: 'shot.start', result: await tryRun(() => startShot(req.tabId)) };
     }

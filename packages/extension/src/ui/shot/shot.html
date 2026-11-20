@@ -46,7 +46,7 @@
           <div class="brand-text">
             <h2>自动截图</h2>
             <p class="desc">
-              在「站点管理」里配置过的站点中手动开录，每次点击 / 输入自动截一张带标注的图，最后导出成操作手册（Word / Markdown）。
+              在「站点管理」里配置过的站点中，从工具栏点「录制本页」开录，每次点击 / 输入自动截一张带标注的图，最后导出成操作手册（Word / Markdown）。
             </p>
           </div>
         </div>
@@ -57,16 +57,12 @@
             <span id="rec-chip" class="status-chip shot-rec hidden">● REC</span>
           </div>
 
-          <div class="field">
-            <span>录制页签</span>
-            <div class="shot-row">
-              <select id="target" aria-label="选择要录制的页签"></select>
-              <button id="target-refresh" class="btn-ghost btn-sm" type="button">刷新页签</button>
-            </div>
-          </div>
+          <p class="desc">
+            开始：点浏览器工具栏上的 <b>Akso Pass</b> 图标 →「录制本页」。截图权限只在这次点击里临时授予当前页签，
+            所以开录必须从要录的那一页发起。
+          </p>
 
           <div class="shot-actions">
-            <button id="start" class="btn-primary" type="button">开始录制</button>
             <button id="stop" class="btn-ghost hidden" type="button">停止录制</button>
             <span id="rec-stat" class="stat"></span>
           </div>

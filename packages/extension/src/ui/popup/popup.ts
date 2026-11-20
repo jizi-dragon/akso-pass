@@ -1,4 +1,5 @@
 import { EXT_VERSION } from '../../shared/constants';
+import type { ShotRunningState } from '../../shared/types';
 import { isNewerMinorVersion } from '../../shared/update-logic';
 import { getForwardingLogger } from '../../shared/log';
 import { installLogForwarding } from '../../shared/forward-log';
@@ -157,4 +158,96 @@ popupCheck?.addEventListener('click', async () => {
     popupCheck.disabled = false;
     popupCheck.textContent = idleText;
   }
+});
+/* ---- 录制本页（v4.5.2） ------------------------------------------------
+ *
+ * ★ 为什么开录入口在弹窗，而不在「自动截图」页：
+ *   `chrome.tabs.captureVisibleTab` 只接受 `<all_urls>` 或 `activeTab`，
+ *   而我们**没有**（也不打算要）全站 host 权限 —— 实测按站点授权的 host
+ *   权限仍然报 "Either the '<all_urls>' or 'activeTab' permission is required."。
+ *   `activeTab` 只在"用户点扩展图标 / 按快捷键"的那一刻临时授予当前页签，
+ *   所以开录必须是这个动作本身；从管理页跨页签点按钮拿不到它。
+ *   停止不需要授权，留在「自动截图」页。
+ */
+const shotBtn = document.getElementById('shot-btn') as HTMLButtonElement | null;
+const shotBtnText = document.getElementById('shot-btn-text');
+const shotStatus = document.getElementById('shot-status');
+const shotDot = shotBtn?.querySelector<HTMLElement>('.shot-dot') ?? null;
+
+let shotRunning: ShotRunningState | null = null;
+// 失败原因要留到用户看见：renderShot() 在 finally 里会重画状态，
+// 若直接把错误写进 #shot-status 会被随后的重画覆盖成"未录制"提示。
+let shotHint: string | null = null;
+
+function renderShot(): void {
+  const rec = shotRunning !== null;
+  shotBtn?.classList.toggle('is-rec', rec);
+  if (shotBtnText !== null) shotBtnText.textContent = rec ? '停止录制' : '录制本页';
+  if (shotDot !== null) shotDot.textContent = rec ? '■' : '◉';
+  if (shotStatus !== null) {
+    shotStatus.textContent =
+      rec && shotRunning !== null
+        ? `正在录制 ${shotRunning.host} · 已记 ${shotRunning.stepCount} 步`
+        : (shotHint ?? '录制后在本页正常操作，点击与输入自动记一步。');
+  }
+}
+
+async function refreshShotState(): Promise<void> {
+  try {
+    const res = (await chrome.runtime.sendMessage({ kind: 'shot.running' })) as
+      | { kind: 'shot.running'; result: { ok: true; data: ShotRunningState | null } }
+      | { kind: 'shot.running'; result: { ok: false; error: string } }
+      | undefined;
+    shotRunning = res !== undefined && res.result.ok ? res.result.data : null;
+  } catch (e) {
+    // 与统计一样：读不到就按"没在录制"显示，但必须留痕（规则 25/29）。
+    log.warn('读录制状态失败 ⇒ 弹窗按「未在录制」显示: %s', e instanceof Error ? e.message : String(e));
+    shotRunning = null;
+  }
+  renderShot();
+}
+
+void refreshShotState();
+
+shotBtn?.addEventListener('click', () => {
+  void (async () => {
+    shotBtn.disabled = true;
+    shotHint = null;
+    if (shotStatus !== null) shotStatus.textContent = '处理中…';
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id === undefined) {
+        shotHint = '找不到当前页签。';
+        return;
+      }
+      if (shotRunning !== null) {
+        const res = (await chrome.runtime.sendMessage({ kind: 'shot.stop', sessionId: shotRunning.sessionId })) as
+          | { kind: 'shot.stop'; result: { ok: true; data: unknown } }
+          | { kind: 'shot.stop'; result: { ok: false; error: string } }
+          | undefined;
+        if (res !== undefined && res.result.ok) {
+          window.close();
+          return;
+        }
+        shotHint = res !== undefined && !res.result.ok ? res.result.error : '后台没有响应。';
+        return;
+      }
+      const res = (await chrome.runtime.sendMessage({ kind: 'shot.start', tabId: tab.id })) as
+        | { kind: 'shot.start'; result: { ok: true; data: ShotRunningState } }
+        | { kind: 'shot.start'; result: { ok: false; error: string } }
+        | undefined;
+      if (res !== undefined && res.result.ok) {
+        // 弹窗留着会挡住页面，而且用户下一步要在页面上操作。
+        window.close();
+        return;
+      }
+      shotHint = res !== undefined && !res.result.ok ? res.result.error : '后台没有响应。';
+    } catch (e) {
+      log.warn('切换录制状态失败: %s', e instanceof Error ? e.message : String(e));
+      shotHint = '操作失败，请重试。';
+    } finally {
+      shotBtn.disabled = false;
+      await refreshShotState();
+    }
+  })();
 });
