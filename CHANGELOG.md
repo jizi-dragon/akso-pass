@@ -1,3 +1,13 @@
+## 4.6.0（2026-11-23）
+
+**正式版：自动截图、更新检查与稳定性收口**
+
+- 自动截图：新增「自动截图」工作台，按操作时间线记录点击/输入并生成带聚光灯标注的步骤图；支持 Word、Markdown、图片 ZIP 三种导出。开录入口放在扩展弹窗，以取得 `activeTab` 截图权限。
+- 更新检查：改走 `https://www.dragonrain.top/downloads/akso-pass/latest.json`，避免 GitHub 匿名 API 的 403 限流；只比较 `major.minor`，补丁版不触发提醒。
+- 稳定性：修复开录失败原因被状态重画覆盖；盒子删除、Excel 导入、常用页保存等上一轮体验优化一并纳入正式版。
+- 验证：`typecheck` / `build` / `check-deps` 通过；静态回归 33/33；`verify-load`、`verify-favui`、`verify-boxmgmt`、`verify-excel-import`、`verify-update-logic`、`verify-update-ui` 通过。全量浏览器回归受本机云端登录状态影响的项目另行记录。
+- 版本：4.5.2 → 4.6.0（minor，打包 release）。
+
 ## 4.5.2（2026-11-20）
 
 **修「自动截图」一张图都截不到：开录入口改到扩展弹窗（`activeTab`）**
