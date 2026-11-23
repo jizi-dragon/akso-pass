@@ -46,7 +46,8 @@
           <div class="brand-text">
             <h2>自动截图</h2>
             <p class="desc">
-              在「站点管理」里配置过的站点中，从工具栏点「录制本页」开录，每次点击 / 输入自动截一张带标注的图，最后导出成操作手册（Word / Markdown）。
+              在「站点管理」里配置过的站点中，从工具栏点「录制整个浏览器」开录：每次点击 / 输入自动截一张带描边的图，
+              最后导出成可读的操作手册（Word / Markdown）。
             </p>
           </div>
         </div>
@@ -58,9 +59,15 @@
           </div>
 
           <p class="desc">
-            开始：点浏览器工具栏上的 <b>Akso Pass</b> 图标 →「录制本页」。截图权限只在这次点击里临时授予当前页签，
-            所以开录必须从要录的那一页发起。
+            开始：点浏览器工具栏上的 <b>Akso Pass</b> 图标 →「录制整个浏览器」。
+            录制范围是<b>整个浏览器</b>：新开的页签、弹出式新窗口、切换到的旧页签都会自动接上；
+            做完操作回到这一页点「停止录制」。
           </p>
+
+          <div id="perm-bar" class="notice warn shot-perm hidden" role="status" aria-live="polite">
+            <span id="perm-text">还没有「在所有网站上读取数据」权限：新页签里的步骤只会记文字、没有截图。</span>
+            <button id="grant" class="btn-ghost btn-sm" type="button">授予截图权限</button>
+          </div>
 
           <div class="shot-actions">
             <button id="stop" class="btn-ghost hidden" type="button">停止录制</button>
@@ -69,7 +76,9 @@
 
           <p id="rec-notice" class="notice warn hidden" role="status" aria-live="polite"></p>
           <p class="desc">
-            录制期间请让这个页签保持在前台 —— Chrome 只能截当前可见的页签；后台页签的那几步会记文字、不配图。
+            截图要「在所有网站上读取数据」这一条权限（Chrome 只认它；站点级授权和全网通配都不够），
+            它<b>只在录制时</b>用来取当前前台页签的画面。Chrome 不允许扩展自己交还这项权限，
+            要收回请到 <code>chrome://extensions</code> 的「详细信息」里改。
           </p>
         </section>
 
@@ -92,7 +101,7 @@
 
                 <div class="shot-export">
                   <button id="export-docx" class="btn-primary btn-sm" type="button">导出 Word</button>
-                  <button id="export-md" class="btn-ghost btn-sm" type="button">导出 Markdown</button>
+                  <button id="export-md" class="btn-ghost btn-sm" type="button">导出 Markdown（含图）</button>
                   <button id="export-images" class="btn-ghost btn-sm" type="button">导出图片包</button>
                   <button id="delete-session" class="btn-ghost btn-sm shot-danger" type="button">删除这次录制</button>
                 </div>
