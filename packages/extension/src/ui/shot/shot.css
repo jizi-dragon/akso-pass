@@ -8,15 +8,6 @@
   margin-top: var(--sp-3);
 }
 
-/* 授权横幅：一行放不下时按钮换行，别把说明文字挤成窄条 */
-.shot-perm {
-  display: flex;
-  gap: var(--sp-2);
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: var(--sp-3);
-}
-
 .shot-rec {
   color: var(--sb-danger);
   border-color: var(--sb-danger);

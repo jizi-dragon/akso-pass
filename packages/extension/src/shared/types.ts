@@ -323,12 +323,7 @@ export interface ShotSessionMeta {
   name: string;
   startedAt: number;
   endedAt?: number;
-  /** 开录时的页签；后续跟随同一窗口里新开/切换的页签 */
   tabId: number;
-  /** 录制范围：整个浏览器窗口，而不是单个页面 */
-  windowId: number;
-  /** 录制期间挂过录制器的页签（用于停止时统一摘监听） */
-  tabIds: number[];
   host: string;
   accountId?: string;
   stepCount: number;
@@ -338,9 +333,6 @@ export interface ShotSessionMeta {
 export interface ShotRunningState {
   sessionId: string;
   tabId: number;
-  windowId: number;
-  /** 录制期间挂过录制器的页签（用于停止时统一摘监听） */
-  tabIds: number[];
   host: string;
   startedAt: number;
   stepCount: number;

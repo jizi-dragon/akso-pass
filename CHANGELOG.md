@@ -1,17 +1,3 @@
-## 4.6.1（2026-11-23）
-
-**自动截图三处体验返工：录整个浏览器、只框选不压暗、导出的手册能读了**
-
-- 录制范围（用户第 1 点）：从「一个页签」改成「整个浏览器」。`ShotRunningState` / `ShotSessionMeta` 加 `tabIds[]`（`windowId` 保留，只作记录）；开录时 `attachAllTabs()` 把**所有**可录页签挂上录制器（`recordableTab`：http(s) 且非 `discarded`），`tabs.onUpdated`（complete）/ `onActivated` 随时补挂新页签与新窗口，事件处理不再按 `windowId` 过滤。停止时对全部 `tabIds` 发停止；关掉单页只摘掉它，**全部关完**才收尾。图标徽章 0 步显示 `●`、>99 显示 `99+`。
-- 截图权限（真机实测逼出来的）：`captureVisibleTab` **只认 `<all_urls>` 或 `activeTab`**，登录流请求的「全网通配」在 `permissions.contains` 里是 true 却截不了图（三组对照见 `docs/PITFALLS.md` #58）。⇒ `optional_host_permissions` 并列加 `<all_urls>`；弹窗点「录制整个浏览器」时**同步第一件事**就 `permissions.request`（不 await，避免授权气泡把弹窗顶掉），「自动截图」页补授权横幅 + 「授予截图权限」按钮。没授权时每步照记文字，日志会说清去哪儿补。
-- ★ 顺带修掉一个真 bug：站点授权 pattern 用了**带端口**的 `host`，而 match pattern **不接受端口**（非法值一律判 false）⇒ 本地/内网非默认端口的站点永远报"缺少站点授权"，按提示重授权也没用。改用 `hostBare`（`docs/PITFALLS.md` #59）。
-- 框选效果（用户第 2 点）：删掉 4.5.x 那四块 `rgba(15,23,42,.55)` 压暗矩形，只保留「白色外晕 + 玫红圆角描边」；绘制代码抽到 `shared/shot-annotate.ts`（纯画布、可离线预览），分辨率越大线越细（`lw = max(2, outW / 520)`），框外像素一个不动。
-- 导出可读性（用户第 3 点）：`shared/docx.ts` 重写 —— 标题/副标题 + 录制信息表 + 「操作概览」编号清单 + 每步「第 N 步　点击「X」」+ 说明 + 图 + 图注 + 换页标记，末尾「附录　元素定位与记录时间」表（选择器不再挤在正文里）；`word/styles.xml` 定字体行距、`footer1.xml` 出「第 X 页」、图片同时封宽（6.2in）与封高（7.5in）—— 只封宽时细长图会被 Word 无提示裁掉。
-- Markdown 裂图（用户第 3 点）：默认把图片内嵌成 data URI，**只下一个 `.md`**，不再另发 `-assets.zip`（用户只拿走 `.md` 时图片全裂）。`buildImageZip` 仍留给「导出图片」那条路径。
-- 验证：新增 `tools/verify/verify-shot.mjs`（38/38，静态）与 `verify-falsify-shot.mjs`（9/9，逐条注回缺陷都必须红在指名断言上）；`tools/verify/README.md` 计数同步到 60 个。`typecheck` / `build` / `check-deps` 绿；`run-all --static` 35/35；`verify-load` 通过。
-- 诚实边界：`captureVisibleTab` 能否出图、新页签是否接上，静态判据钉不住。本轮用一次性 e2e（`tmp/`，不入库）跑真 Chromium 验过：`tabIds` 从 `[A]` 变 `[A,B]`，4 步里 3 步带图；`docx` 用 python-docx 验过结构（25 段、2 张表、3 图含封高生效、页脚「第 1 页」），本机无 Word / LibreOffice，**未做目视渲染**。
-- 版本：4.6.0 → 4.6.1（patch，未打包 release）。
-
 ## 4.6.0（2026-11-23）
 
 **正式版：自动截图、更新检查与稳定性收口**
