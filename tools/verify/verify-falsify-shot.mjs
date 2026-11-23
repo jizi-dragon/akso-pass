@@ -67,8 +67,9 @@ const CASES = [
   },
   {
     file: join(SRC, 'shared/shot-annotate.ts'),
-    find: '  ctx.save();\n  ctx.lineJoin =',
-    replace: '  ctx.save();\n  ctx.fillStyle = "rgba(15, 23, 42, 0.55)";\n  ctx.fillRect(0, 0, 10, 10);\n  ctx.lineJoin =',
+    // 单行锚点：CRLF/LF 两边都能命中（带 `\n` 的锚点在本仓 CRLF 工作区会落空）
+    find: '  ctx.save();',
+    replace: '  ctx.save();\r\n  ctx.fillStyle = "rgba(15, 23, 42, 0.55)";\r\n  ctx.fillRect(0, 0, 10, 10);',
     expect: '标注里没有任何填充',
     why: '压暗遮罩会盖住框外内容（用户明确反感）',
   },
