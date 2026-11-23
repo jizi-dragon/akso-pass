@@ -44,7 +44,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **58 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **60 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -125,7 +125,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-acct-grid.mjs`** | ★ **定尺网格（三个选择器共用）的回归判据**（真起 Chromium，约 15 秒）：① 源码不得再对列表做 `slice(0, N)`；`buildSectorWheel`/`buildRingWheel` 与径向原语（`polar`/`radialText`/`sectorPath`）**全部零命中** ② ★ **样式唯一源**：构建产物 `acct-grid.css` 与 `grid-style.ts` 的常量**逐字节一致**、`dist` 与源一致、三个浮层都引用**共用常量**且无第二份内联样式 ③ ★★ **`wheelIntent()` 纯函数 7 个边界用例**：空页 / 不足一屏 / 已滚到边界 ⇒ 都必须判 `'page'` ④ 运行期：18 项 → **18 格**、**无数字键角标**（v4.2.43 已移除）、文字**零旋转**；26 项 → **全部进 DOM 且可滚动**；行数恒 4、槽位恒 20、8 与 18 项**首格几何逐项相同**；★ **真机滚轮 `通桥 → 空盒子 → 内网`**。<br>★★ 起因有两条**真实事故**：v4.1 之前 `WHEEL_MAX = 10` 是硬上限、超出**直接丢弃**；以及 v4.1.1 用户实测**切到空盒子后滚轮失效、被困在空页里**（守卫误写成"这一页有没有内容"）。③ 就是后者的直接判据。 | **OK** | ✔ |
 | **`verify-falsify-permgates.mjs`** | **权限门控那一族改动的反证（11 条）**：把"每个新站点都弹一次 `permissions.request`" / "用 `confirm` 当门控" / "`permissions.contains` 的结果被当成永久事实"等**修复前的写法**逐条注回去，每条都必须变红。<br>★ 它验的是 v4.2.12 那条"**只对站点做增删改，不再把浏览器授权当成站点管理的一部分**"：判据不能只看"弹窗没了"，还要看"**该静默补齐的地方仍然会补**"（`ensureHostPermission` 在点击手势里跑）。<br>★ 与 `verify-falsify-defectfix.mjs` 同一套纪律：锚点必须唯一、行尾先归一化、真实工作区不动。 | **11/11** | ✘ |
 | **`verify-script-roster.mjs`** | ★★ **"加脚本要同步本文这张表"这条约定，自己的判据**（静态、秒级，v4.2.12 新增）：① 盘上每个 `verify-*.mjs` 都在 README 里被提到 ② 反向：表格里不留**指向不存在脚本的幽灵条目** ③ README 里那个"本表里的 `N 个`"活数字必须等于实际个数 ④ 自证：脚本数 > 20（否则前三条在"几乎没脚本"时恒真）。<br>★★ 起因：这张表**已经漏收过两次**（`verify-agents-budget.mjs` / `verify-boxsync.mjs` 在盘上跑了很久却从未进表），而那次是**靠人肉对账**发现的。README 自己诚实写着"「脚本清单 vs 本表」的自动比对目前仍然没有" —— 这条判据就是把那句话补上。<br>★ 第 ③ 条治的是 README 自己记过的事：那个数字**连续写错过五次**，因为"一个没人会去核对的数字，会安静地过期好几个月"。⇒ 现在它是**被算出来的**。<br>★ 它上线第一次跑就**抓到了它自己**（新脚本自己没进表）—— 这是它有效的第一个证据；本轮它一共**抓到三次**（自己 + `verify-radius` + `verify-falsify-radius`）。 | **6/6** | ✘ |
-| **`verify-radius.mjs`** | ★★ **圆角刻度**（静态、秒级，v4.2.12 新增）：① 四档 `8 / 12 / 16 / 999px` 的值等于约定 ② `border-radius` **不许有裸 px**（`50%` 与 `0` 除外）③ 只许引用那四档 ④⑤ Shadow DOM 那份必须带兜底、且兜底值等于令牌值。<br>★★ 起因：本仓圆角是**两档 + 22 处裸值**（`5/6/8/9/10/11/13px` 七种取值挤在 5–13 之间），而 `akso-cloud` 是 `8/12/16`。用户 2026-10-13 拍板「**akso-pass 用 8/12/16**」⇒ **卡片 16px 刻意不变**，动的是中间档（10→12）与原先不存在的小档。<br>★ **为什么放行 `50%` 而不放行 `999px`**：`50%` 是"做成圆"（与元素尺寸成比例，没有第二个合理值，令牌化它只是形式主义）；`999px` 是**胶囊弧度**，那是个具体的设计选择 ⇒ 它现在有令牌了（原先全仓裸写 17 处，想调得搜全仓）。<br>**⑥ 是跨仓判据的“另一端”**：kso-cloud/tools/verify_two_ends_roles.py 拿**两端同名**的选择器逐个比档位（那是**测量**，所以可靠），但它只覆盖两端都存在的名字。而我自己犯过一次错 —— 看名字猜“角色是卡片”，把 akso-cloud 的 .box-option / .import-panel / .batch-bar 一起提到 16px，而本仓是 12px：**一边在修“两端不一致”，一边造了 5 处新的不一致**。⇒ 把这份“名字 → 档”的小名单写死在本条里，本仓改档位时当场红。 | **12/12** | ✘ |
+| **`verify-radius.mjs`** | ★★ **圆角刻度**（静态、秒级，v4.2.12 新增）：① 四档 `8 / 12 / 16 / 999px` 的值等于约定 ② `border-radius` **不许有裸 px**（`50%` 与 `0` 除外）③ 只许引用那四档 ④⑤ Shadow DOM 那份必须带兜底、且兜底值等于令牌值。<br>★★ 起因：本仓圆角是**两档 + 22 处裸值**（`5/6/8/9/10/11/13px` 七种取值挤在 5–13 之间），而 `akso-cloud` 是 `8/12/16`。用户 2026-10-13 拍板「**akso-pass 用 8/12/16**」⇒ **卡片 16px 刻意不变**，动的是中间档（10→12）与原先不存在的小档。<br>★ **为什么放行 `50%` 而不放行 `999px`**：`50%` 是"做成圆"（与元素尺寸成比例，没有第二个合理值，令牌化它只是形式主义）；`999px` 是**胶囊弧度**，那是个具体的设计选择 ⇒ 它现在有令牌了（原先全仓裸写 17 处，想调得搜全仓）。<br>**⑥ 是跨仓判据的“另一端”**：akso-cloud/tools/verify_two_ends_roles.py 拿**两端同名**的选择器逐个比档位（那是**测量**，所以可靠），但它只覆盖两端都存在的名字。而我自己犯过一次错 —— 看名字猜“角色是卡片”，把 akso-cloud 的 .box-option / .import-panel / .batch-bar 一起提到 16px，而本仓是 12px：**一边在修“两端不一致”，一边造了 5 处新的不一致**。⇒ 把这份“名字 → 档”的小名单写死在本条里，本仓改档位时当场红。 | **12/12** | ✘ |
+| **`verify-shot.mjs`** | ★★ **自动截图那一块的四类判据（38 条，静态、秒级，v4.6.1 新增）**：① **截图权限**——`<all_urls>` 必须在 `manifest.json` 的 `optional_host_permissions` 里、`permissions.request` 必须出现在手势处理器的**第一个 `await` 之前**、录制页必须有补授权入口、`tab.active` 为假时只记文字不配图 ② **整浏览器录制**——`shot-capture.ts` 里**没有**按 `windowId` 过滤页签、`attachAllTabs` 有定义也有调用、`onRemoved` 用 `tabs.query({})` 在整个浏览器里补挂、站点授权 pattern 用**不带端口**的 host ③ **只画框不压暗**——`shared/shot-annotate.ts` 里 `fillRect`/`fill()` **零命中**，且 `shot-capture.ts` 不再自带第二份绘制代码 ④ **导出能读**——Word 有 `word/styles.xml`/`footerReference`/`PAGE` 域/`w:tbl`/高度封顶/「操作概览」，Markdown 默认把图片内嵌成 data URI（`buildImageZip` 只留在"导出图片包"那条路径上）。<br>★★ 起因是用户 2026-11-23 提的三点：「**录制整个浏览器**，而不是单个页面」「框选之外黑糊糊的，**只要框**」「文档缺乏阅读性，且**下载的 md 里图片加载不出来**」。三个都不是"功能没写"，而是**写法看起来正常**：`permissions.contains` 返回 true 却不给截、`tabIds` 建了却按 windowId 过滤、md 与 assets.zip 分开下载。<br>★ 其中**端口**那条是 e2e 现场抓出来的真 bug：Chrome 的 match pattern **不接受端口**，`*://host:port/*` 是非法值 ⇒ 非默认端口的站点永远报"缺少站点授权"，而**按提示重授权也没用**。<br>★ **诚实边界**：静态判据只钉"写法还在不在"。`captureVisibleTab` 到底能不能截、新页签到底接没接上，本轮是用一次性 e2e（`tmp/`，不入库）跑真的 Chromium 验的：`tabIds` 从 `[A]` 变成 `[A,B]`，4 步里 3 步带图。 | **38/38** | ✘ |
+| **`verify-falsify-shot.mjs`** | **上一条的反证（9 条）**：去掉 `<all_urls>` / 把手势请求挪到 `await` 之后 / 注入按 `windowId` 过滤 / 把 pattern 改回带端口的 `host` / 给标注加一块压暗 `fillRect` / 把 md 的 `embedImages` 默认值改成 false / 整段删掉 `footerReference` —— 每条都必须**变红且红在指名的那条断言上**。<br>★ 三个写法教训（都写在脚本注释里）：① 本仓源码是 **CRLF**，注入锚点里写 `\n` 会"找不到注入点"⇒ **反证是空的**（改用不带换行的锚点）；② 只断言"退出码 1"不够 —— **脚本自己崩了也是 1**，所以必须断言红的是**哪一条**；③ 删 token 要**整段删**，把 `rIdFooter` 改成 `rIdFooterX` 时 `footerReference` 还在，判据不红 ⇒ 假反证。 | **9/9** | ✘ |
 | **`verify-falsify-radius.mjs`** | **上一条的反证（9 条）**：注入"修复前"的写法 —— `--sb-radius` 改回 10px / 删掉 `--sb-radius-sm` / 把一处改成裸 `5px` / 引用没定义的档 / 拿掉 Shadow DOM 的兜底 / 兜底值写错 ⇒ 每条都必须**变红且红在指名的那条断言上**。<br>★ 定位用**断言名**而不是小节号：判据里的小节标题是**合并**的（`=== ② … / ③ … ===`）且会重复出现，按小节号找会挑错，而那会被误读成"判据写错了"（本轮的 `verify-falsify-spacing` 就在这上面栽过一次）。 | **9/9** | ✘ |
 
 ### ★★ 提交前怎么跑才**不重复**（2026-10-18 实测）
@@ -134,9 +136,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 33 | ≈67 s | `run-all.mjs --static` |
+| 静态（不需要浏览器） | 35 | ≈67 s | `run-all.mjs --static` |
 | 浏览器（真起 Chromium / Edge） | 25 | ≈146 s | `run-all.mjs --browser-only` |
-| 全部 | 58 | ≈213 s | `run-all.mjs --browser` |
+| 全部 | 60 | ≈214 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -154,7 +156,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"58 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"60 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -164,7 +166,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 58
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 60
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

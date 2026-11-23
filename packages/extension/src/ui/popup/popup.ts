@@ -159,15 +159,19 @@ popupCheck?.addEventListener('click', async () => {
     popupCheck.textContent = idleText;
   }
 });
-/* ---- 录制本页（v4.5.2） ------------------------------------------------
+/* ---- 录制整个浏览器（v4.5.2 起入口在弹窗，v4.6.1 起范围是整个浏览器） ----
  *
  * ★ 为什么开录入口在弹窗，而不在「自动截图」页：
- *   `chrome.tabs.captureVisibleTab` 只接受 `<all_urls>` 或 `activeTab`，
- *   而我们**没有**（也不打算要）全站 host 权限 —— 实测按站点授权的 host
- *   权限仍然报 "Either the '<all_urls>' or 'activeTab' permission is required."。
- *   `activeTab` 只在"用户点扩展图标 / 按快捷键"的那一刻临时授予当前页签，
- *   所以开录必须是这个动作本身；从管理页跨页签点按钮拿不到它。
- *   停止不需要授权，留在「自动截图」页。
+ *   `chrome.tabs.captureVisibleTab` 只接受 `<all_urls>` 或 `activeTab`。
+ *   实测（2026-11-23，三份只差 host_permissions 的 manifest 对照）：
+ *     · 只授权目标站点   → 抛 "Either the '<all_urls>' or 'activeTab' permission is required."
+ *     · 全网通配         → **同样抛**（`permissions.contains` 为真也不管用）
+ *     · `<all_urls>`     → 通过
+ *   ⇒ v4.6.1 起在**开录这一下**顺带申请 `<all_urls>`（已进 `optional_host_permissions`），
+ *     这样新页签、新窗口里的步骤也能截到图。
+ *   `permissions.request` 必须在用户手势里**最先**发起（前面有一次 await 手势就失效，
+ *   Chrome 不弹窗也不报错、直接返回 false）—— 所以入口仍然只能是这个点击，
+ *   管理页里的按钮拿不到手势。停止不需要授权，留在「自动截图」页。
  */
 const shotBtn = document.getElementById('shot-btn') as HTMLButtonElement | null;
 const shotBtnText = document.getElementById('shot-btn-text');
@@ -182,13 +186,14 @@ let shotHint: string | null = null;
 function renderShot(): void {
   const rec = shotRunning !== null;
   shotBtn?.classList.toggle('is-rec', rec);
-  if (shotBtnText !== null) shotBtnText.textContent = rec ? '停止录制' : '录制本页';
+  if (shotBtnText !== null) shotBtnText.textContent = rec ? '停止录制' : '录制整个浏览器';
   if (shotDot !== null) shotDot.textContent = rec ? '■' : '◉';
   if (shotStatus !== null) {
-    shotStatus.textContent =
-      rec && shotRunning !== null
-        ? `正在录制 ${shotRunning.host} · 已记 ${shotRunning.stepCount} 步`
-        : (shotHint ?? '录制后在本页正常操作，点击与输入自动记一步。');
+    // 录制中优先显示 shotHint：它只在「开录了但没拿到截图授权」时出现，
+    // 而那条信息一旦被"正在录制 N 步"盖掉，用户就再也看不到（静默降级）。
+    shotStatus.textContent = rec
+      ? (shotHint ?? `正在录制 ${shotRunning?.host ?? ''} · 已记 ${shotRunning?.stepCount ?? 0} 步`)
+      : (shotHint ?? '录制后照常操作：新页签、新窗口都会自动接上，点击与输入各记一步。');
   }
 }
 
@@ -210,6 +215,20 @@ async function refreshShotState(): Promise<void> {
 void refreshShotState();
 
 shotBtn?.addEventListener('click', () => {
+  // ★★ 跨页签截图要的**不是** activeTab，也不是全网通配（`*://*/*`）。
+  //   实测（2026-11-23，三份只差 host_permissions 的 manifest 对照）：
+  //     · 只授权目标站点        → 抛 "Either the '<all_urls>' or 'activeTab' permission is required."
+  //     · 全网通配（`*://*/*`）  → **同样抛**（它在 `permissions.contains` 里为真，但截图不认）
+  //     · `<all_urls>`          → 通过
+  //   ⇒ 想在**新页签/新窗口**里也截到图，就必须把 `<all_urls>` 要下来。
+  //   这一段必须在**用户手势里最先发起**（前面只要有一次 await，手势就失效、
+  //   Chrome 不弹窗也不报错、直接返回 false —— 见 AGENTS.md §2 与 parallel.ts 的同名注释）。
+  //   ★ 故意**不 await**：授权气泡会抢焦点，弹窗有可能被顶掉。所以先把开录发出去，
+  //     让"录制能不能起来"不依赖这个 promise 能否返回；授权晚一点生效也来得及
+  //     （截图时不再缓存权限判断，见 shot-capture.ts 的 captureAndAnnotate）。
+  const granting: Promise<boolean> | null =
+    shotRunning === null ? chrome.permissions.request({ origins: ['<all_urls>'] }).catch(() => false) : null;
+
   void (async () => {
     shotBtn.disabled = true;
     shotHint = null;
@@ -237,6 +256,14 @@ shotBtn?.addEventListener('click', () => {
         | { kind: 'shot.start'; result: { ok: false; error: string } }
         | undefined;
       if (res !== undefined && res.result.ok) {
+        // ★ 没拿到截图授权时**不要**顺手关窗：那会把「新页签的步骤只有文字没有图」
+        //   变成静默降级 —— 用户要等到导出文档时才发现。留在弹窗里把话说清楚。
+        const granted = granting === null ? true : await granting;
+        if (!granted) {
+          shotHint =
+            '已开始录制，但没有「在所有网站上读取数据」权限：新页签里的步骤只会记文字、没有截图。可到「自动截图」页点「授予截图权限」补上。';
+          return;
+        }
         // 弹窗留着会挡住页面，而且用户下一步要在页面上操作。
         window.close();
         return;

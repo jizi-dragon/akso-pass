@@ -30,6 +30,9 @@ const stopEl = el<HTMLButtonElement>('stop');
 const recChipEl = el('rec-chip');
 const recStatEl = el('rec-stat');
 const recNoticeEl = el<HTMLParagraphElement>('rec-notice');
+const permBarEl = el('perm-bar');
+const permTextEl = el('perm-text');
+const grantEl = el<HTMLButtonElement>('grant');
 const sessionsEl = el<HTMLUListElement>('sessions');
 const detailEl = el('detail');
 const detailEmptyEl = el('detail-empty');
@@ -54,8 +57,38 @@ function hideNotice(node: HTMLElement): void {
   node.classList.add('hidden');
 }
 
-function clock(at: number): string {
-  const d = new Date(at);
+/* --------------------------------------------------------------- 截图权限 */
+
+/**
+ * 「在所有网站上读取数据」是 `captureVisibleTab` **唯一**认的授权
+ * （站点级 host 授权、全网通配都不行 —— 实测见 `ui/popup/popup.ts` 的注释）。
+ * 没有它时录制照常进行，但每一步只有文字。这里把这件事显式说出来，
+ * 并给一个当场补授权的入口 —— 否则"导出文档里一张图都没有"就是静默降级。
+ */
+async function refreshPermission(): Promise<void> {
+  const has = await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
+  permBarEl.classList.toggle('hidden', has);
+}
+
+function askPermission(): void {
+  // ★ 必须在这一下手势里**最先**发起：前面只要有一次 await，Chrome 就不弹窗、
+  //   也不报错，直接返回 false（AGENTS.md §2 的同名纪律）。
+  const asked = chrome.permissions.request({ origins: ['<all_urls>'] }).catch(() => false);
+  void (async () => {
+    const ok = await asked;
+    if (ok) {
+      permTextEl.textContent = '已授予截图权限：之后每一步都会带图。';
+      permBarEl.classList.remove('hidden');
+      window.setTimeout(() => void refreshPermission(), 2500);
+      return;
+    }
+    permTextEl.textContent =
+      '没拿到授权（弹窗被关掉，或被浏览器的站点权限策略拦下）。可以再点一次；仍不行就到 chrome://extensions 的「详细信息」里手动打开「在所有网站上读取数据」。';
+    permBarEl.classList.remove('hidden');
+  })();
+}
+
+function clock(at: number): string {  const d = new Date(at);
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
@@ -328,7 +361,15 @@ async function exportWord(): Promise<void> {
   }
   const blob = buildDocx({
     title: current.name,
-    subtitle: `Akso Pass · 自动截图 · ${new Date(current.startedAt).toLocaleString('zh-CN')} · 共 ${docSteps.length} 步`,
+    subtitle: `Akso Pass · 自动截图 · 生成于 ${new Date().toLocaleString('zh-CN')}`,
+    meta: {
+      site: current.host,
+      startedAt: current.startedAt,
+      endedAt: current.endedAt,
+      stepCount: docSteps.length,
+      imageCount: docSteps.filter((s) => s.image !== undefined).length,
+      tabCount: current.tabIds?.length ?? 1,
+    },
     steps: docSteps,
   });
   download(blob, `${safeName(current.name)}.docx`);
@@ -354,12 +395,19 @@ async function exportMarkdown(): Promise<void> {
   }
   const markdown = buildMarkdown({
     title: current.name,
-    subtitle: `Akso Pass · 自动截图 · ${new Date(current.startedAt).toLocaleString('zh-CN')} · 共 ${mdSteps.length} 步`,
+    subtitle: `Akso Pass · 自动截图 · 生成于 ${new Date().toLocaleString('zh-CN')}`,
+    meta: {
+      site: current.host,
+      startedAt: current.startedAt,
+      endedAt: current.endedAt,
+      stepCount: mdSteps.length,
+      imageCount: mdSteps.filter((s) => s.imageBytes !== undefined).length,
+      tabCount: current.tabIds?.length ?? 1,
+    },
     steps: mdSteps,
+    embedImages: true,
   });
   download(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${safeName(current.name)}.md`);
-  const zip = buildImageZip(mdSteps);
-  if (zip) download(zip, `${safeName(current.name)}-assets.zip`);
 }
 
 async function exportImages(): Promise<void> {
@@ -384,6 +432,7 @@ async function exportImages(): Promise<void> {
 el('sessions-refresh').addEventListener('click', () => {
   void refreshSessions(false);
 });
+grantEl.addEventListener('click', askPermission);
 stopEl.addEventListener('click', () => {
   void stopRecording();
 });
@@ -461,6 +510,7 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
 
 el('ver-chip').textContent = `v${EXT_VERSION}`;
 void (async () => {
+  await refreshPermission();
   await refreshSessions(false);
   await refreshRunning();
   if (running) await refreshSessions(false);

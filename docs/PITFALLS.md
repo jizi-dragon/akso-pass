@@ -2886,6 +2886,99 @@ state（空）重渲染了一次，DOM 里那个值已经不在了，只看 DOM 
 
 ---
 
+## #58 【已修】`permissions.contains` 说"有权限"，`captureVisibleTab` 却说"需要 all_urls" —— **通配授权不等于截图授权**
+
+**症状**：录制起来一切正常，时间线上每一步都有、文案也对，**就是没有图**。
+页面上什么都没报，日志里只有一句后来才加的 warn。用户那边的观感是
+"**自动截图不截图**"，而"功能坏了"与"权限差一条"在界面上**长得完全一样**。
+
+**根因**：截图走的是 `chrome.tabs.captureVisibleTab`，它**只认两种授权**：
+`activeTab`（点扩展图标那一刻的临时授权）或 `<all_urls>`（"在所有网站上读取数据"）。
+而本仓登录时会请求**全网通配**（`*://*/*`，用于 DNR 与站点隔离），
+`chrome.permissions.contains({origins:['*://*/*']})` 对它返回 **true** ——
+于是"权限检查通过"与"截图被拒"同时成立。
+
+实测三组（同一份 `dist/`，只改 `host_permissions`，见 CHANGELOG 4.6.1）：
+
+| 授权 | `permissions.contains('*://*/*')` | `captureVisibleTab` |
+|---|---|---|
+| 只授权目标站点 | false | ✘ `Either the '<all_urls>' or 'activeTab' permission is required.` |
+| 全网通配 | **true** | ✘ **同样抛这一句** |
+| `<all_urls>` | true | ✅ 出图 |
+
+⇒ **两种通配在权限 API 里不可区分，在截图 API 里却不等价。**
+
+**判据**（可执行）：
+
+- `node tools/verify/verify-shot.mjs`：① `<all_urls>` 必须在 `manifest.json` 的
+  `optional_host_permissions` 里（**不能只留全网通配**）② `permissions.request`
+  必须出现在手势处理器的**第一个 `await` 之前**（晚一步手势失效、气泡不弹）。
+- **反证做过**（规则 17）：删掉 `"<all_urls>"` ⇒ 判据 ① 红；把手势请求挪到
+  `await` 之后 ⇒ 判据 ② 红（`verify-falsify-shot.mjs` 9/9）。
+- ★ e2e 才能证的那一半：真 Chromium + 临时副本里把 `host_permissions` 改成
+  `<all_urls>`，截图确实出图（1280×720），`tabIds` 也从 `[A]` 变成 `[A,B]`。
+
+**处置**：
+
+- `manifest.json` 的 `optional_host_permissions` 变成 **两条并列**：
+  `*://*/*`（登录流仍在请求它）与 `<all_urls>`（截图要的那条）。
+- 弹窗里点"录制整个浏览器"时，**同步第一件事**就 `permissions.request({origins:['<all_urls>']})`，
+  且**故意不 await** —— 授权气泡会抢焦点把弹窗顶掉，先让开录发出去；
+  `granting` 这个 promise 留到"开录结果回来"之后再判，没授权就把提示留在弹窗里。
+- 录制页补一条**常驻横幅** + "授予截图权限"按钮（`chrome.permissions.contains` 判），
+  因为浏览器不会让扩展自己"补一次手势"。
+- 每步降级为 `hasImage:false` 但仍记文字；日志写明"（这一步只记文字）"以及**去哪儿补授权**。
+
+**推广**：
+
+- ★★ **"我有这个权限"必须问清"哪个 API 认它"**：`permissions.contains` 只回答
+  "这份授权在不在"，不回答"这个调用认不认"。凡是权限被拒，先把**报错原文**抄下来，
+  它往往直接点名了另一个权限名（这里是 `<all_urls>`）。
+- ★★ **静默降级要留痕**：`hasImage:false` 是合法的（页签在后台时本来就截不到），
+  所以"没图"这条信号**不能只靠有无图片来判断** —— 必须有一条独立的日志/UI 说明原因，
+  否则两种完全不同的失败会长成同一个样子。
+- ★ **能"补授权"的地方必须给入口**：光写错误提示没用，用户没有那个手势上下文。
+
+---
+
+## #59 【已修】match pattern 里写端口 ⇒ `permissions.contains` 恒 false，"按提示重授权"永远没用
+
+**症状**：本地/内网**非默认端口**的站点（`http://127.0.0.1:8080`、`http://10.100.0.105:3000`）
+开录时报"缺少站点授权"。用户去站点管理里重新授权、去 `chrome://extensions` 里把
+站点权限勾上，**回来还是同一句话** —— 于是很容易判成"权限系统抽了"。
+
+**根因**：`chrome.permissions.contains({origins:[...]})` 的 match pattern
+**不接受端口**。`*://host:8080/*` 不是合法 pattern，Chrome 对非法 pattern 的处理是
+**判 false**（不抛错、不报"pattern 非法"），而合法 pattern 本身**忽略端口**
+（`*://host/*` 就覆盖该 host 的所有端口）。
+
+⇒ 代码里 `const pattern = `*://${host}/*`` 而 `host` 来自 `new URL(tab.url).host`（**带端口**）
+的地方，**永远**得到一个假值。这也解释了为什么"重授权"没用：检查的那个字符串本身是错的。
+
+**判据**（可执行）：
+
+- `node tools/verify/verify-shot.mjs`：`shot-capture.ts` 里站点授权的 pattern
+  必须由**不带端口**的 host 拼出来（`hostBare`），且 `pattern` 那一行不许出现裸 `${host}`。
+- **反证做过**：把 `hostBare` 改回 `host` ⇒ 判据当场红
+  （`tools/verify/verify-falsify-shot.mjs` 第 4 条）。
+- ★ 这条是**真机 e2e 抓出来的**，静态判据只能钉住写法 —— e2e 脚本在 `tmp/`（不入库），
+  结论记在这里与 CHANGELOG。
+
+**处置**：`startShot(tabId)` 里改成 `const pattern = `*://${hostBare}/*``
+（旁边有注释写明实测结论），`host` 仍保留给"这个页签属于哪个站点"的语义。
+
+**推广**：
+
+- ★★ **"检查通过"与"能用"是两件事**：`contains` 返回 false 时，先确认**传进去的 pattern
+  是否合法**，而不是继续加授权。非法 pattern 的 false 与"真的没授权"的 false 一模一样。
+- ★★ **凡是把 URL 的一部分拼进 API 参数，先问"这个 API 认不认这部分"**：
+  `host` 带端口、`origin` 带尾部斜杠、`pathname` 带 query —— 都是同族错误。
+  判据写在"拼接点"上比写在"调用点"上稳。
+- ★ **"按提示重授权也没用"是根因在别处的强信号**：用户照做了还不生效，
+  说明提示描述的因果链是错的。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。
