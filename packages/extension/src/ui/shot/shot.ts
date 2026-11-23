@@ -65,9 +65,14 @@ function hideNotice(node: HTMLElement): void {
  * 没有它时录制照常进行，但每一步只有文字。这里把这件事显式说出来，
  * 并给一个当场补授权的入口 —— 否则"导出文档里一张图都没有"就是静默降级。
  */
+const PERM_TEXT_DEFAULT =
+  '还没有「在所有网站上读取数据」权限：每一个步骤都只会记文字、没有截图。';
+
 async function refreshPermission(): Promise<void> {
   const has = await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
   permBarEl.classList.toggle('hidden', has);
+  // 重新拿回横幅时文案要回到"默认那条"：否则上一轮"已授予"会留在上面，与横幅自相矛盾
+  if (!has) permTextEl.textContent = PERM_TEXT_DEFAULT;
 }
 
 function askPermission(): void {
@@ -88,7 +93,8 @@ function askPermission(): void {
   })();
 }
 
-function clock(at: number): string {  const d = new Date(at);
+function clock(at: number): string {
+  const d = new Date(at);
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
