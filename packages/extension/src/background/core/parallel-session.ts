@@ -1005,6 +1005,15 @@ function cookieHeaderOf(accountId: string): string | null {
 
 /** 把某账号当前 token 同步到其全部绑定标签页的规则（受授权健康门控） */
 async function syncAccountRules(accountId: string, host: string): Promise<void> {
+  // ★ v4.6.2（PITFALLS #60）：**先等冷启动重建跑完**，再动规则。
+  //   `restore()` 负责摘掉上一代 SW 留下的孤儿规则、并把 id 计数器推到现存最大值之后；
+  //   它有多个 `await`（逐个 `isEnforceable` 实查权限），而本函数曾在这之前就装规则 ⇒
+  //   规则还在、计数器却从 100000/200000 重新分配 ⇒ `updateSessionRules` 以
+  //   `Rule with id N does not have a unique ID` **整批拒收** ⇒ 该页签既不回放 Cookie
+  //   也不剥离真实 jar，静默以错误身份在跑（2026-11-25 实测爆发 3 次、14 条被拒）。
+  //   ★ 本行是门 1（让正常路径不再撞车），`tabRules.addOne` 的撞车自愈是门 2
+  //     （兜住竞态与还没走到这里的旧调用点）—— 两层互相独立，缺一层就还是会漏。
+  await ensureReady();
   const bound = boundTabsOf(accountId);
   void diag(`syncAccountRules(${accountId}) 绑定标签=${bound.join(',') || '无'}`);
   if (!(await isEnforceable(host))) {

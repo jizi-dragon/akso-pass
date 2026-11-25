@@ -333,25 +333,158 @@ function buildCookieRule(
   });
 }
 
-/** 单条规则安装（返回是否成功；失败仅记录诊断，不阻断其余规则） */async function addOne(rule: chrome.declarativeNetRequest.Rule): Promise<boolean> {
+/* ---------------- 撞车自愈（v4.6.2，PITFALLS #60） ----------------
+ *
+ * session 规则**活过 SW 回收**（只有浏览器关闭 / 扩展重载才清），而 `installed` 记账与
+ * `nextAuthId / nextCookieId` 都是**模块级内存态**。`restore()` 本是把两者对齐的地方
+ * （摘掉本区间旧规则 + 计数器推到现存最大值之后），但它中途有多个 `await`
+ * （逐个 `isEnforceable` 实查权限），而 `syncAccountRules()` 曾经**不等它**：
+ * token 首捕 / cookie 一变化就装规则。于是"上一代的规则还在 → 这一代从基数重新分配 id
+ * → `updateSessionRules` 以 `Rule with id N does not have a unique ID` 整批拒收"。
+ *
+ * 后果不是报错，而是**该页签既不回放 Cookie 也不剥离真实 jar** —— 平台照样打开，
+ * 只是以错误身份在跑（PITFALLS #1/#8 那类静默失效）。实测 2026-11-25 通桥环境爆发
+ * 3 次（8 + 3 + 3 条被拒，`addRule #200000 失败：does not have a unique ID`）。
+ *
+ * 处置分两层，都不依赖"另一个函数先跑对"：
+ *   ① `addOne` 自己认 duplicate-id，先摘掉**指向本页签、但不在记账里**的陈旧规则；
+ *   ② 摘不到（撞的是别的活页签的规则）就把计数器推到现存 id 之后**换号**重试 ——
+ *      绝不为了自愈去删别人的规则，那只是把串号换个页签发生。
+ */
+
+/** `installed` 记账里还认得的规则 id（这些是活规则，不算陈旧） */
+function trackedRuleIds(): Set<number> {
+  const ids = new Set<number>();
+  for (const m of installed.values()) {
+    for (const id of [m.authId, m.cookieId, m.cookieNavId, m.cookieSubId]) {
+      if (id !== undefined) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * 读浏览器里现存的 session 规则；**失败时留 `error` 并返回 `null`**。
+ *
+ * ★ 这一条是"孤儿规则清理不掉"与"规则 id 撞车"的**共同上游**：`restore()` 与撞车自愈
+ *   都要读它，所以收敛成一个函数 —— 同一次故障只留**一条** error，否则诊断包里会出现
+ *   三条措辞各异的日志（PITFALLS #60 的现场就有这个味道）。
+ */
+async function readSessionRules(): Promise<chrome.declarativeNetRequest.Rule[] | null> {
+  let existing: chrome.declarativeNetRequest.Rule[];
   try {
-    await chrome.declarativeNetRequest.updateSessionRules({ addRules: [rule] });
-    // ★ 成功的安装走 `debug`（中频：由 `syncAccountRules` 在 cookie 变化时驱动）。
-    //   排障时它回答"这条规则到底装上了没有、id 是多少" —— 而 id 是 `ql.diag`
-    //   里 `sessionRuleCount` 与实际规则对不上的唯一线索。
-    log.debug('addRule #%d 装上（%s）', rule.id, rule.condition?.tabIds?.join(',') ?? '-');
-    return true;
+    existing = await chrome.declarativeNetRequest.getSessionRules();
   } catch (e) {
-    // ★ 失败同时走两条：`diag()`（进诊断包的人读文本）
-    //   与 `log.error`（带级别、进 `appLogs`、也进诊断包）。
-    //   ★ **这是本文件最要紧的一条日志**：历史教训（PITFALLS #1、#8）是
-    //     `updateSessionRules` 的失败会让**整个网络平面一起死**，
-    //     而当时唯一的信号就是这一行 —— 它必须显眼。
-    log.error('addRule #%d **失败**：%s',
-      rule.id, e instanceof Error ? e.message : String(e));
-    void diag(`addRule #${rule.id} 失败：${e instanceof Error ? e.message : String(e)}`);
+    /* ★★ 2026-10-16 的教训（当时是裸吞 `catch { existing = []; }`），它有两个**都静默**的后果：
+     *
+     *  ① **孤儿规则永远不会被清理**：差集算法拿 `existing` 当"浏览器里现在有什么"，
+     *     空集 ⇒ 它算出"没有任何规则要删" ⇒ 上一次运行留下的规则**永久留在浏览器里**。
+     *  ② **规则 id 会撞车**：`nextAuthId / nextCookieId` 从 `AUTH_BASE / COOKIE_BASE`
+     *     重新分配（它不知道那些 id 已被占用）⇒ 加规则时 `updateSessionRules`
+     *     （**原子批量**，见规则 1）会因为 id 冲突**整批被拒** —— 于是 AUTH 与 COOKIE
+     *     两个平面一起失效，而运维**只看到**下游那句 `addRule #%d 失败`，
+     *     真正的原因（读规则失败）从未出现。★ 2026-11-25 的通桥诊断包正是这个形状。
+     *
+     * ★ 用 `error` 而不是 `warn`：这一条会让**另一个平面**静默失效，
+     *   而不是"某个功能没生效"。级别与后果相称（规则 17：失败不能用 debug）。
+     */
+    log.error('getSessionRules 失败 ⇒ 孤儿规则无法清理、且规则 id 将从 %d 重新分配（会撞上旧规则，'
+      + '整批 updateSessionRules 可能被拒）：%s', AUTH_BASE, e instanceof Error ? e.message : String(e));
+    return null;
+  }
+  return existing;
+}
+
+/**
+ * 摘掉"指向本页签、但不在记账里"的规则（上一代 SW 的残留），返回摘除条数。
+ * ★ 只碰**本页签**的规则：别人的规则可能正被活页签使用，删掉就是另一起串号。
+ */
+async function dropStaleRules(tabId: number): Promise<number> {
+  const existing = await readSessionRules();
+  if (!existing) {
+    void diag('撞车自愈：读 session 规则失败 ⇒ 只能换号重试');
+    return 0;
+  }
+  const known = trackedRuleIds();
+  const stale = existing
+    .filter((r) => r.id >= AUTH_BASE
+      && !known.has(r.id)
+      && (r.condition.tabIds ?? []).includes(tabId))
+    .map((r) => r.id);
+  if (!stale.length) {
+    return 0;
+  }
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: stale });
+    return stale.length;
+  } catch (e) {
+    log.error('摘除陈旧规则**失败** ids=%s：%s',
+      stale.join(','), e instanceof Error ? e.message : String(e));
+    return 0;
+  }
+}
+
+/** 把两个计数器推到浏览器里现存规则之后（撞车兜底：不摘规则，只换号） */
+async function bumpCountersPastExisting(): Promise<boolean> {
+  const existing = await readSessionRules();
+  if (!existing) {
+    void diag('撞车兜底：读 session 规则失败 ⇒ 换号也无从下手');
     return false;
   }
+  nextAuthId = Math.max(nextAuthId, AUTH_BASE,
+    ...existing.filter((r) => r.id >= AUTH_BASE && r.id < COOKIE_BASE).map((r) => r.id + 1));
+  nextCookieId = Math.max(nextCookieId, COOKIE_BASE,
+    ...existing.filter((r) => r.id >= COOKIE_BASE).map((r) => r.id + 1));
+  return true;
+}
+
+/**
+ * 单条规则安装：**成功返回实际装上的 id**，失败返回 `null`（仅记诊断，不阻断其余规则）。
+ * id 由本函数分配（`kind` 决定用哪个计数器）—— 撞车时要换号，调用方不能把 id 写死。
+ */
+async function addOne(
+  build: (id: number) => chrome.declarativeNetRequest.Rule,
+  kind: 'auth' | 'cookie',
+  tabId: number,
+): Promise<number | null> {
+  const alloc = (): number => (kind === 'auth' ? nextAuthId++ : nextCookieId++);
+  let id = alloc();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const rule = build(id);
+    try {
+      await chrome.declarativeNetRequest.updateSessionRules({ addRules: [rule] });
+      // ★ 成功的安装走 `debug`（中频：由 `syncAccountRules` 在 cookie 变化时驱动）。
+      //   排障时它回答"这条规则到底装上了没有、id 是多少" —— 而 id 是 `ql.diag`
+      //   里 `sessionRuleCount` 与实际规则对不上的唯一线索。
+      log.debug('addRule #%d 装上（%s）', rule.id, rule.condition?.tabIds?.join(',') ?? '-');
+      return id;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 只有 duplicate-id 值得重试；其余失败（条件非法、额度用尽…）重试结果相同
+      if (!/unique ID/i.test(msg)) {
+        // ★ 失败同时走两条：`diag()`（进诊断包的人读文本）
+        //   与 `log.error`（带级别、进 `appLogs`、也进诊断包）。
+        //   ★ **这是本文件最要紧的一条日志**：历史教训（PITFALLS #1、#8）是
+        //     `updateSessionRules` 的失败会让**整个网络平面一起死**，
+        //     而当时唯一的信号就是这一行 —— 它必须显眼。
+        log.error('addRule #%d **失败**：%s', id, msg);
+        void diag(`addRule #${id} 失败：${msg}`);
+        return null;
+      }
+      const swept = attempt === 0 ? await dropStaleRules(tabId) : 0;
+      const bumped = swept > 0 ? true : await bumpCountersPastExisting();
+      log.warn('addRule #%d 撞车（%s）：摘陈旧 %d 条 / 计数器推后 %s，换号重试',
+        id, msg, swept, bumped ? '成功' : '失败');
+      void diag(`addRule #${id} 撞车（${msg}）：摘陈旧 ${swept} 条 / 计数器推后 ${bumped ? '成功' : '失败'}`);
+      if (!bumped) {
+        log.error('addRule #%d **失败**：%s（撞车后无法换号）', id, msg);
+        return null;
+      }
+      id = alloc();
+    }
+  }
+  log.error('addRule 连续撞车 3 次仍装不上（tab=%d kind=%s）⇒ 该页签网络平面不完整', tabId, kind);
+  return null;
 }
 
 export const tabRules = {
@@ -391,9 +524,10 @@ export const tabRules = {
     // Cookie 对绑定页签隐身；跨域 iframe 发起的请求在本页签没有更优先的 set 规则，
     // 落到这条 remove 上 ⇒ 既不带账号 Cookie，也不会漏出真实 jar。
     if (meta.cookieId === undefined) {
-      const ruleId = nextCookieId++;
-      if (await addOne(buildCookieRule(ruleId, host, tabId, null, 'strip'))) {
-        meta.cookieId = ruleId;
+      // ★ v4.6.2：id 由 `addOne` 分配并返回（撞车时它会换号），调用方不能再自己 `++`
+      const installedId = await addOne((ruleId) => buildCookieRule(ruleId, host, tabId, null, 'strip'), 'cookie', tabId);
+      if (installedId !== null) {
+        meta.cookieId = installedId;
       }
     }
 
@@ -426,19 +560,17 @@ export const tabRules = {
         removes.push(meta.cookieSubId);
         meta.cookieSubId = undefined;
       }
-      const navId = nextCookieId++;
-      const navOk = await addOne(buildCookieRule(navId, host, tabId, wanted, 'nav', scheme));
-      if (navOk) {
-        meta.cookieNavId = navId;
+      const navInstalled = await addOne((navId) => buildCookieRule(navId, host, tabId, wanted, 'nav', scheme), 'cookie', tabId);
+      if (navInstalled !== null) {
+        meta.cookieNavId = navInstalled;
       }
-      const subId = nextCookieId++;
-      const subOk = await addOne(buildCookieRule(subId, host, tabId, wanted, 'sub', scheme));
-      if (subOk) {
-        meta.cookieSubId = subId;
+      const subInstalled = await addOne((subId) => buildCookieRule(subId, host, tabId, wanted, 'sub', scheme), 'cookie', tabId);
+      if (subInstalled !== null) {
+        meta.cookieSubId = subInstalled;
       }
       // 两条都装上才算回放就绪；只装一条时把值置空，下一次 sync 会整体重建，
       // 避免「一条生效一条没装」被当成已配置（半回放比不回放更隐蔽）。
-      meta.cookieValue = navOk && subOk ? wanted : null;
+      meta.cookieValue = navInstalled !== null && subInstalled !== null ? wanted : null;
       meta.cookieScheme = scheme;
     }
 
@@ -454,9 +586,9 @@ export const tabRules = {
         removes.push(meta.authId);
         meta.authId = undefined;
       }
-      const ruleId = nextAuthId++;
-      if (await addOne(buildAuthRule(ruleId, host, tabId, token, scheme))) {
-        meta.authId = ruleId;
+      const authInstalled = await addOne((ruleId) => buildAuthRule(ruleId, host, tabId, token, scheme), 'auth', tabId);
+      if (authInstalled !== null) {
+        meta.authId = authInstalled;
         meta.token = token;
       }
     }
@@ -550,27 +682,10 @@ export const tabRules = {
     cookie?: string | null;
     scheme?: 'http' | 'https';
   }>): Promise<void> {
-    let existing: chrome.declarativeNetRequest.Rule[] = [];
-    try {
-      existing = await chrome.declarativeNetRequest.getSessionRules();
-    } catch (e) {
-      /* ★★ 2026-10-16：原来是裸吞（`catch { existing = []; }`），而它有两个**都静默**的后果：
-       *
-       *  ① **孤儿规则永远不会被清理**：下面的差集算法拿 `existing` 当"浏览器里现在有什么"，
-       *     空集 ⇒ 它算出"没有任何规则要删" ⇒ 上一次运行留下的规则**永久留在浏览器里**。
-       *  ② **规则 id 会撞车**：`nextAuthId / nextCookieId` 从 `AUTH_BASE / COOKIE_BASE`
-       *     重新分配（它不知道那些 id 已被占用）⇒ 加规则时 `updateSessionRules`
-       *     （**原子批量**，见规则 1）会因为 id 冲突**整批被拒** —— 于是 AUTH 与 COOKIE
-       *     两个平面一起失效，而运维**只看到**下游那句 `addRule #%d 失败`，
-       *     真正的原因（读规则失败）从未出现。
-       *
-       * ★ 用 `error` 而不是 `warn`：这一条会让**另一个平面**静默失效，
-       *   而不是"某个功能没生效"。级别与后果相称（规则 17：失败不能用 debug）。
-       */
-      log.error('getSessionRules 失败 ⇒ 孤儿规则无法清理、且规则 id 将从 %d 重新分配（会撞上旧规则，'
-        + '整批 updateSessionRules 可能被拒）：%s', AUTH_BASE, e instanceof Error ? e.message : String(e));
-      existing = [];
-    }
+    // ★ 读失败 ⇒ `existing` 退化成空集（下面差集算法会以为"浏览器里没有规则"）：
+    //   孤儿清不掉 + id 从基数重新分配 ⇒ PITFALLS #60。错误留痕在 `readSessionRules()` 里
+    //   （只留一条，措辞统一）。
+    const existing = (await readSessionRules()) ?? [];
 
     // ★★ v4.2.39：先摘掉本区间内的**全部**旧规则，再按 persisted 重建。
     //

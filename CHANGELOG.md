@@ -1,3 +1,15 @@
+## 4.6.2（2026-11-25）
+
+**修「规则 id 撞车」：SW 冷启动窗口内该页签的网络平面静默残缺**
+
+- 现象：2026-11-25 通桥真机诊断包（`akso-pass-diag-2026-11-25T06-29-34-293Z.json`）里 23 条 `error` 有 14 条是 `addRule #200000 **失败**：Rule with id 200000 does not have a unique ID.`，并成对出现 `applyBinding tab=… COOKIE 规则**未装上** ⇒ 网络平面不完整`。三次爆发（10:26:45 ×8、13:18:32 ×3、13:43:32 ×3）全部紧跟 `token-captured` 的同一秒；8 条孤儿规则挂到用户手动「重新加载」扩展才被 `tabRules.restore` 摘掉。同一份包里 26 小时出现 88 次 SW 冷启动回灌 —— SW 被反复回收，正是这个缺陷的温床。
+- 根因：session 规则**活过 SW 回收**，而 `installed` 记账与 `nextAuthId / nextCookieId` 是模块内存态。`restore()` 本负责对齐（摘旧规则 + 计数器推 `max+1`），但它有多个 `await`（逐个 `isEnforceable` 实查权限），而 `syncAccountRules()` **不等它** ⇒ 冷启动窗口内 token 首捕 / cookie 变化从 `100000 / 200000` 重新分配 ⇒ 撞上上一代还在的规则 ⇒ `updateSessionRules({addRules})` **原子批量整批拒收** ⇒ 该页签既不回放 Cookie 也不剥离真实 jar，**平台照样能进，只是以错误身份在跑**。
+- 改法（两层门）：① `syncAccountRules()` 首行 `await ensureReady()`，正常路径不再撞车；② `tabRules.addOne()` 改成自己分配 id 并返回，遇 duplicate-id 自愈 —— 先摘"指向本页签、且不在记账里"的陈旧规则，摘不到就把计数器推到现存 `max+1` **换号重试**（最多 3 轮）；**绝不删别的页签的规则**。4 处调用点（strip / nav / sub / auth）改用返回值，不再自己 `++`。
+- 判据与反证：Chrome API 级实测（一次性脚本在 `tmp/`，不入库）—— 同 id 的真实报错文案与 `/unique ID/i` 匹配；`getSessionRules → 摘陈旧 → 换号重装`可装上；撞别人规则时推 `max+1` 可装上。静态回归 `npm run verify -- --only v310` 通过；`check`（check_deps + tsc）、`build` 绿；`run-all --static` **35/35**。
+- 同时修好三处**判据自身的假绿**（规则 17/28：门禁必须先反证再相信）：① `verify-log-redaction` 的"读 session 规则失败要留 `error`"原来锚点字符串在 `restore()` 里，助手收敛成一个 `readSessionRules()` 后锚点命中 3 次 ⇒ 前提红；改成唯一锚点后 **171/171**。② 反证器两条注入锚点带行首缩进（4/6 格），代码搬进 `catch`/新函数后缩进变成 8/4 格 ⇒ 注入**一字不中**、报"缺陷版下仍绿"（看着像判据坏了，实际是注入成了空操作）⇒ 锚点去掉缩进，**28/28** 通过。③ "`addOne` 失败必须 `log.error`"原来只扫函数体，而函数体里有 3 条 error 形态 ⇒ 把"装不上"那条降级成 `debug` 仍绿；改成用原文再钉一句文案（`log.error('addRule #%d **失败**：%s'`）。
+- 诚实边界：`verify-jarhygiene` / `verify-defect` 需要先登录云端账号库（本机 headless 档每次新建，`par.create` 返回「云端未授权」）—— 这两个脚本在**改前 HEAD** 上同样失败、报错一字不差，属环境限制，不是本次引入。规则是否逐条装上仍需在真实浏览器里目视确认（`docs/PITFALLS.md` #60）。
+- 版本：4.6.1 → 4.6.2（patch，未打包 release）。
+
 ## 4.6.1（2026-11-23）
 
 **自动截图三处体验返工：录整个浏览器、只框选不压暗、导出的手册能读了**

@@ -2979,6 +2979,87 @@ state（空）重渲染了一次，DOM 里那个值已经不在了，只看 DOM 
 
 ---
 
+## #60 【已修】规则 id 撞车：`syncAccountRules` 不等 `restore()` ⇒ `updateSessionRules` **整批**拒收，页签静默以错误身份在跑
+
+**症状**：某个账号页签打开后**看起来完全正常**（平台能进、功能能点），但网络平面缺一块：
+该页签既不回放账号 Cookie、也不剥离真实 jar。诊断包里成对出现：
+
+```
+[ql:tab-rules] addRule #200000 **失败**：Rule with id 200000 does not have a unique ID.
+[ql:tab-rules] applyBinding tab=173967791 COOKIE 规则**未装上** ⇒ 网络平面不完整（应回放但未回放）
+```
+
+2026-11-25 的一份真机诊断包里，23 条 `error` 有 14 条是它，分三次爆发
+（`10:26:45` 8 条 / 页签 173967791·795·796；`13:18:32` 3 条 / 173967803·786；
+`13:43:32` 同上 3 条），每次都紧跟在 `token-captured(a_52ac2c96…)` 同一秒 ——
+即**"刚登录、身份刚变化"的那个时刻**。8 条孤儿规则一直挂到 `14:28:46`
+用户点了一次「重新加载」扩展、`tabRules.restore 摘除旧规则 8 条` 才消失。
+同一份包里有 88 条 `日志落盘回灌：上一个 SW 生命周期的 120 条已并入内存环`（26 小时），
+说明 SW 被反复回收 —— 这正是本缺陷的温床。
+
+**根因**：两个东西的寿命不一样。
+
+- **session 规则活过 SW 回收**（只有浏览器关闭 / 扩展重载才清），
+- 而 `tab-rules.ts` 的 `installed` 记账与 `nextAuthId / nextCookieId` 是**模块级内存态**，
+  SW 一回收就回到 `100000 / 200000`。
+
+`restore()` 本来就是对齐这件事的（摘掉本区间的旧规则 + 把计数器推到现存最大值之后），
+但它中途有多个 `await`（逐个 `isEnforceable` 实查权限、`readState` 读 storage），
+而 `syncAccountRules()` **不等它** —— 冷启动窗口里 token 首捕 / cookie 变化先到，
+规则从基数重新分配 ⇒ 撞上"上一代还在的规则" ⇒ Chrome 以 duplicate-id 拒收。
+
+★ 关键细节：`updateSessionRules({addRules:[...]})` 是**原子批量**，
+一条撞车**整批都不装** —— 所以日志里"一条 addRule 失败"实际代表"这一轮该页签的规则全废"。
+而 `services-worker` 的诊断 handler 还会临时占用 `#777001`（≥ `AUTH_BASE`），
+撞车窗口比只看"上一代规则"更宽。
+
+**判据**（可执行）：
+
+- 静态：`tab-rules.ts` 的 `addOne` 必须是 `addOne(build, kind, tabId)` 三参形状，
+  且含 `/unique ID/i` 分支 + `dropStaleRules` / `bumpCountersPastExisting` 两个兜底；
+  `applyBinding` 里**不许**再出现 `nextCookieId++` / `nextAuthId++`（分配权已收进 `addOne`）。
+- 静态：`parallel-session.ts` 的 `syncAccountRules` 函数体里，`await ensureReady()`
+  必须出现在第一次 `tabRules.applyBinding` **之前**（用行号比，不要用"包含"）。
+- 真机：诊断包 `appLogs` 里不再出现 `does not have a unique ID`；
+  且 `ql.diag` 的 `rulesState.tabRules.installed` 非空时 `sessionRuleCount` 与之对得上。
+- **反证做过**（Chrome API 级，`tmp/` 一次性脚本，不入库）：同 id 再装一次的真实报错是
+  `Rule with id 200000 does not have a unique ID.`；先 `getSessionRules` 摘掉指向该页签的
+  陈旧规则后可换号装上；撞的是别人的规则时把计数器推到 `max+1` 后可再装。
+- ★ **没能做的真机反证**：`verify-jarhygiene` 与 `verify-defect` 需要先登录云端账号库
+  （本机 headless 档每次新建、`par.create` 直接返回「云端未授权」）。
+  我在**改前 HEAD** 上跑过同一脚本，报错一字不差 ⇒ 这两个失败是**环境**的，
+  不是本次改动引入的。逐条安装的目视确认要在用户真实浏览器里做。
+
+**处置**：
+
+1. `parallel-session.ts` 的 `syncAccountRules()` 首行 `await ensureReady()`（门 1）：
+   正常路径不再撞车。
+2. `tab-rules.ts` 的 `addOne()` 改成**自己分配 id 并返回**，遇 duplicate-id 自愈（门 2）：
+   ① 先 `dropStaleRules(tabId)` —— 只摘**指向本页签、且不在记账里**的规则；
+   ② 摘不到（撞的是别的活页签的规则）就 `bumpCountersPastExisting()` 把两个计数器
+      推到现存最大值之后**换号**重试；最多 3 轮，全失败则记 `error` 并让该页签继续缺规则
+      （行为与改前一致，只是不再污染诊断包）。
+   ★ **绝不为了自愈去删别人的规则** —— 那只是把串号换个页签发生。
+3. 4 处调用点（strip / nav / sub / auth）改为使用返回值，不再自己 `++`。
+
+**推广**：
+
+- ★★ **"寿命不一致的两份状态"是撞车类缺陷的母体**：一份活过进程（session 规则）、
+  一份只活在内存（记账 + 计数器）。修法不是"让它们一样长命"，而是
+  **让底层在遇到不一致时能自己对齐**，而不是指望上层每次都先对齐好。
+- ★★ **原子批量的失败必须按"整批"记账**：`addRules` 一条撞车整批不装，
+  所以"某条失败"的日志不能只描述那条 —— 否则排障时会去查那条规则的条件，
+  而真正的原因是 id。
+- ★★ **自愈的第一原则是"只修自己的东西"**：能安全摘除的只有"指向本页签、且记账里没有"
+  的规则；其余情况只能换号。判据是"摘除前后，别的页签的规则集合必须不变"。
+- ★ **两层门比一层稳**：调用点门（`ensureReady`）挡正常路径，底层自愈兜竞态与旧调用点。
+  只有一层时，任何一个绕过调用点的路径（诊断 handler、未来的新调用点）都会把它变回原样。
+- ★ **"页签看起来正常"是这类缺陷的伪装**：网络平面残缺不会报错，只会让身份错。
+  判据要落在**成对日志**上（`addRule #… 失败` + `applyBinding … 未装上`），
+  单看任一条都像噪声。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

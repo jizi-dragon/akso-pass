@@ -135,8 +135,13 @@ const CASES = [
     //     用"整行内容"作为锚点即可，替换后那两行参数仍然接得上。
     label: '⑨ 把 `addOne` 失败的 `log.error` 降级为 `log.debug` ⇒ 装不上又变静默',
     file: TABRULES_TS,
-    anchor: "    log.error('addRule #%d **失败**：%s',",
-    broken: "    log.debug('addRule #%d **失败**：%s',",
+    //   ★ 锚点**不带行首缩进**：v4.6.2 把 `addOne` 的失败分支挪进了 `catch (err)` 里
+    //     （缩进 4 → 8 格），带缩进的老锚点**一字不中** ⇒ 注入变成空操作，
+    //     反证器报"缺陷版下仍绿"（而代码其实好好的）。锚点只取"调用名 + 参数前缀"，
+    //     缩进与换行都不参与匹配。★ 它仍然唯一：撞车兜底那句是 `…%s（撞车后无法换号）`，
+    //     与这里的 `…%s',` 不同。
+    anchor: "log.error('addRule #%d **失败**：%s',",
+    broken: "log.debug('addRule #%d **失败**：%s',",
   },
   {
     // ★ 第 11 节（凭据不进日志调用）的反证 —— **静态判据**验的是"根本没把凭据交给 log()"。
@@ -233,8 +238,10 @@ const CASES = [
     //   所以它顺带验了"第二种口径也真的能红"。
     label: '㉕ 拆掉 getSessionRules 失败的 error 留痕 ⇒ 孤儿规则与 id 撞车都静默',
     file: TABRULES_TS,
-    anchor: "      log.error('getSessionRules 失败 ⇒ 孤儿规则无法清理、且规则 id 将从 %d 重新分配（会撞上旧规则，'",
-    broken: '      // 缺陷版：留痕被拆掉',
+    //   ★ 锚点同样**不带行首缩进**：留痕从 `restore()` 里搬进 `readSessionRules()` 后
+    //     缩进是 4 格（原来是 6 格）⇒ 带缩进会**一字不中**、注入变空操作。
+    anchor: "log.error('getSessionRules 失败 ⇒ 孤儿规则无法清理、且规则 id 将从 %d 重新分配（会撞上旧规则，'",
+    broken: "// 缺陷版：留痕被拆掉",
   },
   {
     // ★ 与 ⑮（`listFavorites`）**逐字同形**：读失败 ⇒ 回落默认 ⇒ 界面对用户说谎。

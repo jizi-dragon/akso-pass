@@ -617,6 +617,15 @@ console.log('\n=== 10. 网络平面：规则装不上/摘不掉必须可见 ==='
   check('判据前提：取到了 `addOne` 的函数体', addOne !== null);
   check('`addOne` 失败时 `log.error`（装不上必须显眼）',
     !!addOne && /log\.error\(/.test(addOne));
+  /* ★★ 上一条只证明"函数体里**某处**有 `log.error`" —— 它**不足以**证明"装不上的那条路
+   *   会显眼"。v4.6.2 把撞车自愈写进 `addOne` 后，函数体里有 **3 条** error 形态
+   *   （非撞车分支、撞车后无法换号、连续撞车 3 次），于是反证器把"装不上"那条降级成
+   *   `log.debug` 时判据**照样绿** —— 报出来是"缺陷版下仍绿"，读起来像判据坏了。
+   *   ⇒ 这里用**原文**（不剥字面量）再钉一次**那句文案本身**，让降级真的会红。
+   *   ★ 文案里 `**失败**` 的星号要转义；`%s',` 收尾能把它与"（撞车后无法换号）"那句区分开。 */
+  const addOneRaw = bodyOfFn(trSrc, 'addOne');
+  check('`addOne` 的"装不上"留痕是 `log.error` 且文案未被降级',
+    !!addOneRaw && /log\.error\('addRule #%d \*\*失败\*\*：%s'/.test(addOneRaw));
   check('`addOne` 仍然写 `diag()`（人读文本，进诊断包）',
     !!addOne && /diag\(/.test(addOne));
 
