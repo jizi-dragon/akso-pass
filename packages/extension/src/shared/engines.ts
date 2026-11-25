@@ -28,8 +28,10 @@
  */
 import { withTimeout } from './net';
 import { looksLikeDictionaryEntry } from './snake-case';
+import { loadLlmSettings, type LlmSettings } from './llm-settings';
+import { translateWithDeepSeek } from './deepseek';
 
-export type EngineId = 'auto' | 'transmart' | 'youdao' | 'mymemory' | 'lingva';
+export type EngineId = 'auto' | 'deepseek' | 'transmart' | 'youdao' | 'mymemory' | 'lingva';
 
 /** 单个引擎的超时（原扩展=8000ms，实测国内引擎 100-500ms、海外常在 1-3s） */
 export const TRANSLATE_TIMEOUT_MS = 8000;
@@ -84,6 +86,7 @@ function mapLang(map: Record<string, string>, code: string, fallback: string): s
 
 /** 引擎的**人类可读名**（错误信息里要报得出是谁失败了） */
 export const ENGINE_LABEL: Record<Exclude<EngineId, 'auto'>, string> = {
+  deepseek: 'DeepSeek',
   transmart: '腾讯交互翻译 TranSmart',
   youdao: '网易有道词典',
   mymemory: 'MyMemory',
@@ -242,12 +245,27 @@ async function viaLingva(text: string, target: string, source: string): Promise<
 
 /* ────────────────────────── 调度 ────────────────────────── */
 
-const IMPL: Record<Exclude<EngineId, 'auto'>, (t: string, tg: string, s: string) => Promise<string>> = {
+type FreeEngineId = Exclude<EngineId, 'auto' | 'deepseek'>;
+
+const IMPL: Record<FreeEngineId, (t: string, tg: string, s: string) => Promise<string>> = {
   transmart: viaTransmart,
   youdao: viaYoudao,
   mymemory: viaMyMemory,
   lingva: viaLingva,
 };
+
+/** 读取本地 Key；读失败（隐私模式等）按“未配置”处理，不影响免费链路。 */
+async function loadDeepSeekSettings(): Promise<LlmSettings | null> {
+  try {
+    return await loadLlmSettings();
+  } catch {
+    return null;
+  }
+}
+
+function describeError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 export interface TranslateResult {
   text: string;
@@ -264,6 +282,29 @@ export interface TranslateResult {
  */
 async function translateAuto(text: string, target: string, source: string): Promise<TranslateResult> {
   const errors: string[] = [];
+
+  /* ★ 2026-11-26：auto 的优先级从“免费赛马”变成“有 Key 先 DeepSeek”。
+   *
+   * 为什么失败后**不直接抛**：auto 的契约是“尽量给结果”，用户配了 Key 但
+   * 额度/网络临时不可用时，退回免费引擎比让快捷键整条失败更有用。显式选
+   * `deepseek` 则相反——见 `translate()`。
+   *
+   * 为什么先读完 Key 再赛马：没有 Key 时不能多发一次 storage 往返；
+   * 但也不能把 Key 读取失败当成“用户没配 Key”而静默——那只影响 auto，
+   * 后面免费链路仍照常工作；显式 DeepSeek 会在 `translate()` 里报清楚。
+   */
+  const llm = await loadDeepSeekSettings();
+  if (llm?.api_key) {
+    try {
+      return {
+        text: await translateWithDeepSeek(text, target, source, llm),
+        engine: 'deepseek',
+      };
+    } catch (e) {
+      errors.push(`${ENGINE_LABEL.deepseek}: ${describeError(e)}`);
+    }
+  }
+
   /**
    * ★★ 第一轮赛马要**过滤掉词典释义**（2026-10-12 实测事故）。
    *
@@ -326,6 +367,20 @@ export async function translate(
   if (engine === 'auto') {
     return translateAuto(text, target, source);
   }
+
+  /* ★ 显式选 DeepSeek 时**失败就报错**，不回落免费引擎。
+   *
+   * 用户选“DeepSeek”是为了质量；如果悄悄换成免费引擎，界面仍显示 DeepSeek，
+   * 用户会以为大模型在生效。这里把“未配置 Key”和“调用失败”都如实抛出。
+   */
+  if (engine === 'deepseek') {
+    const llm = await loadDeepSeekSettings();
+    if (!llm?.api_key) {
+      throw new Error('未配置 DeepSeek API Key，请在「翻译面板 → DeepSeek」中填写');
+    }
+    return { text: await translateWithDeepSeek(text, target, source, llm), engine: 'deepseek' };
+  }
+
   const out = await withTimeout(IMPL[engine](text, target, source), TRANSLATE_TIMEOUT_MS, ENGINE_LABEL[engine]);
   return { text: out, engine };
 }
@@ -341,7 +396,14 @@ export function normalizeEngineId(raw: unknown): EngineId {
   const legacy: Record<string, EngineId> = { tencent_web: 'transmart', google_free: 'transmart' };
   const v = String(raw ?? '');
   if (v in legacy) return legacy[v];
-  if (v === 'transmart' || v === 'youdao' || v === 'mymemory' || v === 'lingva' || v === 'auto') {
+  if (
+    v === 'transmart'
+    || v === 'youdao'
+    || v === 'mymemory'
+    || v === 'lingva'
+    || v === 'deepseek'
+    || v === 'auto'
+  ) {
     return v;
   }
   return 'auto';

@@ -23,7 +23,12 @@
  * ① 总开关 → ② 怎么用（含"试一次"） → ③ 命名规范（带预览）
  * → ④ 高级（语言/引擎，默认折叠但 summary 回显当前值） → ⑤ 统计 → ⑥ 吸底保存
  */
-import { EXT_VERSION, TRANSLATE_COMMAND, TRANSLATE_MESSAGE } from '../../shared/constants';
+import {
+  EXT_VERSION,
+  TRANSLATE_COMMAND,
+  TRANSLATION_HISTORY_KEY,
+  TRANSLATE_MESSAGE,
+} from '../../shared/constants';
 import { getForwardingLogger } from '../../shared/log';
 import { installLogForwarding } from '../../shared/forward-log';
 import { toSnakeCase } from '../../shared/snake-case';
@@ -51,7 +56,21 @@ import {
 import { readStats, dateKeys } from '../../shared/translate-stats';
 // ★ 改键页的地址与文案按家族给（Edge = `edge://`，理由见该模块头注释）。
 import { shortcutsPageText, shortcutsPageUrl } from '../../shared/browser-env';
-import type { EngineId } from '../../shared/engines';
+import { ENGINE_LABEL, type EngineId } from '../../shared/engines';
+import {
+  clearTranslationHistory,
+  loadTranslationHistory,
+  type TranslationHistoryEntry,
+} from '../../shared/translate-history';
+import {
+  DEEPSEEK_MODELS,
+  LLM_SETTINGS_KEY,
+  loadLlmSettings,
+  maskKey,
+  saveLlmSettings,
+  type DeepSeekModel,
+  type LlmSettings,
+} from '../../shared/llm-settings';
 
 /* ── DOM ── */
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -77,6 +96,13 @@ const el = {
   naming: $<HTMLInputElement>('naming_convention_mode'),
   targetLang: $<HTMLSelectElement>('target_language'),
   engineList: $<HTMLDivElement>('engine-list'),
+  llmPanel: $<HTMLDivElement>('llm-panel'),
+  llmState: $<HTMLElement>('llm-state'),
+  llmKey: $<HTMLInputElement>('deepseek_key'),
+  llmModel: $<HTMLSelectElement>('deepseek_model'),
+  llmTest: $<HTMLButtonElement>('deepseek-test'),
+  llmClear: $<HTMLButtonElement>('deepseek-clear'),
+  llmFeedback: $<HTMLElement>('deepseek-feedback'),
   adv: $<HTMLDetailsElement>('adv'),
   advCurrent: $<HTMLElement>('adv-current'),
   previewIn: $<HTMLInputElement>('preview-input'),
@@ -84,6 +110,9 @@ const el = {
   statToday: $<HTMLElement>('stat-today'),
   statMonth: $<HTMLElement>('stat-month'),
   statTotal: $<HTMLElement>('stat-total'),
+  historyList: $<HTMLDivElement>('history-list'),
+  historyEmpty: $<HTMLDivElement>('history-empty'),
+  historyClear: $<HTMLButtonElement>('history-clear'),
   hotkeyDisplay: $<HTMLElement>('hotkey-display'),
   shortcutLink: $<HTMLAnchorElement>('shortcut-link'),
   testBtn: $<HTMLButtonElement>('test-btn'),
@@ -105,7 +134,13 @@ const ENGINES: EngineMeta[] = [
     id: 'auto',
     name: '自动模式',
     tag: '推荐',
-    desc: '并行赛马腾讯 + 有道两个国内引擎，谁快用谁；都失败再依次用 MyMemory、Lingva 兜底。要 4 路同时挂才会失败。',
+    desc: '配置 DeepSeek Key 时先试大模型，失败再回落免费链路；未配置时并行赛马腾讯 + 有道，仍失败再用 MyMemory、Lingva 兜底。',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    tag: '自带 Key',
+    desc: '使用你自己的 DeepSeek API Key，翻译质量更高；Key 只存本机，不随账号同步。未配置 Key 时选择它会直接报错，不会悄悄换成免费引擎。',
   },
   {
     id: 'transmart',
@@ -161,6 +196,95 @@ function renderEngines(current: EngineId): void {
 function selectedEngine(): EngineId {
   const checked = el.engineList.querySelector<HTMLInputElement>('input[name="engine"]:checked');
   return (checked?.value as EngineId | undefined) ?? 'auto';
+}
+
+/* ── DeepSeek（BYOK） ── */
+
+let llmSettings: LlmSettings = { api_key: '', model: 'deepseek-flash' };
+
+function renderLlmModels(selected: DeepSeekModel): void {
+  el.llmModel.innerHTML = '';
+  for (const model of DEEPSEEK_MODELS) {
+    const opt = document.createElement('option');
+    opt.value = model.id;
+    opt.textContent = model.label;
+    opt.title = model.desc;
+    el.llmModel.appendChild(opt);
+  }
+  el.llmModel.value = selected;
+}
+
+function renderLlmState(): void {
+  const on = llmSettings.api_key.length > 0;
+  el.llmState.textContent = on ? `已配置 · ${maskKey(llmSettings.api_key)}` : '未配置';
+  el.llmState.classList.toggle('is-on', on);
+  el.llmKey.placeholder = on
+    ? '已配置，输入新 Key 可替换（留空保存不会删除）'
+    : 'sk-…（只存本机，不随账号同步）';
+}
+
+async function loadLlmOrDefault(): Promise<LlmSettings> {
+  try {
+    return await loadLlmSettings();
+  } catch (e) {
+    log.warn('读 DeepSeek 设置失败 ⇒ 本次按未配置处理：%s',
+      e instanceof Error ? e.message : String(e));
+    return { api_key: '', model: 'deepseek-flash' };
+  }
+}
+
+/**
+ * 把表单里的 Key/模型写回 local。
+ *
+ * ★ Key 输入框留空 = **保留**已存 Key，而不是清空：用户改模型时不该被迫重输 Key。
+ *   删除走「清除 Key」按钮，避免“保存一下 Key 没了”的意外。
+ */
+async function persistLlm(): Promise<void> {
+  const typed = el.llmKey.value.trim();
+  const model = (el.llmModel.value as DeepSeekModel) || 'deepseek-flash';
+  await saveLlmSettings(typed ? { api_key: typed, model } : { model });
+  llmSettings = await loadLlmSettings();
+  el.llmKey.value = '';
+  renderLlmState();
+}
+
+async function onDeepseekTest(): Promise<void> {
+  el.llmTest.disabled = true;
+  el.llmFeedback.textContent = '正在测试…';
+  try {
+    // 先把刚输入的 Key/模型落盘，否则用户“输入后直接点测试”会测到旧 Key。
+    if (el.llmKey.value.trim() || el.llmModel.value !== llmSettings.model) {
+      await persistLlm();
+    }
+    if (!llmSettings.api_key) {
+      el.llmFeedback.textContent = '请先填写 API Key 并保存';
+      return;
+    }
+    const resp = await chrome.runtime.sendMessage({
+      type: TRANSLATE_MESSAGE.testDeepseek,
+    }) as { success?: boolean; text?: string; error?: string; model?: string } | undefined;
+    if (resp?.success) {
+      el.llmFeedback.textContent = `✅ 连接成功（${resp.model ?? llmSettings.model}）：${resp.text ?? ''}`;
+    } else {
+      el.llmFeedback.textContent = `❌ ${resp?.error ?? '测试失败'}`;
+    }
+  } catch (e) {
+    el.llmFeedback.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    el.llmTest.disabled = false;
+  }
+}
+
+async function onClearDeepseek(): Promise<void> {
+  try {
+    await saveLlmSettings({ api_key: '' });
+    llmSettings = await loadLlmSettings();
+    el.llmKey.value = '';
+    renderLlmState();
+    el.llmFeedback.textContent = '已清除本机保存的 DeepSeek Key';
+  } catch (e) {
+    el.llmFeedback.textContent = `清除失败：${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 /** 折叠状态下 summary 上回显"现在配的是什么"（否则用户得展开才知道） */
@@ -235,6 +359,122 @@ function renderIconFillState(fill: boolean): void {
   el.iconFillLabel.textContent = fill ? '点图标时填充输入框' : '点图标时复制到剪贴板';
 }
 
+/* ── 渲染：翻译历史 ── */
+
+const HISTORY_DISPLAY_MAX = 20;
+
+function historyTime(at: number): string {
+  try {
+    return new Date(at).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function historyText(text: string, className: string): HTMLDivElement {
+  const div = document.createElement('div');
+  div.className = className;
+  // ★ 不用 innerHTML：原文/译文来自用户输入，必须按纯文本渲染。
+  div.textContent = text;
+  return div;
+}
+
+async function copyHistoryTranslation(text: string, button: HTMLButtonElement): Promise<void> {
+  button.disabled = true;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = '已复制';
+  } catch {
+    button.textContent = '复制失败';
+  } finally {
+    window.setTimeout(() => {
+      button.textContent = '复制译文';
+      button.disabled = false;
+    }, 1200);
+  }
+}
+
+function renderHistoryEntry(entry: TranslationHistoryEntry): HTMLElement {
+  const item = document.createElement('article');
+  item.className = 't-history-item';
+  item.setAttribute('role', 'listitem');
+
+  const meta = document.createElement('div');
+  meta.className = 't-history-meta';
+  const time = document.createElement('span');
+  time.className = 't-history-time';
+  time.textContent = historyTime(entry.at);
+  const engine = document.createElement('span');
+  engine.className = 't-history-engine';
+  engine.textContent = ENGINE_LABEL[entry.engine as Exclude<EngineId, 'auto'>] ?? entry.engine;
+  const target = document.createElement('span');
+  target.className = 't-history-target';
+  target.textContent = `→ ${langName(entry.target)}`;
+  meta.append(time, engine, target);
+  if (entry.naming) {
+    const naming = document.createElement('span');
+    naming.className = 't-history-naming';
+    naming.textContent = 'snake_case';
+    meta.append(naming);
+  }
+
+  const pair = document.createElement('div');
+  pair.className = 't-history-pair';
+  const original = document.createElement('div');
+  original.className = 't-history-side';
+  const originalLabel = document.createElement('span');
+  originalLabel.className = 't-history-label';
+  originalLabel.textContent = '原文';
+  original.append(originalLabel, historyText(entry.original, 't-history-text'));
+
+  const translated = document.createElement('div');
+  translated.className = 't-history-side';
+  const translatedLabel = document.createElement('span');
+  translatedLabel.className = 't-history-label';
+  translatedLabel.textContent = '译文';
+  translated.append(translatedLabel, historyText(entry.translated, 't-history-text is-result'));
+  pair.append(original, translated);
+
+  const actions = document.createElement('div');
+  actions.className = 't-history-actions';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'btn-ghost btn-sm';
+  copy.textContent = '复制译文';
+  copy.addEventListener('click', () => void copyHistoryTranslation(entry.translated, copy));
+  actions.append(copy);
+
+  item.append(meta, pair, actions);
+  return item;
+}
+
+async function renderHistory(): Promise<void> {
+  const entries = (await loadTranslationHistory()).slice(0, HISTORY_DISPLAY_MAX);
+  el.historyList.replaceChildren();
+  el.historyEmpty.classList.toggle('hidden', entries.length > 0);
+  el.historyClear.disabled = entries.length === 0;
+  for (const entry of entries) {
+    el.historyList.append(renderHistoryEntry(entry));
+  }
+}
+
+async function onClearHistory(): Promise<void> {
+  if (!window.confirm('清空本机保存的全部翻译历史？此操作不可恢复。')) return;
+  el.historyClear.disabled = true;
+  try {
+    await clearTranslationHistory();
+    await renderHistory();
+  } catch (e) {
+    log.warn('清空翻译历史失败：%s', e instanceof Error ? e.message : String(e));
+    el.historyClear.disabled = false;
+  }
+}
+
 /* ── 渲染：统计 ── */
 async function renderStats(): Promise<void> {
   const stats = await readStats();
@@ -274,6 +514,8 @@ async function onSave(): Promise<void> {
   try {
     const settings = await collect();
     await saveTranslationSettings(settings);
+    // Key 与模型也在 local；留空 Key 只保存模型，不会误删已配置的 Key。
+    await persistLlm();
     renderEnabledState(settings.translate_enabled);
     showFeedback('✓ 设置已保存');
   } catch (e) {
@@ -361,6 +603,10 @@ async function init(): Promise<void> {
   });
 
   renderLangOptions();
+  renderLlmModels('deepseek-flash');
+  llmSettings = await loadLlmOrDefault();
+  renderLlmModels(llmSettings.model);
+  renderLlmState();
   renderEngines('auto');
 
   let settings: TranslationSettings;
@@ -421,6 +667,9 @@ async function init(): Promise<void> {
 
   el.saveBtn.addEventListener('click', () => void onSave());
   el.testBtn.addEventListener('click', () => void onTest());
+  el.llmTest.addEventListener('click', () => void onDeepseekTest());
+  el.llmClear.addEventListener('click', () => void onClearDeepseek());
+  el.historyClear.addEventListener('click', () => void onClearHistory());
 
   // 引擎卡高亮跟随选择（只改视觉，不改行为）
   el.engineList.addEventListener('change', () => {
@@ -433,10 +682,10 @@ async function init(): Promise<void> {
 
   el.targetLang.addEventListener('change', renderAdvCurrent);
 
-  await Promise.all([renderStats(), renderHotkey()]);
+  await Promise.all([renderStats(), renderHotkey(), renderHistory()]);
 
   // 别处改了设置（另一个页面 / 别的设备同步过来）→ 本页跟着刷新，不留旧值
-  chrome.storage.onChanged.addListener((_changes, area) => {
+  chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'sync') {
       void loadTranslationSettings().then((next) => {
         el.enabled.checked = next.translate_enabled;
@@ -452,6 +701,17 @@ async function init(): Promise<void> {
     } else if (area === 'local') {
       // 翻译发生在别的页面 → 统计变了就刷新（不需要轮询）
       void renderStats();
+      if (changes[TRANSLATION_HISTORY_KEY]) {
+        void renderHistory();
+      }
+      // Key/模型可能被另一个设置页改了；只在这一个键变化时重读，避免统计刷新也读凭据
+      if (changes[LLM_SETTINGS_KEY]) {
+        void loadLlmOrDefault().then((next) => {
+          llmSettings = next;
+          renderLlmModels(next.model);
+          renderLlmState();
+        });
+      }
     }
   });
 }

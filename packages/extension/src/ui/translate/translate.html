@@ -186,22 +186,68 @@
             <h3>翻译引擎</h3>
             <div id="engine-list" class="t-engines" role="radiogroup" aria-label="翻译引擎"></div>
             <p class="hint">
-              全部引擎<b>免费、无需 API Key、无需注册</b>。自动模式并行赛马两个国内引擎，谁快用谁；
-              都失败再依次用海外两路兜底 —— 要 4 路同时挂才会失败。
+              免费引擎<b>无需 API Key</b>；自动模式在有 DeepSeek Key 时先试大模型，失败再回落
+              腾讯 / 有道赛马与海外兜底。未配置 Key 时，自动模式与旧版完全一致。
               <b>返回词典释义（含「/」或 sth/sb）的引擎会被自动跳过</b>，不会把词条当译文给你。
             </p>
           </div>
 
+          <div class="t-llm" id="llm-panel">
+            <div class="t-llm-head">
+              <h3>DeepSeek（自带 Key）</h3>
+              <span id="llm-state" class="t-llm-state">未配置</span>
+            </div>
+            <label class="t-field">
+              <span>API Key</span>
+              <input id="deepseek_key" type="password" autocomplete="off" spellcheck="false"
+                placeholder="sk-…（只存本机，不随账号同步）" />
+            </label>
+            <div class="t-llm-row">
+              <label class="t-field">
+                <span>模型</span>
+                <select id="deepseek_model"></select>
+              </label>
+              <button id="deepseek-test" class="btn-ghost btn-sm" type="button">测试连接</button>
+              <button id="deepseek-clear" class="btn-ghost btn-sm" type="button">清除 Key</button>
+            </div>
+            <p class="hint">
+              Key 只存在本机 <code>chrome.storage.local</code>，不会同步到其它设备，也不会写进日志/诊断包。
+              翻译请求由浏览器直接发往 <code>api.deepseek.com</code>，不经过本项目服务器。
+              留空保存会<b>保留</b>已配置的 Key；要删除请点「清除 Key」。
+            </p>
+            <p id="deepseek-feedback" class="t-llm-feedback" role="status" aria-live="polite"></p>
+          </div>
+
           <div class="notice warn t-privacy">
-            <b>翻译内容会发送到第三方。</b>
-            请求由浏览器直接发往腾讯交互翻译 / 网易有道 / MyMemory / Lingva 的公开接口，
-            <b>不经过本项目任何服务器</b>。含敏感信息的字段请不要翻译。
+            <span>
+              <b>翻译内容会发送到第三方。</b>
+              免费请求发往腾讯交互翻译 / 网易有道 / MyMemory / Lingva 的公开接口；
+              配置 DeepSeek 后还会发往 <code>api.deepseek.com</code>。
+              <b>不经过本项目任何服务器</b>。含敏感信息的字段请不要翻译。
+            </span>
           </div>
         </div>
       </details>
 
       <!-- ============================================================
-           ④ 只读：使用统计（不是设置项，放最后，且不占视觉重量）
+           ④ 翻译历史（本地只读；最近 20 条，可一键清空）
+           ============================================================ -->
+      <section class="card block t-history-card">
+        <div class="block-head row">
+          <div>
+            <h2>翻译历史</h2>
+            <p class="desc">只保存在本机，最多 100 条；这里展示最近 20 条。清空后不可恢复。</p>
+          </div>
+          <button id="history-clear" class="btn-ghost btn-sm" type="button">清空历史</button>
+        </div>
+        <div id="history-empty" class="t-history-empty">
+          还没有翻译记录。按一次 <kbd data-hotkey>Ctrl+X</kbd> 后，最近的译文会出现在这里。
+        </div>
+        <div id="history-list" class="t-history-list" role="list"></div>
+      </section>
+
+      <!-- ============================================================
+           ⑤ 只读：使用统计（不是设置项，放最后，且不占视觉重量）
            ============================================================ -->
       <section class="card block t-stats-card">
         <div class="block-head">
@@ -216,7 +262,7 @@
       </section>
 
       <!-- ============================================================
-           ⑤ 保存：钉在内容之后（流式，不浮在内容上）
+           ⑥ 保存：钉在内容之后（流式，不浮在内容上）
            ============================================================ -->
       <div class="t-savebar">
         <span class="t-savebar-hint">改开关会立即保存；语言与引擎改完点这里。</span>

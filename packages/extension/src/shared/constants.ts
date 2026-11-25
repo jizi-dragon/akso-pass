@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '4.6.3';
+export const EXT_VERSION = '4.6.4';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -127,6 +127,11 @@ export const TRANSLATE_MESSAGE = {
   /** content → background：翻译一段文本（结果由 background 决定是否转 snake_case） */
   request: 'ql:translateRequest',
   /**
+   * 翻译面板 → background：测试 DeepSeek Key/模型是否可用。
+   * ★ 独立消息而不是走 `request`：测试不能计入翻译统计，也不应触发 snake_case 转换。
+   */
+  testDeepseek: 'ql:deepseekTest',
+  /**
    * background → content：用户按了 `Ctrl+X`。
    * ★ `chrome.commands` 的 `onCommand` **只在 SW 里触发**（页面拿不到），
    *   所以快捷键链路必须是 SW 转一手 —— 这条消息就是那一手。
@@ -139,6 +144,12 @@ export const TRANSLATE_COMMAND = 'translate-input';
 
 /** 翻译次数统计在 `storage.local` 里的键 */
 export const TRANSLATION_STATS_KEY = 'ql:translateStats';
+
+/** 翻译历史在 `storage.local` 里的键（只存本机，不同步） */
+export const TRANSLATION_HISTORY_KEY = 'ql:translateHistory';
+
+/** 翻译历史最多保留多少条（面板只展示最近 20 条） */
+export const TRANSLATION_HISTORY_MAX = 100;
 
 /**
  * 页面内翻译 UI 的元素 id。

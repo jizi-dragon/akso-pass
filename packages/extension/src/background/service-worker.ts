@@ -128,7 +128,10 @@ import { siteAuth, probeScheme } from './core/site-auth';
 // v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
 import { translate } from '../shared/engines';
 import { loadTranslationSettings } from '../shared/translate-settings';
+import { loadLlmSettings } from '../shared/llm-settings';
+import { translateWithDeepSeek } from '../shared/deepseek';
 import { incrementStats } from '../shared/translate-stats';
+import { appendTranslationHistory } from '../shared/translate-history';
 import { toSnakeCase, validateTranslation, looksLikeDictionaryEntry } from '../shared/snake-case';
 import {
   forensics,
@@ -1316,6 +1319,16 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     return true;
   }
 
+  // 1.4 DeepSeek 连接测试（v4.6.4）：只验证 Key/模型，不计翻译统计。
+  if (
+    req &&
+    typeof req === 'object' &&
+    (req as { type?: string }).type === TRANSLATE_MESSAGE.testDeepseek
+  ) {
+    void handleDeepseekTest().then(sendResponse);
+    return true;
+  }
+
   // 1.5 翻译链路（v4.2.0 合并 Akso Instant Translate）
   if (
     req &&
@@ -1398,12 +1411,54 @@ async function handleTranslateRequest(rawText: string): Promise<{
 
     const finalText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
 
+    // 历史是辅助功能：写失败只记一条 warn，不能让用户“翻译成功却报失败”。
+    // 记的是最终结果（含 snake_case），与用户拿到的剪贴板/回填内容一致。
+    void appendTranslationHistory({
+      original: text,
+      translated: finalText,
+      engine: result.engine,
+      target: settings.target_language,
+      naming: settings.naming_convention_mode,
+    }).catch((e: unknown) => {
+      log.warn('写翻译历史失败（不影响本次翻译）：%s', e instanceof Error ? e.message : String(e));
+    });
+
     await incrementStats();
     log.info('翻译成功 engine=%s snake=%s len=%d', result.engine, settings.naming_convention_mode, finalText.length);
     return { success: true, text: finalText, engine: result.engine };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.warn('翻译失败：%s', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * 设置页「测试连接」：用固定短语验证 Key、模型名与网络。
+ *
+ * ★ 不走 `handleTranslateRequest`：测试不能 +1 统计，也不应受“翻译总开关”影响
+ *   （用户可能先配 Key 再开总开关）。这里只验证 DeepSeek 单路。
+ * ★ 不记录 Key；只记录模型与耗时。
+ */
+async function handleDeepseekTest(): Promise<{
+  success: boolean;
+  text?: string;
+  engine?: 'deepseek';
+  model?: string;
+  error?: string;
+}> {
+  const started = Date.now();
+  try {
+    const settings = await loadLlmSettings();
+    if (!settings.api_key) {
+      return { success: false, error: '未配置 DeepSeek API Key' };
+    }
+    const text = await translateWithDeepSeek('行动措施', 'en', 'zh-CN', settings);
+    log.info('DeepSeek 连接测试成功 model=%s ms=%d', settings.model, Date.now() - started);
+    return { success: true, text, engine: 'deepseek', model: settings.model };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.warn('DeepSeek 连接测试失败：%s', msg);
     return { success: false, error: msg };
   }
 }
