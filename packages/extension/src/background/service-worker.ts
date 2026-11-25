@@ -4,6 +4,8 @@ import { CONTENT_MESSAGE, DEBUG_HOTKEY_MESSAGE, EXT_VERSION, LOCAL_KEYS, SHOT_ME
 // ★ 日志的**唯一公开面**（AGENTS.md 规则 3）：取 logger 与读缓冲都从这里。
 //   直接 `console.*` 会绕过强制打码；直接读 ring 会绕过 `drain()` 的游标还原。
 import { drain, getLogLevel, getLogger, restoreToRing, setSink } from '../shared/log';
+// ★ 时间戳唯一实现（本地 + 偏移，v4.6.3）：诊断包的 `exportedAt` 与 `ql:diag` 用它。
+import { stampLocal } from '../shared/time';
 import type { LogRecord } from '../shared/log';
 import { checkForUpdate, dismissUpdate, getUpdateState, openReleasePage, registerUpdateCheck } from './update-check';
 // ★ 浏览器家族（Edge / Chrome）—— 诊断里要能回答"这是在哪个浏览器里跑的"。
@@ -601,7 +603,7 @@ async function dispatch(req: RuntimeRequest, sender: chrome.runtime.MessageSende
         return {
           format: 'quicklogin-backup' as const,
           version: 1 as const,
-          exportedAt: new Date().toISOString(),
+          exportedAt: stampLocal(),
           sites: grants.map((g) => g.host),
           /* ★★ 2026-10-13 口径变更：这三个键**不再代表"用户的偏好"**，
            *   而是**云端状态的离线缓存**（云端的 `box.disabled` / 默认盒名是权威）。
@@ -920,6 +922,50 @@ function originHostOf(raw: string | undefined): string | undefined {
 }
 
 /**
+ * `autoLoginRejected` 的**降噪表**（v4.6.3）：同一 `tab:frame:reason` 每 10 秒只记一条。
+ *
+ * ## 为什么要降噪
+ *
+ * 内容脚本此前在**每个页面**上都无条件退避重试 9 次（`auto-login.ts` 的 `BACKOFF_MS`），
+ * 于是普通浏览时 `ql:forensics`（环 **120**）会被"本页签没有绑定账号"的拒绝刷满。
+ * 实测（2026-11-25 那份诊断包）：`www.kdocs.cn` 两次页面加载 = **18 条**拒绝，
+ * 占整个环的 15% —— 而真正要看的失败就被挤掉了。
+ *
+ * ★ 光靠"显式 `retry: false`"不够，所以两侧都收：
+ *   · 过渡期（旧内容脚本 + 新后台）仍会连问 9 次；
+ *   · 后台重启瞬间 `sendMessage` 可能失败 ⇒ 内容脚本按"说不准"继续重试。
+ */
+const rejectSeen = new Map<string, { at: number; suppressed: number }>();
+const REJECT_DEDUPE_MS = 10_000;
+
+function noteAutoLoginRejected(detail: {
+  tabId: number;
+  frameId: number | undefined;
+  reason: string;
+  boundHost: string | null;
+  senderHost: string | null;
+}): void {
+  const key = `${detail.tabId}:${detail.frameId ?? -1}:${detail.reason}`;
+  const now = Date.now();
+  const prev = rejectSeen.get(key);
+  if (prev && now - prev.at < REJECT_DEDUPE_MS) {
+    prev.suppressed += 1;
+    return;
+  }
+  // `suppressed` 让"到底被拒了多少次"仍然可读，而不是靠条数去数
+  void forensics('autoLoginRejected', { ...detail, suppressed: prev?.suppressed ?? 0 });
+  rejectSeen.set(key, { at: now, suppressed: 0 });
+  // 表只按 tab/frame 增长：浏览器里开开关关几十个页签后就该清一遍（按时间淘汰最旧）
+  if (rejectSeen.size > 200) {
+    for (const [k, v] of rejectSeen) {
+      if (now - v.at > REJECT_DEDUPE_MS * 6) {
+        rejectSeen.delete(k);
+      }
+    }
+  }
+}
+
+/**
  * ★★ 2026-10-20（用户要求变更）：常用页面一律在**新页签**打开，不覆盖原页面。
  *
  * ## 历史（为什么这里反复改）
@@ -1180,17 +1226,33 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     const boundHostBare = boundHost ? hostNoPortOf(boundHost) : undefined;
     const senderHost = originHostOf(sender.origin ?? sender.url);
     if (!boundHostBare || senderHost !== boundHostBare) {
-      void forensics('autoLoginRejected', {
+      noteAutoLoginRejected({
         tabId,
         frameId: sender.frameId,
         reason: !boundHostBare ? 'unbound' : 'origin-mismatch',
         boundHost: boundHostBare ?? null,
         senderHost: senderHost ?? null,
       });
-      sendResponse(null);
+      // ★★ v4.6.3：回 `{ retry: false }` 而不是 `null` —— 让内容脚本**立刻停**。
+      //
+      //   三种回答的契约（`content/auto-login.ts` 按这个分支）：
+      //     · `{ username, password }`      → 有凭据，填表
+      //     · `{ retry: false, reason }`    → 本页签**永远**不会有凭据，别再问
+      //     · `null` / 抛错                 → 现在还说不准（SW 正在启动、旧版后台），继续退避
+      //
+      //   ★ "永远"这个词站得住：账号页签的**绑定与待登录凭据都写在导航之前**
+      //     （`parallel-session.ts` 的 `bindAndStage` ⇒ 先写绑定/凭证，最后才 `tabs.update`
+      //     让它加载），所以页面里的内容脚本只要跑起来，凭据要么已经在、要么这次就没有。
+      //   ★ 这条也是"普通浏览不该有日志"的那一半：`www.kdocs.cn` 那 18 条拒绝
+      //     就是 2 次页面加载 × 9 次重试，现在第一次就会被明确回绝。
+      sendResponse({ retry: false, reason: !boundHostBare ? 'unbound' : 'origin-mismatch' });
       return true;
     }
-    void getPendingAutoLogin(tabId).then((creds) => sendResponse(creds));
+    // ★ 绑定对了但**没有待登录凭据**（收藏页/直达页 `withCredentials: false`、账号无口令）：
+    //   同样回 `retry: false` —— 那种情况下凭据**不会**再出现，重试 9 次纯属空转。
+    void getPendingAutoLogin(tabId).then((creds) =>
+      sendResponse(creds ?? { retry: false, reason: 'no-pending-creds' }),
+    );
     return true;
   }
 

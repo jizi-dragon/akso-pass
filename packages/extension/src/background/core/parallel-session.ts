@@ -10,6 +10,9 @@ import { tabRules, parentDomainOf, hostNoPortOf } from './tab-rules';
 import { redact, redactDetail } from '../../shared/redact';
 // ★ 热路径用的内存日志。与 `diag()`/`forensics()` 的分工见 `isEnforceable` 里的表。
 import { getLogger } from '../../shared/log';
+// ★ 时间戳唯一实现（本地 + 偏移，v4.6.3）。见 `shared/time.ts` 头注释：
+//   原来这里写的是 UTC 的 `HH:mm:ss.SSS`，与 forensics/appLogs 的 epoch 混着看会错位。
+import { stampLocal } from '../../shared/time';
 // ★ 环形缓冲的合并写（`diag` / `forensics` 共用）。见该模块头注释的实测数字。
 import { appendRing } from './ring-write';
 
@@ -135,7 +138,7 @@ const COOKIE_BAG_KEY = '__ql_cookies__';
  */
 async function diag(msg: string): Promise<void> {
   // ★ 落盘前强制打码（见 `forensics` 的说明）。
-  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));
+  appendRing('ql:diag', 60, redact(`${stampLocal()} ${msg}`));
 }
 
 /**

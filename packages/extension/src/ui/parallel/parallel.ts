@@ -9,6 +9,8 @@ import type {
 import { DEFAULT_FAVORITES, EXT_VERSION, FAVORITES_MAX, LOCAL_KEYS } from '../../shared/constants';
 import { isNewerMinorVersion, shouldPrompt, type UpdateState } from '../../shared/update-logic';
 import { getForwardingLogger } from '../../shared/log';
+// ★ 时间戳唯一实现（本地 + 偏移，v4.6.3）：诊断包 `exportedAt` 用它，与 `ql:diag` 同格式。
+import { stampLocal } from '../../shared/time';
 import { installLogForwarding } from '../../shared/forward-log';
 import { send } from '../send';
 import { reconcileBoxes } from '../../shared/box-reconcile';
@@ -4307,7 +4309,9 @@ exportDiagBtn.addEventListener('click', () => {
       chrome.storage.local.get(LOCAL_KEYS.forensics).then((s) => s[LOCAL_KEYS.forensics] ?? []).catch(() => []),
     ]);
     const bundle = {
-      exportedAt: new Date().toISOString(),
+      // ★ v4.6.3：本地时间 + 显式偏移（`2026-11-25T14:28:47.123+08:00`），
+      //   与 `ql:diag` 同一格式。原来是 UTC `...Z` —— 同一份包里两种基准，读数会错位。
+      exportedAt: stampLocal(),
       version: EXT_VERSION,
       // 账号信息脱敏：不含密码/用户名原文，只含结构与状态
       accounts: browserAccounts.map((a) => ({

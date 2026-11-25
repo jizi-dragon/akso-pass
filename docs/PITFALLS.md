@@ -3060,6 +3060,87 @@ state（空）重渲染了一次，DOM 里那个值已经不在了，只看 DOM 
 
 ---
 
+## #61 【已修】每个页面都"问 9 次凭据"，被拒也各记一条 `forensics` ⇒ 噪声吃掉 `ql:forensics` 环的 15%，还反复唤醒 MV3 的 SW
+
+**症状**：`www.kdocs.cn` 一次会话的 `forensics` 里 **18 条** `autoLoginRejected` 连成两串
+（`reason: "unbound"`、`boundHost: null`）：
+
+```
+14:07:57 autoLoginRejected tab=… frame=0 reason=unbound   ×9
+14:16:17 autoLoginRejected tab=… frame=0 reason=unbound   ×9
+```
+
+看起来像"自动填表在故障重试"，其实**两次加载各 9 次都不是故障** —— 是
+`content/auto-login.ts` 末尾那句 `void requestCredentials();` **无条件**跑，而
+`BACKOFF_MS` 有 **8 个间隔** ⇒ 每次加载问 **9 次**、约 **10.07 秒**，命中才停。
+而 `ql:forensics` 的环只有 **120** 条：一次 kdocs 会话就占 9 条 = **7.5%**，
+真实的失败被挤出去；9 条消息还会在这 10 秒里反复唤醒 SW（MV3 的 30 秒空闲计时器每次都被重置）。
+
+**根因**：请求方**没有"该不该问"的信号**，只能按经验重试；被拒方**只写日志、不给回答**。
+
+- 内容脚本：`if (originMatters()) { void requestCredentials(); }` —— 与"本页签有没有绑定账号"无关。
+- 后台：`if (!boundHostBare || senderHost !== boundHostBare) { forensics(...); sendResponse(null); }`
+  —— `null` 在内容脚本眼里只表示"现在还说不准"，于是继续退避到 3 秒一轮。
+- `autoLoginRejected` 每次都记一条、没有降噪 —— 同 tab + frame + reason 的重复被淹没。
+
+★ 关键不对称：**"永远不会有的凭据"和"暂时还没有的凭据"用了同一个回答 `null`**。
+
+**判据**（可执行）：`node tools/verify/verify-autologin-reject.mjs`（22/22，静态秒级）
+
+- 拒绝分支必须回 `{ retry: false, reason }`，**不许**回 `null`；
+- 「绑定对了但没有待登录凭据」也必须回 `retry: false`（`no-pending-creds`）；
+- 内容脚本的 `retry === false` 守卫**必须排在退避调度之前**、且块里 `return` ——
+  顺序反了 = 还会再问一次，这种行为从界面上完全看不出来；
+- 拒绝日志必须走 `noteAutoLoginRejected`（同 tab + frame + reason 十秒内只记首条、带 `suppressed` 计数）。
+
+**处置**（v4.6.3）：三种回答的契约写死在 `service-worker.ts` 那个分支
+（`{username,password}` / `{retry:false,reason}` / `null` 说不准）；内容脚本收到 `retry:false`
+立刻 `return`；拒绝日志降噪（`REJECT_DEDUPE_MS = 10_000`、key = `tabId:frameId:reason`、
+超 200 条清过期）。
+
+**推广**：**"没有"和"不知道"必须是两个回答**。合并成一个 `null`/`undefined` 时，调用方只能
+用重试去赌 —— 而重试**自带噪声与唤醒成本**（见 #38 的唤醒预算）。凡是"轮询等一个可能永远
+不来的东西"，都要给"确定没有"一个独立回答，否则真实信号会静默沉底。
+
+---
+
+## #62 【已修】同一份诊断包里三种时间基准：`diagLog` 是 UTC 无日期、`appLogs` 是 epoch、`exportedAt` 是 `Z`
+
+**症状**：一份 `akso-pass-diag-…json` 里
+
+- `appLogs[0].t = 1795514422602`、`forensics[i].t = 1795582708318`（epoch 毫秒，时区无关），
+- `exportedAt = "2026-11-25T06:29:34.290Z"`（UTC 的 ISO），
+- 而 `diagLog[0] = "06:21:36.907 syncAccountRules(...)"` —— **UTC 的钟点、没有日期**。
+
+写分析时把 `06:21:36` 当成清晨、实际是本地 `14:21:36`，整条时间线错位 8 小时。
+
+**根因**：diag 环写入是**两处复制**的同一行（`parallel-session.ts` 与 `tab-rules.ts`）：
+
+```ts
+appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));
+```
+
+`toISOString()` 给的是 UTC，`slice(11, 23)` 又**把日期切掉** ⇒ 只剩 UTC 钟点。而 appLogs 记的是
+`Date.now()` 数字（导出时才格式化）、`exportedAt` 又是 `toISOString()`（带 `Z`）—— 三处各自为政。
+
+**判据**（可执行）：同 `verify-autologin-reject.mjs` 第 ⑤ 节
+
+- 代码里**没有** `toISOString().slice(11, 23)`（注释里引用旧形态不算 —— 判据扫的是代码）；
+- 两处 diag 与两处 `exportedAt` 都走 `stampLocal()`；
+- `stampLocal` 全仓**只有一处实现**（`getTimezoneOffset` 在代码里只出现 1 次）。
+
+**处置**（v4.6.3）：新增 `src/shared/time.ts` 的 `stampLocal()` —— 本地时间 + **显式偏移** + 带日期
+（`2026-11-25T14:21:36.907+08:00`）；两处 diag 与两处 `exportedAt` 全部改用它；
+`verify-falsify-forensics.mjs` 的两条注入锚点同步更新。
+
+**推广**：**同一份证据里只许一种时间基准**，并且必须**带日期 + 带偏移**：
+
+- 只写钟点 ⇒ 跨天不可排序；只写 UTC ⇒ 读者每次心算时差（这次就是这么错的）；
+- 本地时间 + 偏移两边都不丢，还能被 `Date.parse` 无歧义解析；
+- 反面形态：`toISOString().slice(11, 23)` 这种"看起来是时间"的切片 —— **切掉日期，静默变成没有日期的时间**。
+
+---
+
 ## 附：本文件的维护方式
 
 - **发现新的"看起来正常但其实是坏的"缺陷** ⇒ 追加一条，编号取当前最大值 +1。

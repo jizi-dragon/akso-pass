@@ -23,6 +23,8 @@ import { getLogger } from '../../shared/log';
 // ★ 打码 + 环形缓冲合并写：`ql:diag` 与 `parallel-session.ts` 是同一个键。
 import { redact } from '../../shared/redact';
 import { appendRing } from './ring-write';
+// ★ 时间戳唯一实现（本地 + 偏移，v4.6.3）。见 `shared/time.ts` 头注释。
+import { stampLocal } from '../../shared/time';
 
 const AUTH_BASE = 100_000;
 /** COOKIE 规则 id 区间 */
@@ -71,7 +73,7 @@ const log = getLogger('tab-rules');
  *   同时补上打码：通道上的纪律不该因为"这行看起来没有秘密"而分叉。
  */
 async function diag(msg: string): Promise<void> {
-  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));
+  appendRing('ql:diag', 60, redact(`${stampLocal()} ${msg}`));
 }
 
 let nextAuthId = AUTH_BASE;

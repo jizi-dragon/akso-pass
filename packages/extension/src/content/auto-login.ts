@@ -524,12 +524,25 @@ function originMatters(): boolean {
  * ⇒ 让**内容脚本**持有唯一的重试循环：它是唯一知道"我准备好了"的一方，
  *   而后台的回答是幂等的纯查询（`getPendingAutoLogin`），多问几次没有副作用。
  *
- * ★ 上界取 **35 秒**、间隔退避到 3 秒：`pendingAutoLogin` 的 TTL 是 **60 秒**
- *   （见 `background/core/auto-login-cache.ts`），所以这个窗比 TTL 短，
+ * ★ 上界取 **约 10 秒**（`BACKOFF_MS` 8 个间隔之和）：`pendingAutoLogin` 的 TTL 是 **60 秒**
+ *   （见 `background/core/auto-login-cache.ts`），所以这个窗远短于 TTL，
  *   不会问到一个已经过期被清掉的条目；而它也比后台那一串 await 宽裕得多。
  * ★ 命中之后**立刻停**（`credentials` 一旦有值就不再轮询），稳态下零开销。
  * ★ 每一次失败的尝试都**不写日志**：本仓的日志环形很小，而这条路径每次开账号都会走
  *   —— 记成功那一次就够（见下面的 `log.debug`）。
+ *
+ * ## ★★ v4.6.3：后台可以**明确回绝**，回绝就停
+ *
+ * 上面那套 9 次退避是为了兜"绑定晚于导航"的历史竞态（v4.2.12）。该竞态现在由
+ * `parallel-session.bindAndStage`（**导航之前**就写绑定与待登录凭证）先封住了，
+ * 这个循环只剩兜底价值 —— 可它对**普通页面**（没绑定任何账号的页签）等于
+ * 每次加载都空问 9 次。实测（2026-11-25 诊断包）：`www.kdocs.cn` 两次加载
+ * = **18 条** `autoLoginRejected`，`ql:forensics`（环 **120**）被刷掉 15%，
+ * 真实失败被挤没了；而且 9 条消息会持续唤醒 MV3 的 SW，让它不肯休眠。
+ *
+ * ⇒ 后台的回答现在有三种，见 `service-worker.ts` 那个分支：
+ *   `{ username, password }` 有凭据 / `{ retry: false, reason }` 明确没有（**停**）/
+ *   `null`（现在说不准，继续退避）。判据落在 `requestCredentials` 的 `retry === false` 分支。
  */
 async function requestCredentials(attempt = 0): Promise<void> {
   if (credentials) {
@@ -545,6 +558,22 @@ async function requestCredentials(attempt = 0): Promise<void> {
       credentials = { username: res.username, password: res.password };
       log.debug('background 交付待登录凭证，开始自动填表');
       start();
+      return;
+    }
+    // ★★ v4.6.3：后台**明确**说"本页签不会有凭据" ⇒ 立刻停，不再问后面 8 次。
+    //
+    //   这个循环是为了兜"绑定晚于导航"的竞态（v4.2.12），而那个竞态现在由
+    //   `parallel-session.bindAndStage`（导航前就写好绑定与待登录凭证）先封住了；
+    //   循环只是兜底。可它以前对**每一个普通页面**都问满 9 次 ——
+    //   实测（2026-11-25 诊断包）：`www.kdocs.cn` 两次加载 = 18 条
+    //   `autoLoginRejected`，把 `ql:forensics` 环（120）刷掉 15%，真实失败被挤没了；
+    //   而且 9 条消息会持续唤醒 MV3 的 SW，让它不肯休眠。
+    //   ⇒ 只有"说不准"（`null` / 抛错 / 旧版后台没这个字段）才继续退避。
+    if (res && typeof res === 'object' && (res as { retry?: unknown }).retry === false) {
+      log.debug(
+        'background 判定本页签不会有待登录凭据（%s），停止索取',
+        String((res as { reason?: unknown }).reason ?? 'unknown'),
+      );
       return;
     }
   } catch {

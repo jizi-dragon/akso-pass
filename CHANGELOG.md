@@ -1,3 +1,18 @@
+## 4.6.3（2026-11-25）
+
+**修两个「不报错、只把证据糊掉」的缺陷：每个页面空问 9 次凭据 + 同一份诊断包里三种时间基准**
+
+- 现象（① 凭据空转）：2026-11-25 的诊断包里 `www.kdocs.cn` 一次会话出现 **18 条** `autoLoginRejected`（`reason: "unbound"`、`boundHost: null`），实际是 **2 次页面加载 × 9 次退避**。`content/auto-login.ts` 末尾那句 `void requestCredentials()` 与「本页签有没有绑定账号」无关地**无条件**跑，`BACKOFF_MS` 有 8 个间隔 ⇒ 每次加载问 9 次、约 10.07 秒；而 `ql:forensics` 的环只有 **120** 条 ⇒ 一次 kdocs 会话的 18 条占 **15%**，真实失败被挤出去；9 条消息还在这 10 秒里反复唤醒 MV3 的 SW（30 秒空闲计时器每次都被重置）。
+- 现象（② 时间基准）：同一份包里 `appLogs[i].t` / `forensics[i].t` 是 **epoch 毫秒**，`exportedAt` 是 `Z` 的 ISO，而 `diagLog[i]` 是 **UTC 的 `HH:mm:ss.SSS`、没有日期**。写分析时把 `06:21:36` 当成清晨、实际是本地 `14:21:36`，整条时间线错位 8 小时。
+- 根因（①）：**「永远不会有的凭据」与「暂时还没有的凭据」用了同一个回答 `null`** —— 内容脚本只能靠重试去赌，被拒方又只写日志、不给回答，于是每次拒绝都变成一条 `forensics` 噪声。
+- 根因（②）：diag 环写入是**两处复制**的同一行 `redact(\`${new Date().toISOString().slice(11, 23)} ${msg}\`)` —— `toISOString()` 给 UTC、`slice(11, 23)` 又把日期切掉；而 `appLogs` 记的是 `Date.now()` 数字、`exportedAt` 又是带 `Z` 的 ISO，三处各自为政。
+- 改法（①）：后台把三种回答的契约写死 —— `{username,password}` 有凭据 / `{retry:false,reason}` **本页签永远不会有** / `null` 说不准；「绑定对了但没有待登录凭据」也回 `retry:false`（`no-pending-creds`）。内容脚本收到 `retry === false` 就 `return`，不再排下一次；拒绝日志改走 `noteAutoLoginRejected`（同 tab+frame+reason 十秒内只记首条、带 `suppressed` 计数，`REJECT_DEDUPE_MS = 10_000`）。**不做站点白名单**：账号库站点是用户自配的，白名单必漏，漏了就是静默不填账密。
+- 改法（②）：新增 `src/shared/time.ts` 的 `stampLocal()`（本地时间 + **显式偏移** + 带日期，形如 `2026-11-25T14:21:36.907+08:00`），两处 diag 环写入与两处 `exportedAt`（备份包 + 诊断包）全部改用它；`verify-falsify-forensics.mjs` 的两条注入锚点同步更新。
+- 判据：新增 `tools/verify/verify-autologin-reject.mjs`（**22/22**，静态秒级）—— 钉住拒绝分支必须回 `retry:false`、`no-pending-creds`、内容脚本守卫**排在退避调度之前**、降噪函数与 `suppressed`、`stampLocal` 唯一实现（`getTimezoneOffset` 只出现 1 次）、代码里没有 `toISOString().slice(11, 23)`；并含 4 条**内存内自证**（改回缺陷形态必须变红，不落盘）。`tools/verify/README.md` 计数 60 → **61**。
+- 判据与反证：`npm run check`（`check_deps` + `tsc` strict）绿；`npm run build` 绿；`run-all.mjs --static` **36/36**；`verify-forensics-redaction` 25/25；`verify-falsify-forensics` **3/3**；`verify-log-redaction` 171/171；`verify-falsify-logredaction` 28/28；`npm run verify -- --only v310` 1/1（`tab-rules.ts` 的 diag 行也动了，按门禁表跑过）。
+- 诚实边界：`--only autologin` / `--only fillrhythm` 在本机跑不起来 —— 两者都先 `par.create` 造账号，而 `par.create` 返回「云端未授权：请先在管理页点「重新登录」登录云端账号库」⇒ `acc.id` undefined。已在 **HEAD** 上反证 `verify-autologin` 报错一字不差（`fillrhythm` 走同一个 `createAndOpen`/`par.create` 路径），属环境限制、不是本次引入。真机仍需在 `chrome://extensions` 点「重新加载」后确认「新开账号页仍能自动填账密」，以及普通页签的 `autoLoginRejected` 不再刷屏。
+- 版本：4.6.2 → 4.6.3（patch，未打包 release）。
+
 ## 4.6.2（2026-11-25）
 
 **修「规则 id 撞车」：SW 冷启动窗口内该页签的网络平面静默残缺**

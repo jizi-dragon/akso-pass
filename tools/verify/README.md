@@ -82,6 +82,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 | **`verify-falsify-loglevel.mjs`** | ★ **第 16 节（级别开关活在产物里）的反证**：级别退回**模块局部变量** / `log()` 不再经 `shouldLog()` 现读 / **删掉 `dist/`** ⇒ 各自变红。<br>★ 它是本仓**唯一"需要重新构建"**的反证（因为第 16 节读的是 `dist/`）⇒ 单独成篇，不拖慢日常那份。★ 它自己踩过一次坑：副本漏拷 `assets/` ⇒ build 失败 ⇒ `dist/` 没生成 ⇒ 所有注入**假通过**；现已**先断言"副本构建成功"**再注入 | **6/6** | ✘ |
 | **`verify-forensics-redaction.mjs`** | **取证 / 诊断通道的打码**（`forensics()` / `diag()` 写入 `chrome.storage.local`，而它们**会进诊断包被一键导出**）—— **真的把模块求值、真的调 `forensics()` 再读回落盘内容** | **25/25** | ✘ |
 | **`verify-falsify-forensics.mjs`** | **上一条的反证**：`forensics` 不打码 / `diag` 不打码 / 敏感键名单只剩裸 `password` ⇒ 必须变红 | **3/3** | ✘ |
+| **`verify-autologin-reject.mjs`** | ★★ **「后台明确回绝 ⇒ 内容脚本立刻停」与「诊断包只许一种时间基准」的判据**（静态、秒级，v4.6.3 新增）：① 拒绝分支回 `{ retry: false, reason }` 而不是 `null`，拒绝日志走 `noteAutoLoginRejected`（同 tab+frame+reason 十秒只记首条、带 `suppressed`）② 「绑定对了但没有待登录凭据」也回 `retry: false`（`no-pending-creds`）③ 内容脚本的 `retry === false` 守卫必须**排在退避调度之前**且 `return` ④ 代码里没有 `toISOString().slice(11, 23)`、两处 `diag` 与两处 `exportedAt` 都走 `stampLocal()`（注释里的引用不算）⑤ **自证**：把上述任一处改回缺陷形态（内存里改、不落盘）⇒ 判据必须变红。<br>★ 起因：`www.kdocs.cn` 一次会话打了 18 条 `autoLoginRejected`（2 次加载 × 9 次退避），把 `ql:forensics` 环（120）刷掉 15%、真实失败被挤没，9 条消息还持续唤醒 MV3 的 SW；而 `diagLog` 是 UTC 无日期、`appLogs` 是 epoch 毫秒、`exportedAt` 是 `Z` ⇒ 同一份证据三种时间基准（我看错过一次）。 | **22/22** | ✘ |
 | **`verify-icons.mjs`** | **图标源与派生产物**：源在且**同时含品牌蓝与强调橘**（占位图不具备该性质）/ 4 档方形且含两色 / 大档覆盖率与源相近 / ★ **小档覆盖率必须与大档不同**（有意手调）/ 假源 `src-icon*` 不存在 / manifest 声明的路径在 **`dist/`** 下存在 | **42/42** | ✘ |
 | **`verify-falsify-icons.mjs`** | **上一条的反证**：换占位源 / Icon16 弄成 16×9 / 抹掉小档手调 / 放回假源 ⇒ 各自变红 | **4/4** | ✘ |
 | **`verify-update-ui.mjs`** | ★ **更新提醒在真实扩展里的闭环**（v4.2.56，真起 Chromium）：往 `chrome.storage.local` 写入「最新版 9.9.9」→ 管理页横幅出现且文案含「不会自动更新」与当前版本 → 工具栏角标为 `1` → 点侧栏「检查更新」按钮，桩掉后台 fetch 返回 9.9.10，横幅切到 9.9.10 且按钮恢复可用（证明手动检查真的走 force、不吃 6h 节流）→ 点「忽略此版本」后横幅收起、`dismissedVersion=9.9.10` 落盘、角标清空 → 弹窗「检查更新」桩 9.9.11，出现「去 GitHub 下载」入口 → 页面里没有下载/安装入口。纯逻辑对了但消息没接上时，只有这一条会红 | **26/26** | ✔ |
@@ -136,9 +137,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 35 | ≈67 s | `run-all.mjs --static` |
+| 静态（不需要浏览器） | 36 | ≈67 s | `run-all.mjs --static` |
 | 浏览器（真起 Chromium / Edge） | 25 | ≈146 s | `run-all.mjs --browser-only` |
-| 全部 | 60 | ≈214 s | `run-all.mjs --browser` |
+| 全部 | 61 | ≈214 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -156,7 +157,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"60 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"61 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -166,7 +167,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 60
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 61
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

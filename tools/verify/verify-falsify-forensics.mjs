@@ -50,8 +50,8 @@ const CASES = [
     name: '② diag 不打码',
     file: TARGET,
     apply: (s) => s.replace(
-      "  appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${msg}`));",
-      "  appendRing('ql:diag', 60, `${new Date().toISOString().slice(11, 23)} ${msg}`);",
+      "  appendRing('ql:diag', 60, redact(`${stampLocal()} ${msg}`));",
+      "  appendRing('ql:diag', 60, `${stampLocal()} ${msg}`);",
     ),
   },
   {
