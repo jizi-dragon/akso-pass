@@ -57,10 +57,13 @@ export interface TranslationSettings {
   target_language: string;
   source_language: string;
   translation_provider: EngineId;
-  /** 命名规范模式：结果转 snake_case（字段名场景） */
-  naming_convention_mode: boolean;
 }
 
+/**
+ * ★ 2026-11-26（4.6.5）：原「命名规范模式」开关已移除 —— 用户要求翻译**恒定**遵循
+ *   命名规范（转 snake_case），不再把该选项暴露给客户。老版本留在 storage.sync 里的
+ *   `naming_convention_mode` 键不再读取；save() 只写白名单键，所以也不会被重新写回。
+ */
 export const TRANSLATION_DEFAULTS: TranslationSettings = {
   translate_enabled: true,
   floating_icon_enabled: true,
@@ -68,7 +71,6 @@ export const TRANSLATION_DEFAULTS: TranslationSettings = {
   target_language: 'en',
   source_language: 'auto',
   translation_provider: 'auto',
-  naming_convention_mode: false,
 };
 
 const SYNC_KEYS = Object.keys(TRANSLATION_DEFAULTS) as (keyof TranslationSettings)[];
@@ -88,7 +90,6 @@ export function normalizeTranslationSettings(raw: unknown): TranslationSettings 
     target_language: LANG_CODES.has(lang) ? lang : TRANSLATION_DEFAULTS.target_language,
     source_language: String(r.source_language ?? TRANSLATION_DEFAULTS.source_language),
     translation_provider: normalizeEngineId(r.translation_provider),
-    naming_convention_mode: r.naming_convention_mode === true,
   };
 }
 

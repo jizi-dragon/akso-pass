@@ -1,3 +1,28 @@
+## 4.6.6（2026-11-26）
+
+**移除已停运的 TranSmart 与 Lingva：自动模式不再白等 8 秒**
+
+- 现象（用户 2026-11-26）：「用起来有点慢」。端到端复刻 `translateAuto`（未配 DeepSeek Key）：整句 **9867ms / 10043ms**，而 `备注`（有道查词命中）**45ms**。
+- 根因：`transmart.qq.com:443` **TCP 连不上**（curl 20s 超时、`Test-NetConnection` False、DNS 四处一致 `106.53.144.102`、`www.qq.com` 正常 ⇒ 是该服务停运）；`lingva.ml` **20/20 HTTP 403**（Cloudflare）。自动模式 `Promise.any(['transmart','youdao'])` 里必有一条死腿 ⇒ 每组都等满 `TRANSLATE_TIMEOUT_MS = 8000`。另：`dict.youdao.com/jsonapi` 是**词典**不是翻译器（整句 5/5 `no-entry`），只有短词命中 —— 于是"查得到的短标签 45ms、整句必然 9–10 秒"。
+- `shared/engines.ts`：`EngineId` 收敛为 `auto | deepseek | youdao | mymemory`；删除 `viaTransmart` / `viaLingva` / `TRANSMART_LANG_MAP` / `mapLang`；`IMPL` 只剩两路；自动模式改为**串行** `FREE_ENGINES = ['youdao','mymemory']`（短词命中就不发海外）；新增 `YOUDAO_TIMEOUT_MS = 3000` 与 `timeoutOf()`（查词正常 20–50ms，3s 不回来就是真卡住）；`normalizeEngineId` 把 `transmart` / `lingva` / `tencent_web` / `google_free` 全部落回 `auto`（老设置值不留一个界面上不存在的引擎）。
+- 文案与文档：`background/service-worker.ts` 报错文案、`ui/translate/translate.html` 告知条、`ui/translate/translate.ts` 的 `ENGINES`（4 张卡）、`docs/SECURITY.md`、`docs/USER-MANUAL.md` 同步；`docs/PITFALLS.md` 新增 **#63**（自动模式的赛马里有两条死腿）。
+- 判据：新增 `tools/verify/verify-engines.mjs`（**15/15**，含 6 条 in-memory 自证），并登记进 `tools/verify/README.md`（计数 61 → 62，`verify-script-roster` 8/8）。
+- 验证：`npm run check` 绿（`DEP_OK` + `tsc --noEmit`）；`npm run build` 绿；`run-all.mjs --static` **37/37**。
+- 诚实边界：**只做了清理**（用户裁决），没有做熔断 / 缓存 / hedged DeepSeek 等其余优化；两路免费引擎"今天可用"不代表永远可用 —— 静态判据只钉"清单与顺序还在不在"，仍需真机翻一次；`src/ui/**` 本身无自动化门禁，改完要在 `chrome://extensions` 点「重新加载」。
+- 版本：4.6.5 → 4.6.6（patch，未打包 release）。
+## 4.6.5（2026-11-26）
+
+**翻译恒定遵循命名规范：移除「命名规范模式」开关，`snake_case` 不再是可选项**
+
+- 需求（用户 2026-11-26）：「针对翻译功能，翻译默认遵循命名规范模式，该选项不再提供给客户」⇒ 转换从"设置项"变成"唯一行为"，设置页不再出现这个开关。
+- `shared/translate-settings.ts`：删除 `naming_convention_mode` 的类型/默认值/`normalize` 分支。老版本留在 `chrome.storage.sync` 里的这个键不再读取；`save()` 只写白名单键，所以也不会被重新写回（不需要迁移脚本）。
+- `background/service-worker.ts`：`handleTranslateRequest` 恒定 `toSnakeCase(result.text)`（多行段落由 `toSnakeCase` 内部原样保留）；历史条目 `naming: true`；日志改 `snake=always`。
+- `content/translate.ts`：删掉缓存设置里的字段与 storage 解析；点图标的提示恒为「✅ 翻译完成（已转换为命名规范格式）」（原来按标志二选一）。
+- `ui/translate/`：删掉整张「命名规范模式」卡（开关 + 「试一段」实时预览）及对应脚本与 CSS（`.t-preview*`、`.t-switch-only`）；把规则说明移到「怎么用」卡的一行 hint：含换行的段落原样保留、单行不论多长都转换、超 60 字符按完整单词截断、结果短于 3 字符保留原文。
+- 顺带修一处**改前就是红**的门禁：`translate.css` 的历史徽标 `.t-history-naming` 用了裸 `999px` / `11px`，`verify-radius` 与 `verify-type-scale` 从 4.6.4 起就报 `1 处不符`（已在 HEAD 上反证，not introduced by this change）；改成 `var(--sb-radius-pill)` / `var(--fs-11)`。
+- 判据与反证：`npm run check`（`check_deps` + `tsc` strict）绿；`npm run build` 绿（`dist/ui/translate/translate.js` 35.7kb）；`run-all.mjs --static` **36/36**；`verify-radius` / `verify-type-scale` / 两个 falsify 反证全部 OK。
+- 诚实边界：`src/ui/**` 在本仓**没有自动化门禁**（AGENTS 规则：需浏览器实测 + 点「重新加载」）。本次做了静态检查与构建，但**没有在真实浏览器里点过面板** —— 面板脚本对缺少的 DOM id 会直接抛错（`$()` 的约定），所以删除卡片后必须目视确认「翻译面板」能正常打开、保存设置不报错。
+- 版本：4.6.4 → 4.6.5（patch，未打包 release）。
 ## 4.6.4（2026-11-26）
 
 **新增可选 DeepSeek 大模型翻译：自带 Key、只存本机、失败回落免费引擎**

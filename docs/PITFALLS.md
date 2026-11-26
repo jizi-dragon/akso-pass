@@ -2105,11 +2105,12 @@ take action /measures /steps to do sth
 **贴到下一个输入框里完全不可用**，而界面提示的是"✅ 已翻译并复制到剪贴板"。
 
 **根因**：两个国内引擎的**语义不同**，而并发赛马只看"谁先返回"：
-· **TranSmart** 是**翻译器**，返回句子；
+· **TranSmart** 是**翻译器**，返回句子（该服务已于 2026-11 停运，4.6.6 移除）；
 · **网易有道词典** 走 `dict.youdao.com/jsonapi` 的**网络释义**接口，返回的是**词条**。
 在 `Promise.any` 里，有道的词典接口**通常更快** ⇒ 它成了赢家 ⇒ 用户拿到词条。
 （原扩展选有道是为了"短词/术语质量高"，那个判断在**字段名**场景成立，
-但赛马把它的适用范围扩大到了所有输入 —— 这是迁移时没注意到的语义错配。）
+但赛马把它的适用范围扩大到了所有输入 —— 这是迁移时没注意到的语义错配。
+4.6.6 起已没有赛马：自动模式是串行 有道 → MyMemory，词典结果仍由本条判据挡掉。）
 
 **判据**：
 ```
@@ -3138,6 +3139,40 @@ appendRing('ql:diag', 60, redact(`${new Date().toISOString().slice(11, 23)} ${ms
 - 只写钟点 ⇒ 跨天不可排序；只写 UTC ⇒ 读者每次心算时差（这次就是这么错的）；
 - 本地时间 + 偏移两边都不丢，还能被 `Date.parse` 无歧义解析；
 - 反面形态：`toISOString().slice(11, 23)` 这种"看起来是时间"的切片 —— **切掉日期，静默变成没有日期的时间**。
+
+---
+
+## #63 【已修】自动模式的赛马里有两条腿是死的 ⇒ 每次整句翻译白等满 8s，而"所有门禁全绿"
+
+**症状**：翻译面板"用起来有点慢"，但**不报错**：
+
+- 端到端复刻 `translateAuto`（无 DeepSeek Key）：整句 **9867ms / 10043ms**；`备注`（有道查词命中）**45ms**；
+- 第一轮耗时都 ≈ **8007–8036ms**，而 8s 正好等于 `TRANSLATE_TIMEOUT_MS`；
+- 诊断包里没有一条 error，界面提示"✅ 翻译完成"。
+
+**根因**：自动模式当时是「有 Key 先 DeepSeek，失败再 `Promise.any(['transmart','youdao'])`，再串行 `mymemory` → `lingva`」。而这两路免费引擎**已经不可用**：
+
+- `transmart.qq.com:443` **TCP 连不上**：curl `-m 20` 超时（`code=000`）、`Test-NetConnection` False、DNS 四处一致 `106.53.144.102`、而 `www.qq.com` 正常 ⇒ 是这个服务停运，不是网络；
+- `lingva.ml` **20/20 都是 HTTP 403**（Cloudflare）；
+- `dict.youdao.com/jsonapi` 是**词典**不是翻译器：整句 5/5 `no-entry`，`行动措施` 返回 `take action /measures /steps to do sth` ⇒ 被 `looksLikeDictionaryEntry` 拒。
+
+`Promise.any` 等的是"最快**成功**的那条"，不是"最快**返回**的那条"：一条腿挂到超时，整组就跟着挂满 8s。⇒ `备注` 这类有道能查到的短词是 45ms，**整句必然 9–10 秒**。
+
+**判据**（可执行）：`tools/verify/verify-engines.mjs`（15/15）
+
+- `EngineId` 恰好四值（auto / deepseek / youdao / mymemory）、`IMPL` 恰好两路、全仓零 `viaTransmart` / `viaLingva`；
+- 自动顺序是 `FREE_ENGINES` = **有道 → MyMemory**；
+- 去掉注释后 `transmart` / `lingva` **各只出现一次**，且都在 `normalizeEngineId` 的回落表里（老设置值统一落回 `auto`）；
+- 有道 3s 超时、显式分支走 `timeoutOf(engine)`；
+- 6 条 in-memory 自证（把任一处改回缺陷形态必须变红）。
+
+**处置**（v4.6.6，按用户 2026-11-26 的裁决**只做清理**）：移除 TranSmart 与 Lingva；自动模式改为**串行 有道（3s）→ MyMemory（8s）**，短词命中不发海外；老设置值统一落回 `auto`；界面与文案同步（`ui/translate/translate.html`、`ENGINES` 表、`service-worker.ts` 的报错文案）。
+
+**推广**：
+
+- **"服务还在不在"是外部事实，代码里看不出来** —— 一个已停运的端点会以"超时"形态留在赛马里，把整条链路拖成"永久最慢"；
+- **`Promise.any` 的失败模式是"等最慢的失败腿"**：并行只在"多路都健康"时更快，有一路不健康时它比串行还慢；
+- 这类缺陷长在"**外部事实 vs 代码假设**"的缝里：`typecheck`、`build`、全部既有判据都全绿，只有真机翻译一次才看得见 ⇒ 判据钉"清单与顺序"，且定期用真机翻译验证剩下的路仍可用。
 
 ---
 

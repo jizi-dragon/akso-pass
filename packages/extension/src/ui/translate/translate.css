@@ -6,13 +6,12 @@
  *
  * ★★ 2026-10-12 重排（用户反馈"杂乱无序、毫无逻辑、无法配置"）：
  *   原先 6 个平铺卡片、每张都自带标题与开关，用户到了页面**不知道先看哪**。
- *   现在的信息层级：
+ *   现在的信息层级（2026-11-26 起：命名规范卡已移除，编号顺延）：
  *     ① 总开关（页面唯一最重要的东西，放页头且放大）
  *     ② 怎么用（两条路径 + 图标开关，配图式左右布局）
- *     ③ 命名规范模式（高频 + 带实时预览）
- *     ④ 高级（语言 / 引擎）→ **默认折叠**，summary 上直接回显当前值
- *     ⑤ 使用统计（只读，放最后、压小）
- *     ⑥ 保存条**吸底**（长页面不用回到顶部找按钮）
+ *     ③ 高级（语言 / 引擎）→ **默认折叠**，summary 上直接回显当前值
+ *     ④ 使用统计（只读，放最后、压小）
+ *     ⑤ 保存条**吸底**（长页面不用回到顶部找按钮）
  */
 
 /* ────────────────────────── ① 总开关 ────────────────────────── */
@@ -72,7 +71,6 @@
 /* ────────────────────────── 开关本体 ────────────────────────── */
 
 .t-switch-wrap,
-.t-switch-only,
 .t-inline-switch {
   display: inline-flex;
   align-items: center;
@@ -203,53 +201,7 @@
   align-self: center;
 }
 
-/* ────────────────────────── ③ 命名规范预览 ────────────────────────── */
-
-.t-preview {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--sp-3);
-  margin: var(--sp-3) 0 var(--sp-2);
-  padding: var(--sp-3);
-  border-radius: var(--sb-radius);
-  background: var(--sb-surface-2);
-  border: 1px solid var(--sb-border);
-}
-
-.t-preview-in,
-.t-preview-out {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-
-.t-preview-in > span,
-.t-preview-label {
-  font-size: var(--fs-12);
-  color: var(--sb-text-secondary);
-  letter-spacing: 0.04em;
-}
-
-.t-preview-in input {
-  width: 100%;
-}
-
-.t-preview-out code {
-  display: block;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--sb-radius);
-  background: var(--sb-surface);
-  border: 1px solid var(--sb-border-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-12);
-  color: var(--sb-brand);
-  word-break: break-all; /* 60 字符上限，窄屏必溢出，不换行会撑破卡片 */
-  min-height: 38px;
-  box-sizing: border-box;
-}
-
-/* ────────────────────────── ④ 高级（折叠） ────────────────────────── */
+/* ────────────────────────── ③ 高级（折叠） ────────────────────────── */
 
 .t-adv {
   padding: 0; /* summary 自己带内边距，卡片不留 */
@@ -607,9 +559,9 @@
 .t-history-naming {
   padding: 0 6px;
   border: 1px solid var(--sb-border);
-  border-radius: 999px;
+  border-radius: var(--sb-radius-pill);
   font-family: var(--sb-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 
 .t-history-pair {
@@ -659,9 +611,6 @@
 /* ────────────────────────── 窄屏 ────────────────────────── */
 
 @media (max-width: 720px) {
-  .t-preview {
-    grid-template-columns: 1fr;
-  }
   .t-paths .t-path {
     flex-wrap: wrap;
   }

@@ -125,7 +125,7 @@ void replayLogPersist();
 import { getPendingAutoLogin } from './core/auto-login-cache';
 import { isOfflineError } from './core/offline';
 import { siteAuth, probeScheme } from './core/site-auth';
-// v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范
+// v4.2.0 翻译链路（合并 Akso Instant Translate）：引擎适配器、设置、统计、命名规范（4.6.5 起恒定开启）
 import { translate } from '../shared/engines';
 import { loadTranslationSettings } from '../shared/translate-settings';
 import { loadLlmSettings } from '../shared/llm-settings';
@@ -1405,11 +1405,13 @@ async function handleTranslateRequest(rawText: string): Promise<{
     if (looksLikeDictionaryEntry(result.text)) {
       return {
         success: false,
-        error: '该引擎返回的是词典释义（如「take action /measures /steps」），不是可用译文。请改用「自动模式」或「腾讯交互翻译」。',
+        error: '该引擎返回的是词典释义（如「take action /measures /steps」），不是可用译文。请改用「自动模式」或「MyMemory」。',
       };
     }
 
-    const finalText = settings.naming_convention_mode ? toSnakeCase(result.text) : result.text.trim();
+    // ★ 2026-11-26（4.6.5）：命名规范不再是设置项 —— 用户要求「翻译默认遵循命名规范模式，
+    //   该选项不再提供给客户」。所以这里恒定转换；多行段落由 toSnakeCase 内部原样保留。
+    const finalText = toSnakeCase(result.text);
 
     // 历史是辅助功能：写失败只记一条 warn，不能让用户“翻译成功却报失败”。
     // 记的是最终结果（含 snake_case），与用户拿到的剪贴板/回填内容一致。
@@ -1418,13 +1420,13 @@ async function handleTranslateRequest(rawText: string): Promise<{
       translated: finalText,
       engine: result.engine,
       target: settings.target_language,
-      naming: settings.naming_convention_mode,
+      naming: true,
     }).catch((e: unknown) => {
       log.warn('写翻译历史失败（不影响本次翻译）：%s', e instanceof Error ? e.message : String(e));
     });
 
     await incrementStats();
-    log.info('翻译成功 engine=%s snake=%s len=%d', result.engine, settings.naming_convention_mode, finalText.length);
+    log.info('翻译成功 engine=%s snake=always len=%d', result.engine, finalText.length);
     return { success: true, text: finalText, engine: result.engine };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

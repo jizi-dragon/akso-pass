@@ -44,7 +44,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 路径 | 内容 | 何时跑 |
 |---|---|---|
-| `verify-*.mjs` | **60 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
+| `verify-*.mjs` | **62 个回归用例**（`(Get-ChildItem tools/verify/verify-*.mjs).Count` 实测）。每个脚本自带断言，输出 `✔/✖` 与 `N/M` 汇总（★ 数量以本表为准，别在别处再抄一份） | 改动 `packages/extension/src/**` 后 |
 | `_lib/strip-comments.mjs` | ★ **不是判据，是被判据依赖的公共件**：**字符串感知**的注释剥离器。任何"先剥注释再断言"的脚本都必须用它，**不要自己写剥离正则** —— 非贪婪块注释正则**会跨字符串字面量**匹配，把活代码整段吃掉（`PITFALLS #35`）。 | 写新判据时 |
 | `probe-create.mjs` | **诊断探针**（不是断言用例）：打印扩展创建页签时的实际状态，用于排障 | 排查"页签没建起来"类问题时 |
 | `baseline/*-out.txt` | **历史输出基线**（从 `tmp/` 归档）。用于对照"这次运行与上次是否一致" | 回归出现差异时人工比对 |
@@ -114,6 +114,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 脚本 | 覆盖 | 历史结果 | 需要浏览器 |
 |---|---|---|---|
+| **`verify-engines.mjs`** | ★ **免费翻译引擎清单的回归判据**（静态、秒级，v4.6.6 新增）：① `EngineId` 恰好四值（auto/deepseek/youdao/mymemory）② `IMPL` 恰好两路、全仓零 `viaTransmart`/`viaLingva` ③ 自动顺序是 **有道 → MyMemory**（有道在前）④ 去注释后 `transmart`/`lingva` **各只出现一次**且都在 `normalizeEngineId` 的回落表里（老设置值统一落回 `auto`）⑤ 有道超时 3s、显式分支走 `timeoutOf(engine)`（不再固定 8s 一把梭）⑥ UI 引擎卡 4 条、界面与错误文案不再提「腾讯 / Lingva」⑦ **自证 6 条**（把任一处改回缺陷形态必须变红）。<br>★★ 起因：2026-11-26 实测 `transmart.qq.com:443` **TCP 连不上**（20s 超时、DNS 一致、外部已报停运）、`lingva.ml` **20/20 都是 403**，而它们**还在自动模式的赛马里** ⇒ 每次整句翻译都白等满 8s（端到端实测 **9867ms / 10043ms**）。界面照样提示"翻译完成"、日志没有 error、**所有既有门禁全绿**。<br>★ 诚实边界：只钉"清单与顺序还在不在"，**不能**证明剩下的两路当下可用 —— 那要真机翻译一次。 | **15/15** | ✘ |
 | **`verify-agents-budget.mjs`** | ★ **规则入口的"体积 + 一致性"判据**（静态、秒级）：① `AGENTS.md` **&lt; 48 KB** ② `AGENTS.md` 的规则**索引**与 `docs/RULES.md` 的**正文**编号集合**双向相等**且连续（1..40，无缺号）③ 两份文件互相有指针、并都指向 `PITFALLS.md`。<br>★★ 起因：`AGENTS.md` 长到 **66 KB** 时**被指令预算截断** —— 规则 39 读不全，而**没有任何门禁能发现**（规则 40 的由来）。 | **11/11** | ✘ |
 | **`verify-boxsync.mjs`** | ★ **盒子与云端对账**（静态、秒级）：用 `esbuild` 把 `shared/box-reconcile.ts` **就地转成 CJS** 再加载，以合成数据钉住三条约束 —— ① 云端有答复时**多余的本地盒名必须被剪掉** ② ★ **离线（云端没答复）时一个都不许剪** ③ ★ **账号里正在用的盒名永远不许剪**。（②③ 是**反方向**判据：只验"剪掉了多余的"是不够的，"一律清空"也能过那一条。）<br>★★ 起因：用户报"盒子的数据没有做好同步"，实测**扩展 5 个盒子、云端 2 个**，两边都不报错。 | **OK** | ✘ |
 | **`verify-excel-import.mjs`** | ★ **Excel 导入的纯逻辑判据**（静态、秒级）：① 表头别名 / 跳过标题行 / Excel 1-based 行号 ② 已存在站点、仅站点名匹配、新站点地址、未知站点、坏地址、文件内重复、云端已存在、协议冲突 ③ 空密码只警告不阻断 ④ 模板可生成。 | **OK** | ✘ |
@@ -137,9 +138,9 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 
 | 组 | 个数 | 耗时 | 跑法 |
 |---|---|---|---|
-| 静态（不需要浏览器） | 36 | ≈67 s | `run-all.mjs --static` |
+| 静态（不需要浏览器） | 37 | ≈67 s | `run-all.mjs --static` |
 | 浏览器（真起 Chromium / Edge） | 25 | ≈146 s | `run-all.mjs --browser-only` |
-| 全部 | 61 | ≈214 s | `run-all.mjs --browser` |
+| 全部 | 62 | ≈214 s | `run-all.mjs --browser` |
 
 而 `akso-cloud/tools/acceptance.py` **已经跑了其中 14 个静态脚本**
 （日志打码 4 个 + 图标/文档 4 个 + 字号/间距/圆角 6 个，见那份脚本的 §6/§8/§9）。
@@ -157,7 +158,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 ★ 而日常迭代**不需要**上面任何一种：改哪跑哪，`--only <名字>` 最快
 （例如 `node tools/verify/run-all.mjs --only css-vars`，1 秒内）。
 
-★ **本表里的"61 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
+★ **本表里的"62 个"与上面各条的 `N/M` 是活数字** —— 加脚本或加检查项时**同步改这里**。
 （此前本表长期写着 `14 个` / `37/37` / `3/3`，而实际是 `20 个` / `121` / `23`；
 后来又先后写成 `24 个`（实际 25）、`39/39`（实际 42）、`26 个`（实际 27）、
 `27 个`（实际 28），以及 `28 个`（实际 29）——
@@ -167,7 +168,7 @@ node tools/verify/verify-falsify-loglevel.mjs       # 第 16 节的反证（要�
 所以这一行现在**直接给出可跑的判据**，而不是一个裸数字：
 
 ```powershell
-(Get-ChildItem tools/verify/verify-*.mjs).Count   # 61
+(Get-ChildItem tools/verify/verify-*.mjs).Count   # 62
 node tools/verify/run-all.mjs --list              # 与上一条应当一致
 ```
 

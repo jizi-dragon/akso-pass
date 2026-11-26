@@ -4,7 +4,7 @@
  * # 为什么不再用 popup 承载设置
  *
  * 原设置面板是工具栏小窗（`action.default_popup`，约 360px 宽）。设置项涨到
- * "3 个开关 + 15 语言 + 5 引擎 + 实时预览 + 统计 + 合规告知"之后那个小窗放不下，
+ * "3 个开关 + 15 语言 + 4 个引擎 + 统计 + 合规告知"之后那个小窗放不下，
  * 而且 popup **一失焦就关** —— 用户没法"改了设置再对着页面看效果"。
  * `ui/popup/popup.*` 保留，但只做"打开管理页"的入口。
  *
@@ -15,13 +15,13 @@
  * | 本页面 | 只**读写设置**（`storage.sync`）+ 读统计（`storage.local`） |
  * | background | 真正调引擎；**命名规范转换也在那边**（两个入口共用一份结果） |
  *
- * ⇒ 本页的"实时预览"直接 `import` `shared/snake-case.ts` —— 与 background
- *   用的是**同一份代码**，所以预览与实际结果不可能漂移。
+ * ⇒ 本页**不再** import `shared/snake-case.ts`：4.6.5 起命名规范恒定开启、预览卡已移除，
+ *   转换只在 background 做一次（本页只负责显示"已按命名规范转换"的说明）。
  *
- * # 信息层级（2026-10-12 重排，用户反馈"杂乱无序、无法配置"）
+ * # 信息层级（2026-11-26 调整：命名规范卡移除后重排）
  *
- * ① 总开关 → ② 怎么用（含"试一次"） → ③ 命名规范（带预览）
- * → ④ 高级（语言/引擎，默认折叠但 summary 回显当前值） → ⑤ 统计 → ⑥ 吸底保存
+ * ① 总开关 → ② 怎么用（含"试一次"） → ③ 高级（语言/引擎，默认折叠但 summary 回显当前值）
+ * → ④ 统计 → ⑤ 吸底保存
  */
 import {
   EXT_VERSION,
@@ -31,7 +31,6 @@ import {
 } from '../../shared/constants';
 import { getForwardingLogger } from '../../shared/log';
 import { installLogForwarding } from '../../shared/forward-log';
-import { toSnakeCase } from '../../shared/snake-case';
 
 /* ★ 用 `getForwardingLogger` 而不是 `getLogger`：**与 `ui/parallel/parallel.ts` 同一形状**。
  *
@@ -93,7 +92,6 @@ const el = {
   iconFillLabel: $<HTMLElement>('icon-fill-label'),
   iconPathTitle: $<HTMLElement>('icon-path-title'),
   iconActionDesc: $<HTMLElement>('icon-action-desc'),
-  naming: $<HTMLInputElement>('naming_convention_mode'),
   targetLang: $<HTMLSelectElement>('target_language'),
   engineList: $<HTMLDivElement>('engine-list'),
   llmPanel: $<HTMLDivElement>('llm-panel'),
@@ -105,8 +103,6 @@ const el = {
   llmFeedback: $<HTMLElement>('deepseek-feedback'),
   adv: $<HTMLDetailsElement>('adv'),
   advCurrent: $<HTMLElement>('adv-current'),
-  previewIn: $<HTMLInputElement>('preview-input'),
-  previewOut: $<HTMLElement>('preview-output'),
   statToday: $<HTMLElement>('stat-today'),
   statMonth: $<HTMLElement>('stat-month'),
   statTotal: $<HTMLElement>('stat-total'),
@@ -134,7 +130,7 @@ const ENGINES: EngineMeta[] = [
     id: 'auto',
     name: '自动模式',
     tag: '推荐',
-    desc: '配置 DeepSeek Key 时先试大模型，失败再回落免费链路；未配置时并行赛马腾讯 + 有道，仍失败再用 MyMemory、Lingva 兜底。',
+    desc: '配置 DeepSeek Key 时先试大模型，失败再回落免费链路；未配置时先用有道查词（短词 20–50ms），查不到再用 MyMemory 翻整句（1–2s）。',
   },
   {
     id: 'deepseek',
@@ -143,19 +139,17 @@ const ENGINES: EngineMeta[] = [
     desc: '使用你自己的 DeepSeek API Key，翻译质量更高；Key 只存本机，不随账号同步。未配置 Key 时选择它会直接报错，不会悄悄换成免费引擎。',
   },
   {
-    id: 'transmart',
-    name: '腾讯交互翻译 TranSmart',
-    tag: '最快',
-    desc: '国内直连、无需 Key，通常 100–500ms，通用场景覆盖广。',
-  },
-  {
     id: 'youdao',
     name: '网易有道词典',
-    tag: '国内',
-    desc: '词典式「网络释义」，短词/术语质量高（字段名场景好）。★ 只服务中↔英方向，选其它目标语言会失败并由兜底引擎接管。',
+    tag: '国内·查词',
+    desc: '词典式「网络释义」，短词/术语质量高（字段名场景好）。★ 只服务中↔英方向，选其它目标语言会失败并由 MyMemory 接管。',
   },
-  { id: 'mymemory', name: 'MyMemory', tag: '海外备用', desc: '国际公共接口，每天约 1000 次免费额度。' },
-  { id: 'lingva', name: 'Lingva', tag: '最终兜底', desc: 'Google 翻译开源镜像，前序全挂时用。' },
+  {
+    id: 'mymemory',
+    name: 'MyMemory',
+    tag: '海外·整句',
+    desc: '国际公共接口，翻整句；每天约 1000 次免费额度，实测 0.4–2.1s。',
+  },
 ];
 
 const engineName = (id: EngineId): string => ENGINES.find((e) => e.id === id)?.name ?? id;
@@ -290,16 +284,6 @@ async function onClearDeepseek(): Promise<void> {
 /** 折叠状态下 summary 上回显"现在配的是什么"（否则用户得展开才知道） */
 function renderAdvCurrent(): void {
   el.advCurrent.textContent = `${langName(el.targetLang.value)} · ${engineName(selectedEngine())}`;
-}
-
-/* ── 渲染：预览与启用态 ── */
-function renderPreview(): void {
-  const src = el.previewIn.value;
-  if (!src.trim()) {
-    el.previewOut.textContent = '—';
-    return;
-  }
-  el.previewOut.textContent = toSnakeCase(src);
 }
 
 /* ─────────────────────── 键位文案的唯一来源 ───────────────────────
@@ -490,7 +474,6 @@ async function collect(): Promise<TranslationSettings> {
     translate_enabled: el.enabled.checked,
     floating_icon_enabled: el.floatingIcon.checked,
     icon_fill_enabled: el.iconFill.checked,
-    naming_convention_mode: el.naming.checked,
     target_language: el.targetLang.value,
     source_language: 'auto',
     translation_provider: selectedEngine(),
@@ -627,7 +610,6 @@ async function init(): Promise<void> {
       translate_enabled: true,
       floating_icon_enabled: true,
       icon_fill_enabled: true,
-      naming_convention_mode: false,
       target_language: 'en',
       source_language: 'auto',
       translation_provider: 'auto',
@@ -637,7 +619,6 @@ async function init(): Promise<void> {
   el.enabled.checked = settings.translate_enabled;
   el.floatingIcon.checked = settings.floating_icon_enabled;
   el.iconFill.checked = settings.icon_fill_enabled;
-  el.naming.checked = settings.naming_convention_mode;
   el.targetLang.value = settings.target_language;
   renderEngines(settings.translation_provider);
   renderEnabledState(settings.translate_enabled);
@@ -646,13 +627,6 @@ async function init(): Promise<void> {
   // 高级区默认展开：**宁可多露一点，也不要"藏在折叠里等于没做"**
   // （本仓规则 40 的同族：读不到 = 不存在）。用户嫌长可以自己折起来。
   el.adv.open = true;
-
-  renderPreview();
-  el.previewIn.addEventListener('input', renderPreview);
-  el.naming.addEventListener('change', () => {
-    renderPreview();
-    void onSave();
-  });
 
   // 总开关与图标开关**改动即存**（这两个是高频动作，用户不会愿意再点一次"保存"）
   el.enabled.addEventListener('change', () => {
@@ -691,12 +665,10 @@ async function init(): Promise<void> {
         el.enabled.checked = next.translate_enabled;
         el.floatingIcon.checked = next.floating_icon_enabled;
         el.iconFill.checked = next.icon_fill_enabled;
-        el.naming.checked = next.naming_convention_mode;
         el.targetLang.value = next.target_language;
         renderEngines(next.translation_provider);
         renderEnabledState(next.translate_enabled);
         renderIconFillState(next.icon_fill_enabled);
-        renderPreview();
       });
     } else if (area === 'local') {
       // 翻译发生在别的页面 → 统计变了就刷新（不需要轮询）

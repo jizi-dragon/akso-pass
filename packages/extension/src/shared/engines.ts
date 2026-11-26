@@ -1,40 +1,53 @@
 /**
- * 4 路免费翻译引擎（**无 API Key，公网直连**）。
+ * 2 路免费翻译引擎（**无 API Key，公网直连**）。
  *
  * # 为什么在 `shared/` 而不是 `content/`
  *
- * 本仓规则 10：`content_scripts` 的注入体积是**敏感资源**。引擎适配器（含 4 个
- * 语言码映射表）合起来约 8 KB，而它**只在 background 里跑**（页面只发一条消息）。
- * ⇒ 放 `content/` 等于给**每一个页面、每一个 frame** 白送 8 KB。
+ * 本仓规则 10：`content_scripts` 的注入体积是**敏感资源**。引擎适配器（含语言码
+ * 映射表）合起来几 KB，而它**只在 background 里跑**（页面只发一条消息）。
+ * ⇒ 放 `content/` 等于给**每一个页面、每一个 frame** 白送这几 KB。
  *
  * # ★ 数据出境（必须让用户知道）
  *
- * 这 4 个引擎都是**公网第三方接口**，翻译请求会把**输入框原文**发出去：
- * TranSmart / 有道（腾讯 / 网易，国内）、MyMemory / Lingva（海外）。
- * 用户已在 2026-10-12 确认"内部工具、可用公网引擎"，但**这条事实要写在
- * 翻译面板上**——不能只在代码注释里（规则 25：先问"失败时用户会看到什么"）。
+ * 这 2 个引擎都是**公网第三方接口**，翻译请求会把**输入框原文**发出去：
+ * 有道（网易，国内）、MyMemory（海外）。用户已在 2026-10-12 确认"内部工具、
+ * 可用公网引擎"，但**这条事实要写在翻译面板上**——不能只在代码注释里（规则 25：
+ * 先问"失败时用户会看到什么"）。
  *
- * # 语言码三套并存（这不是冗余，是各家的真实要求）
+ * # 4.6.6 起只剩两路（2026-11-26 实测后移除）
+ *
+ * | 引擎 | 处置 | 依据 |
+ * |---|---|---|
+ * | 腾讯 TranSmart | **移除** | `transmart.qq.com:443` TCP 连不上（20s 超时、DNS 一致、外部已报服务停运），每次请求都白等满 8s |
+ * | Lingva | **移除** | `lingva.ml` 20/20 都是 **HTTP 403**（Cloudflare），从来没成功过 |
+ *
+ * 留下的两路**互补**：有道是"查词"（短词 20–50ms，命中率高，但整句 no-entry）、
+ * MyMemory 是"翻整句"（1–2s）。所以自动模式是**串行 有道 → MyMemory**：
+ * 句子只多花有道的约 40ms；短词命中时**根本不会**把原文再发给海外那一跳
+ * （规则 25 的另一半：既让用户看到结果，也把数据出境面压到最小）。
+ *
+ * # 语言码两套并存（这不是冗余，是各家的真实要求）
  *
  * | 引擎 | 语言码形态 | 例 |
  * |---|---|---|
  * | MyMemory | ISO 639-1 + 地区 | `en-US` / `zh-CN` |
- * | TranSmart | BCP-47 主标签 | `zh` / `en` |
- * | Lingva | 主标签（`zh-*` 一律压成 `zh`） | `zh` / `en` |
  * | 有道 | **不接受语言参数** ⇒ 只服务中↔英方向 | — |
  *
  * ⇒ 有道那一格是**能力缺口**而不是写法问题：选日语时它会返回中文释义或直接失败，
- *   由兜底引擎接管。翻译面板里已按此标注。
+ *   由 MyMemory 接管。翻译面板里已按此标注。
  */
 import { withTimeout } from './net';
 import { looksLikeDictionaryEntry } from './snake-case';
 import { loadLlmSettings, type LlmSettings } from './llm-settings';
 import { translateWithDeepSeek } from './deepseek';
 
-export type EngineId = 'auto' | 'deepseek' | 'transmart' | 'youdao' | 'mymemory' | 'lingva';
+export type EngineId = 'auto' | 'deepseek' | 'youdao' | 'mymemory';
 
-/** 单个引擎的超时（原扩展=8000ms，实测国内引擎 100-500ms、海外常在 1-3s） */
+/** 单路免费引擎的超时上限（原扩展=8000ms；MyMemory 实测 p99≈2.1s，8s 是海外抖动余量） */
 export const TRANSLATE_TIMEOUT_MS = 8000;
+
+/** 有道是"查词"，正常 20–50ms；3s 还不回来就是真卡住，不值得让整句陪它等满 8s */
+const YOUDAO_TIMEOUT_MS = 3000;
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -59,90 +72,14 @@ const MYMEMORY_LANG_MAP: Record<string, string> = {
   id: 'id-ID',
 };
 
-/** TranSmart 用 BCP-47 主标签 */
-const TRANSMART_LANG_MAP: Record<string, string> = {
-  auto: 'auto',
-  'zh-CN': 'zh',
-  'zh-TW': 'zh',
-  en: 'en',
-  ja: 'ja',
-  ko: 'ko',
-  fr: 'fr',
-  de: 'de',
-  es: 'es',
-  pt: 'pt',
-  ru: 'ru',
-  ar: 'ar',
-  it: 'it',
-  vi: 'vi',
-  th: 'th',
-  id: 'id',
-};
-
-function mapLang(map: Record<string, string>, code: string, fallback: string): string {
-  const hit = map[code];
-  return hit !== undefined ? hit : fallback;
-}
-
 /** 引擎的**人类可读名**（错误信息里要报得出是谁失败了） */
 export const ENGINE_LABEL: Record<Exclude<EngineId, 'auto'>, string> = {
   deepseek: 'DeepSeek',
-  transmart: '腾讯交互翻译 TranSmart',
   youdao: '网易有道词典',
   mymemory: 'MyMemory',
-  lingva: 'Lingva',
 };
 
-/* ────────────────────────── 1. TranSmart（主引擎） ────────────────────────── */
-
-/**
- * 腾讯交互翻译 `POST https://transmart.qq.com/api/imt`（国内直连、无需 Key）。
- *
- * ★ `client_key` 每次请求都换一个：这是照搬原扩展的做法，实测能提高稳定性。
- *   `credentials: 'omit'` 是刻意的 —— 这是第三方接口，不该带任何 cookie。
- */
-async function viaTransmart(text: string, target: string, source: string): Promise<string> {
-  const clientKey =
-    `browser-chrome-${navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] || '120'}` +
-    `-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-  const resp = await fetch('https://transmart.qq.com/api/imt', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Referer: 'https://transmart.qq.com/',
-      Origin: 'https://transmart.qq.com',
-      'User-Agent': BROWSER_UA,
-    },
-    body: JSON.stringify({
-      header: { fn: 'auto_translation', session: '', client_key: clientKey, user: '' },
-      type: 'plain',
-      model_category: 'normal',
-      text_domain: 'general',
-      source: { lang: mapLang(TRANSMART_LANG_MAP, source, 'auto'), text_list: [text] },
-      target: { lang: mapLang(TRANSMART_LANG_MAP, target, 'en') },
-    }),
-    credentials: 'omit',
-  });
-
-  if (!resp.ok) {
-    throw new Error(`TranSmart HTTP ${resp.status}`);
-  }
-  const data = (await resp.json()) as {
-    header?: { ret_code?: string };
-    auto_translation?: unknown;
-  };
-  if (data.header?.ret_code && data.header.ret_code !== 'succ') {
-    throw new Error(`TranSmart 返回错误: ${data.header.ret_code}`);
-  }
-  const out = data.auto_translation;
-  if (!Array.isArray(out) || out.length === 0) {
-    throw new Error('TranSmart 返回数据为空');
-  }
-  return out.map(String).join('\n');
-}
-
-/* ────────────────────────── 2. 有道词典（第二国内引擎） ────────────────────────── */
+/* ────────────────────────── 1. 有道词典（主引擎：查词） ────────────────────────── */
 
 /**
  * 网易有道 `GET https://dict.youdao.com/jsonapi`（国内托管，无需签名/Key）。
@@ -188,7 +125,7 @@ async function viaYoudao(text: string, _target: string, _source: string): Promis
   return result;
 }
 
-/* ────────────────────────── 3. MyMemory（海外备用） ────────────────────────── */
+/* ────────────────────────── 2. MyMemory（翻整句的那一路） ────────────────────────── */
 
 async function viaMyMemory(text: string, target: string, source: string): Promise<string> {
   const from = source === 'auto' ? 'zh-CN' : MYMEMORY_LANG_MAP[source] || source;
@@ -221,38 +158,22 @@ async function viaMyMemory(text: string, target: string, source: string): Promis
   return result;
 }
 
-/* ────────────────────────── 4. Lingva（最终兜底） ────────────────────────── */
-
-async function viaLingva(text: string, target: string, source: string): Promise<string> {
-  const code = (c: string): string => {
-    if (c === 'auto') return 'auto';
-    if (c === 'zh-CN' || c === 'zh-TW') return 'zh';
-    return c.split('-')[0];
-  };
-  const url =
-    `https://lingva.ml/api/v1/${code(source)}/${code(target)}/${encodeURIComponent(text)}`;
-
-  const resp = await fetch(url, { method: 'GET' });
-  if (!resp.ok) {
-    throw new Error(`Lingva HTTP ${resp.status}`);
-  }
-  const data = (await resp.json()) as { translation?: string };
-  if (!data.translation) {
-    throw new Error('Lingva 返回数据为空');
-  }
-  return data.translation;
-}
-
 /* ────────────────────────── 调度 ────────────────────────── */
 
 type FreeEngineId = Exclude<EngineId, 'auto' | 'deepseek'>;
 
 const IMPL: Record<FreeEngineId, (t: string, tg: string, s: string) => Promise<string>> = {
-  transmart: viaTransmart,
   youdao: viaYoudao,
   mymemory: viaMyMemory,
-  lingva: viaLingva,
 };
+
+/** 自动模式的尝试顺序（4.6.6：有道查词 → MyMemory 翻整句；顺序即优先级） */
+const FREE_ENGINES: readonly FreeEngineId[] = ['youdao', 'mymemory'];
+
+/** 每一路自己的超时：查词不该陪整句一起等满 8s */
+function timeoutOf(id: FreeEngineId): number {
+  return id === 'youdao' ? YOUDAO_TIMEOUT_MS : TRANSLATE_TIMEOUT_MS;
+}
 
 /** 读取本地 Key；读失败（隐私模式等）按“未配置”处理，不影响免费链路。 */
 async function loadDeepSeekSettings(): Promise<LlmSettings | null> {
@@ -269,15 +190,18 @@ function describeError(e: unknown): string {
 
 export interface TranslateResult {
   text: string;
-  /** 实际生效的引擎（自动模式赛马后，调用方需要知道是谁赢的——诊断与统计都要） */
+  /** 实际生效的引擎（自动模式下最后成功的那一路——诊断与统计都要） */
   engine: Exclude<EngineId, 'auto'>;
 }
 
 /**
- * 自动模式：**第一轮两个国内引擎并行赛马**（谁快用谁）→ MyMemory → Lingva。
+ * 自动模式：**串行 有道 → MyMemory**（4.6.6 起的两路）。
  *
- * ★ 为什么用 `Promise.any` 而不是串行：国内两路各有 ~1% 的偶发慢/挂，
- *   串行会把最坏延迟叠加成"两次超时"；赛马只取最快那次，最坏延迟 = 单次超时。
+ * ★ 为什么不再赛马：赛马的前提是"两路都活着、都能出可用结果"。4.6.6 移除了
+ *   TranSmart（服务停运，TCP 连不上）与 Lingva（403），剩下的两路是**先后互补**的：
+ *   有道查词只要 20–50ms，MyMemory 才是翻整句的那一路。
+ *   ⇒ 串行比赛马**少一次出站请求**（短词命中时原文不会发去海外），
+ *     最坏延迟也不再被一条死腿拖满 8s。
  * ★ 错误**全量累积**到最终消息里 —— 只报"翻译失败"会让现场无法定位是哪一路挂了。
  */
 async function translateAuto(text: string, target: string, source: string): Promise<TranslateResult> {
@@ -289,8 +213,8 @@ async function translateAuto(text: string, target: string, source: string): Prom
    * 额度/网络临时不可用时，退回免费引擎比让快捷键整条失败更有用。显式选
    * `deepseek` 则相反——见 `translate()`。
    *
-   * 为什么先读完 Key 再赛马：没有 Key 时不能多发一次 storage 往返；
-   * 但也不能把 Key 读取失败当成“用户没配 Key”而静默——那只影响 auto，
+   * 为什么先读完 Key 再跑免费链路：没有 Key 时不能多发一次 storage 往返；
+   * 也不能把 Key 读取失败当成“用户没配 Key”而静默——那只影响 auto，
    * 后面免费链路仍照常工作；显式 DeepSeek 会在 `translate()` 里报清楚。
    */
   const llm = await loadDeepSeekSettings();
@@ -306,46 +230,28 @@ async function translateAuto(text: string, target: string, source: string): Prom
   }
 
   /**
-   * ★★ 第一轮赛马要**过滤掉词典释义**（2026-10-12 实测事故）。
+   * ★★ 免费这一轮仍要**过滤掉词典释义**（2026-10-12 实测事故）。
    *
    * 有道走的是"网络释义"接口，返回词条而非句子 —— 实测 `行动措施` 得到
-   * `take action /measures /steps to do sth`。在赛马里它是**最快返回**的一方，
-   * 于是 `Promise.any` 直接把它当赢家 ⇒ 用户拿到一串带 `/` 与 `to do sth` 的词典文本，
-   * 贴进下一个输入框完全不可用，而界面还提示"✅ 已翻译"。
+   * `take action /measures /steps to do sth`。不拦的话，用户拿到一串带 `/` 与
+   * `to do sth` 的词典文本，贴进下一个输入框完全不可用，而界面还提示"✅ 已翻译"。
    *
-   * ⇒ 判据改成"**返回了可用结果**"才算赢：拿到词典释义就**主动 reject**，
-   *   让 `Promise.any` 继续等另一路（TranSmart 是真正的翻译器），
-   *   两路都不可用才落到海外兜底。
+   * ⇒ 判据是"**返回了可用结果**"才算成功：拿到词典释义就**主动 reject**，
+   *   继续落到 MyMemory（它是真正的翻译器）。
    */
-  const race = (['transmart', 'youdao'] as const).map((id) =>
-    withTimeout(IMPL[id](text, target, source), TRANSLATE_TIMEOUT_MS, ENGINE_LABEL[id])
-      .then((t) => {
-        if (looksLikeDictionaryEntry(t)) {
-          throw new Error(`${ENGINE_LABEL[id]} 返回的是词典释义（含「/」或「sth/sb」），不是可用译文`);
-        }
-        return { text: t, engine: id };
-      })
-      .catch((e: unknown) => {
-        errors.push(`${ENGINE_LABEL[id]}: ${e instanceof Error ? e.message : String(e)}`);
-        throw e;
-      }),
-  );
-
-  try {
-    return await Promise.any(race);
-  } catch {
-    // 两路国内引擎都不可用（失败 / 或结果不可用）—— 继续走海外兜底，这里**不抛**
-  }
-
-  for (const id of ['mymemory', 'lingva'] as const) {
+  for (const id of FREE_ENGINES) {
     try {
-      const text2 = await withTimeout(IMPL[id](text, target, source), TRANSLATE_TIMEOUT_MS, ENGINE_LABEL[id]);
-      if (looksLikeDictionaryEntry(text2)) {
-        throw new Error(`${ENGINE_LABEL[id]} 返回的结果不可用（词典式）`);
+      const out = await withTimeout(
+        IMPL[id](text, target, source),
+        timeoutOf(id),
+        ENGINE_LABEL[id],
+      );
+      if (looksLikeDictionaryEntry(out)) {
+        throw new Error(`${ENGINE_LABEL[id]} 返回的是词典释义（含「/」或「sth/sb」），不是可用译文`);
       }
-      return { text: text2, engine: id };
+      return { text: out, engine: id };
     } catch (e) {
-      errors.push(`${ENGINE_LABEL[id]}: ${e instanceof Error ? e.message : String(e)}`);
+      errors.push(`${ENGINE_LABEL[id]}: ${describeError(e)}`);
     }
   }
 
@@ -353,7 +259,7 @@ async function translateAuto(text: string, target: string, source: string): Prom
 }
 
 /**
- * 按设置翻译。`engine='auto'` 走赛马 + 兜底；指定引擎则单路。
+ * 按设置翻译。`engine='auto'` 走自动链路（DeepSeek → 有道 → MyMemory）；指定引擎则单路。
  *
  * ★ 单独指定引擎时**不做词典过滤**：那是用户明确的选择，把结果原样给他，
  *   由上层的结果校验决定要不要报错（这样"为什么没结果"能说清楚，而不是被这里悄悄换掉）。
@@ -381,29 +287,28 @@ export async function translate(
     return { text: await translateWithDeepSeek(text, target, source, llm), engine: 'deepseek' };
   }
 
-  const out = await withTimeout(IMPL[engine](text, target, source), TRANSLATE_TIMEOUT_MS, ENGINE_LABEL[engine]);
+  const out = await withTimeout(IMPL[engine](text, target, source), timeoutOf(engine), ENGINE_LABEL[engine]);
   return { text: out, engine };
 }
 
 /**
- * ★ 旧引擎值的向后兼容（原扩展 v1.4.1 之前的设置值）。
+ * ★ 旧引擎值的向后兼容（含 4.6.6 下架的两个）。
  *
  * 为什么必须有：设置存在 `chrome.storage.sync`，**升级不会清掉旧值**。
- * 不认这两个值的话，老用户升级后落进 `default` 分支（自动模式）——
- * 那不是错，但用户会以为自己选的引擎"没生效"，而**界面上看不出原因**。
+ * `transmart` / `lingva` 是 4.6.4 及以前能选的引擎，`tencent_web` / `google_free`
+ * 更早 —— 这些值现在统一落回 `auto`。不这样的话，老用户升级后界面上会显示一个
+ * 已经不存在的引擎，而**看不出原因**（用户会以为自己选的引擎"没生效"）。
  */
 export function normalizeEngineId(raw: unknown): EngineId {
-  const legacy: Record<string, EngineId> = { tencent_web: 'transmart', google_free: 'transmart' };
+  const legacy: Record<string, EngineId> = {
+    tencent_web: 'auto',
+    google_free: 'auto',
+    transmart: 'auto',
+    lingva: 'auto',
+  };
   const v = String(raw ?? '');
   if (v in legacy) return legacy[v];
-  if (
-    v === 'transmart'
-    || v === 'youdao'
-    || v === 'mymemory'
-    || v === 'lingva'
-    || v === 'deepseek'
-    || v === 'auto'
-  ) {
+  if (v === 'youdao' || v === 'mymemory' || v === 'deepseek' || v === 'auto') {
     return v;
   }
   return 'auto';

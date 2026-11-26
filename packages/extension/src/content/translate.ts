@@ -47,7 +47,7 @@ interface TranslateReply {
   success: boolean;
   /** 已按设置做过 snake_case 转换的最终结果 */
   text?: string;
-  /** 实际生效的引擎（自动模式赛马后是谁赢的） */
+  /** 实际生效的引擎（自动模式下最后成功的那一路） */
   engine?: string;
   error?: string;
 }
@@ -57,7 +57,6 @@ interface CachedSettings {
   floating_icon_enabled: boolean;
   /** 点图标时是否回填输入框；false 时只复制 */
   icon_fill_enabled: boolean;
-  naming_convention_mode: boolean;
   target_language: string;
   ts: number;
 }
@@ -265,23 +264,20 @@ async function getSettings(): Promise<CachedSettings> {
     translate_enabled: true,
     floating_icon_enabled: true,
     icon_fill_enabled: true,
-    naming_convention_mode: false,
     target_language: 'en',
     ts: now,
   };
   try {
     const stored = await chrome.storage.sync.get({
       translate_enabled: true,
-        floating_icon_enabled: true,
+      floating_icon_enabled: true,
       icon_fill_enabled: true,
-      naming_convention_mode: false,
       target_language: 'en',
     });
     out = {
       translate_enabled: stored.translate_enabled !== false,
       floating_icon_enabled: stored.floating_icon_enabled !== false,
       icon_fill_enabled: stored.icon_fill_enabled !== false,
-      naming_convention_mode: stored.naming_convention_mode === true,
       target_language: typeof stored.target_language === 'string' ? stored.target_language : 'en',
       ts: now,
     };
@@ -416,10 +412,7 @@ async function onIconClick(e: MouseEvent): Promise<void> {
     }
     if (settings.icon_fill_enabled) {
       writeText(el, reply.text ?? '');
-      showToast(
-        settings.naming_convention_mode ? '✅ 翻译完成（已转换为命名规范格式）' : '✅ 翻译完成',
-        'success',
-      );
+      showToast('✅ 翻译完成（已转换为命名规范格式）', 'success');
       return;
     }
 

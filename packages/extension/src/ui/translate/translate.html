@@ -82,7 +82,7 @@
       </div>
 
       <!-- ============================================================
-           ② 常用：两条路径 + 命名规范（配置翻译"做什么"）
+           ② 常用：两条路径（配置翻译"做什么"）
            ============================================================ -->
       <section class="card block">
         <div class="block-head">
@@ -120,6 +120,11 @@
         </div>
 
         <p class="hint">
+          译文统一按<b>命名规范</b>转成 <code>snake_case</code>（可直接当字段名 / API 参数名 / 变量名）：
+          含换行的段落原样保留，单行不论多长都转换，超 60 字符按<b>完整单词</b>截断，结果短于 3 字符保留原文。
+        </p>
+
+        <p class="hint">
           快捷键改键去
           <!-- ★ 文案由 `init()` 按浏览器家族填（Chrome `chrome://extensions/shortcuts` /
                Edge `edge://extensions/shortcuts`）。这里放中性字样，免得脚本没跑时
@@ -127,35 +132,6 @@
           <a id="shortcut-link" href="#">扩展快捷键页</a>
           —— 当前生效键位：<b id="hotkey-display" data-hotkey>Ctrl+X</b>。
           若显示「未设置」，说明被别的扩展占用了，请到该页面重新指定。
-        </p>
-      </section>
-
-      <!-- 命名规范模式：字段名场景的核心开关，独立成卡（带实时预览） -->
-      <section class="card block">
-        <div class="block-head row">
-          <div>
-            <h2>命名规范模式</h2>
-            <p class="desc">翻译结果转成 <code>snake_case</code>，可直接当字段名 / API 参数名 / 变量名。</p>
-          </div>
-          <label class="t-switch-only" for="naming_convention_mode">
-            <input id="naming_convention_mode" type="checkbox" class="t-switch-input" />
-            <span class="t-switch" aria-hidden="true"><i></i></span>
-          </label>
-        </div>
-
-        <div class="t-preview">
-          <label class="t-preview-in">
-            <span>试一段（输入即预览）</span>
-            <input id="preview-input" type="text" value="Quality Deviation (QD)" />
-          </label>
-          <div class="t-preview-out">
-            <span class="t-preview-label">结果</span>
-            <code id="preview-output">—</code>
-          </div>
-        </div>
-        <p class="hint">
-          含换行的段落<b>原样保留</b>（多行是段落不是字段名）；单行不论多长都转换；
-          超 60 字符按<b>完整单词</b>截断；结果短于 3 字符则保留原文。
         </p>
       </section>
 
@@ -178,7 +154,7 @@
             </label>
             <p class="hint">
               源语言固定为<b>自动检测</b>。
-              <b>有道</b>只服务中↔英方向且不接受语言参数，选其它语言时它会失败并由兜底引擎接管。
+              <b>有道</b>只服务中↔英方向且不接受语言参数，选其它语言时它会失败并由 MyMemory 接管。
             </p>
           </div>
 
@@ -186,8 +162,8 @@
             <h3>翻译引擎</h3>
             <div id="engine-list" class="t-engines" role="radiogroup" aria-label="翻译引擎"></div>
             <p class="hint">
-              免费引擎<b>无需 API Key</b>；自动模式在有 DeepSeek Key 时先试大模型，失败再回落
-              腾讯 / 有道赛马与海外兜底。未配置 Key 时，自动模式与旧版完全一致。
+              免费引擎<b>无需 API Key</b>；自动模式在有 DeepSeek Key 时先试大模型，失败再回落免费链路
+              （有道查词 → MyMemory 翻整句）。
               <b>返回词典释义（含「/」或 sth/sb）的引擎会被自动跳过</b>，不会把词条当译文给你。
             </p>
           </div>
@@ -221,7 +197,7 @@
           <div class="notice warn t-privacy">
             <span>
               <b>翻译内容会发送到第三方。</b>
-              免费请求发往腾讯交互翻译 / 网易有道 / MyMemory / Lingva 的公开接口；
+              免费请求发往网易有道 / MyMemory 的公开接口；
               配置 DeepSeek 后还会发往 <code>api.deepseek.com</code>。
               <b>不经过本项目任何服务器</b>。含敏感信息的字段请不要翻译。
             </span>

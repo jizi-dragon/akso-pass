@@ -28,7 +28,7 @@ export interface TranslationHistoryEntry {
   at: number;
   original: string;
   translated: string;
-  /** 实际生效的引擎 id，如 deepseek / transmart */
+  /** 实际生效的引擎 id，如 deepseek / youdao / mymemory */
   engine: string;
   target: string;
   /** 结果是否经过 snake_case 转换（历史里要看得出来） */
