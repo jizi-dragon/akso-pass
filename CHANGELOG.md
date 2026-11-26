@@ -1,3 +1,14 @@
+## 4.6.7（2026-11-26）
+
+**把「Release 资产只装构建产物」写成规则**
+
+- 用户口径（2026-11-26）：打包成 release 时，上传的必须是**构建后的产物** —— 用户拿走后能直接使用。适用于 `akso-pass` 与 `akso-workbench`。
+- `AGENTS.md` 在「版本与发布」之后新增 **Release 资产只装构建产物**：必须包含 = `dist/` 全部产物（`manifest.json`、`background.js`、`content/`、`ui/`、`assets/`）+ 一份给最终用户的安装说明；必须不包含 = `packages/extension/src/**` 的 `.ts`、`node_modules/`、`package.json`、`package-lock.json`、`*.map`、`tmp/`、`tools/`、`.git/`。
+- 四条判据：① 解压后 `manifest.json` 在根层；② 递归搜不到 `*.ts` / `*.map` / `package.json`（只允许 1 份安装说明 `.md`）；③ `manifest.json` 引用的每个文件都在包里；④ `node tools/verify/verify-load.mjs` 能真起 Chromium 装上、开出各页面且 SW 能应答。
+- 验证：`verify-agents-budget.mjs` **11/11**（AGENTS.md 36.6 KB，仍在 48 KB 预算内）。
+- 纯文档改动，未触动任何代码；`dist/` 未变。
+- 版本：4.6.6 → 4.6.7（patch，未打包 release）。
+
 ## 4.6.6（2026-11-26）
 
 **移除已停运的 TranSmart 与 Lingva：自动模式不再白等 8 秒**

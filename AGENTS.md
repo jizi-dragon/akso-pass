@@ -304,6 +304,25 @@ npm run verify -- --only jarhygiene
   有明确指令时，版本必须是 `X.(Y+1).0` 而不是 `X.Y.(Z+1)`。
 - 不要自行把优化版升级为正式版；也不要因为「功能看起来很大」就触发 Release。
 
+### Release 资产只装**构建产物**（2026-11-26 用户口径）
+
+> 用户口径（2026-11-26）：打包成 release 时，上传的必须是**构建后的产物** —— 用户拿走后
+> **能直接使用**。此条同样适用于 `akso-workbench`。
+
+| 必须包含 | 必须不包含 |
+|---|---|
+| `dist/` 的全部产物：`manifest.json`、`background.js`、`content/`、`ui/`、`assets/` | `packages/extension/src/**` 的 `.ts` 源码 |
+| 一份给最终用户的安装说明（「加载已解压的扩展程序」怎么点、升级怎么点「重新加载」） | `node_modules/`、`package.json`、`package-lock.json`、`*.map`、`tmp/`、`tools/`、`.git/` |
+
+- 压缩包解压后**根层直接**能看到 `manifest.json`（对方在「加载已解压的扩展程序」里选这一层）。
+- 打包前先 `npm run build`（产物在 `dist/`，不是 `src/`）；`manifest.json` 的 `version` 必须等于
+  `package.json`（规则 7）。
+- **判据**（发出去之前自己过一遍，四条都要过）：
+  1. 解压后 `manifest.json` 在**根层**；
+  2. 递归搜不到 `*.ts` / `*.map` / `package.json`（只允许 1 份安装说明 `.md`）；
+  3. `manifest.json` 里引用的每个文件（`background.js`、6 个 content 脚本与 CSS、`ui/**/*.html`）都在包里；
+  4. `node tools/verify/verify-load.mjs` 能真起 Chromium 把它装上、开出各页面且 SW 能应答。
+
 ---
 
 ## 4. 本机环境速查
